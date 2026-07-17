@@ -2,38 +2,17 @@
 
 #### 介绍
 自定义数据处理库
-- 固定字段处理库
-- 注册字段处理库
+- 固定字段处理库 SolidDataFrame
+- 注册字段处理库 FluidDataFrame
 
-#### 软件架构
-软件架构说明
-
-
-#### 安装教程
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 使用说明
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
+这两个库是相互独立的：
+- SolidDataFrame 专门处理OCR数据的
+- FluidDataFrame 专门处理已知数据结构与字段类型的数据
+- 与pandas的区别：SolidDataFrame是固定字段，FluidDataFrame是用户临时注册字段，而pandas是自由字段，在使用pandas处理数据时，可以不用知道数据的字段个数与字段的数据类型，特别自由。
 
 
-#### 特技
-
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+#### 安装或者使用教程
+将代码放置在使用代码的同级目录即可，执行如下命令：
+```shell
+python3 -c "from setuptools import setup; from Cython.Build import cythonize; setup(ext_modules=cythonize('ndframe.pyx', language_level=3))" build_ext --build-lib=build
+```
