@@ -31,7 +31,6 @@ class Char256:
 @cython.binding(False)
 @cython.always_allow_keywords(False)
 def _parse_schema(dict schema_dict):
-    """将 Python 类型映射到内部的 C 枚举"""
     cdef dict parsed = {}
     for k, v in schema_dict.items():
         if v is int: parsed[k] = TYPE_INT
@@ -40,7 +39,6 @@ def _parse_schema(dict schema_dict):
         elif v is str: parsed[k] = TYPE_UCS2
         else: raise TypeError(f"Unsupported type: {v}")
     return parsed
-
 
 # ==========================================
 # 2. 基础列类 (统一抽象)
@@ -55,7 +53,6 @@ cdef class BaseColumn:
     @cython.always_allow_keywords(False)
     def __len__(self):
         return self.length
-
 
 # ==========================================
 # 3. 数值型列组件 (Int, Double)
@@ -81,11 +78,12 @@ cdef class IntColumn(BaseColumn):
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
             self.data_c = <int*>realloc(self.data_c, new_cap * sizeof(int))
+            if not self.data_c: raise MemoryError()
             self.capacity = new_cap
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void append(self, int val):
+    def append(self, int val):
         if self.length >= self.capacity:
             self._reserve(self.capacity * 2)
         self.data_c[self.length] = val
@@ -93,7 +91,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef IntColumn copy(self):
+    def copy(self):
         cdef IntColumn new_col = IntColumn(self.capacity)
         new_col.length = self.length
         memcpy(new_col.data_c, self.data_c, self.length * sizeof(int))
@@ -101,14 +99,14 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef int pop_back(self):
+    def pop_back(self):
         if self.length == 0: raise IndexError("pop from empty column")
         self.length -= 1
         return self.data_c[self.length]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef int pop_front(self):
+    def pop_front(self):
         if self.length == 0: raise IndexError("pop from empty column")
         cdef int val = self.data_c[0]
         memmove(self.data_c, self.data_c + 1, (self.length - 1) * sizeof(int))
@@ -117,14 +115,14 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void concat(self, IntColumn other):
+    def concat(self, IntColumn other):
         self._reserve(self.length + other.length)
         memcpy(self.data_c + self.length, other.data_c, other.length * sizeof(int))
         self.length += other.length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef int max(self):
+    def max(self):
         if self.length == 0: raise ValueError("empty column")
         cdef int max_val = self.data_c[0]
         for i in range(1, self.length):
@@ -133,7 +131,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef int min(self):
+    def min(self):
         if self.length == 0: raise ValueError("empty column")
         cdef int min_val = self.data_c[0]
         for i in range(1, self.length):
@@ -142,7 +140,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double mean(self):
+    def mean(self):
         if self.length == 0: return NAN
         cdef double sum_val = 0
         for i in range(self.length):
@@ -151,7 +149,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double var(self):
+    def var(self):
         if self.length < 2: return 0.0
         cdef double m = self.mean()
         cdef double sum_sq = 0
@@ -161,12 +159,12 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double std(self):
+    def std(self):
         return sqrt(self.var())
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef IntColumn diff(self):
+    def diff(self):
         """计算一阶差分，首位用 0 填充"""
         cdef IntColumn res = IntColumn(self.capacity)
         if self.length == 0: return res
@@ -177,8 +175,9 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void _reorder(self, list indices):
+    def _reorder(self, list indices):
         cdef int* new_data = <int*>malloc(self.capacity * sizeof(int))
+        if not new_data: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(self.length):
             new_data[i] = self.data_c[<Py_ssize_t>indices[i]]
@@ -204,6 +203,7 @@ cdef class DoubleColumn(BaseColumn):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.data_c = <double*>malloc(self.capacity * sizeof(double))
+        if not self.data_c: raise MemoryError()
 
     def __dealloc__(self):
         if self.data_c is not NULL: free(self.data_c)
@@ -211,11 +211,12 @@ cdef class DoubleColumn(BaseColumn):
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
             self.data_c = <double*>realloc(self.data_c, new_cap * sizeof(double))
+            if not self.data_c: raise MemoryError()
             self.capacity = new_cap
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void append(self, double val):
+    def append(self, double val):
         if self.length >= self.capacity:
             self._reserve(self.capacity * 2)
         self.data_c[self.length] = val
@@ -223,7 +224,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef DoubleColumn copy(self):
+    def copy(self):
         cdef DoubleColumn new_col = DoubleColumn(self.capacity)
         new_col.length = self.length
         memcpy(new_col.data_c, self.data_c, self.length * sizeof(double))
@@ -231,14 +232,14 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double pop_back(self):
+    def pop_back(self):
         if self.length == 0: raise IndexError("pop from empty column")
         self.length -= 1
         return self.data_c[self.length]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double pop_front(self):
+    def pop_front(self):
         if self.length == 0: raise IndexError("pop from empty column")
         cdef double val = self.data_c[0]
         memmove(self.data_c, self.data_c + 1, (self.length - 1) * sizeof(double))
@@ -247,14 +248,14 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void concat(self, DoubleColumn other):
+    def concat(self, DoubleColumn other):
         self._reserve(self.length + other.length)
         memcpy(self.data_c + self.length, other.data_c, other.length * sizeof(double))
         self.length += other.length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double max(self):
+    def max(self):
         if self.length == 0: raise ValueError("empty column")
         cdef double max_val = self.data_c[0]
         for i in range(1, self.length):
@@ -263,7 +264,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double min(self):
+    def min(self):
         if self.length == 0: raise ValueError("empty column")
         cdef double min_val = self.data_c[0]
         for i in range(1, self.length):
@@ -272,7 +273,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double mean(self):
+    def mean(self):
         if self.length == 0: return NAN
         cdef double sum_val = 0
         for i in range(self.length):
@@ -281,7 +282,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double var(self):
+    def var(self):
         if self.length < 2: return 0.0
         cdef double m = self.mean()
         cdef double sum_sq = 0
@@ -291,13 +292,14 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef double std(self):
+    def std(self):
         return sqrt(self.var())
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void _reorder(self, list indices):
+    def _reorder(self, list indices):
         cdef double* new_data = <double*>malloc(self.capacity * sizeof(double))
+        if not new_data: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(self.length):
             new_data[i] = self.data_c[<Py_ssize_t>indices[i]]
@@ -335,7 +337,6 @@ cdef inline void _c_str_replace_inplace(char* buffer, const char* old_sub, const
             memcpy(match, new_sub, new_len)
         match = strstr(match + new_len, old_sub)
 
-
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -356,11 +357,12 @@ cdef class Char256Column_SoA(BaseColumn):
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
             self.data_c = <char*>realloc(self.data_c, new_cap * 256)
+            if not self.data_c: raise MemoryError()
             self.capacity = new_cap
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void append(self, str val):
+    def append(self, str val):
         if self.length >= self.capacity:
             self._reserve(self.capacity * 2)
         cdef bytes b_val = val.encode('ascii', errors='ignore')
@@ -372,7 +374,7 @@ cdef class Char256Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef Char256Column_SoA copy(self):
+    def copy(self):
         cdef Char256Column_SoA new_col = Char256Column_SoA(self.capacity)
         new_col.length = self.length
         memcpy(new_col.data_c, self.data_c, self.length * 256)
@@ -380,7 +382,7 @@ cdef class Char256Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef str pop_back(self):
+    def pop_back(self):
         if self.length == 0: raise IndexError("pop from empty column")
         self.length -= 1
         cdef char* ptr = self.data_c + (self.length * 256)
@@ -388,7 +390,7 @@ cdef class Char256Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef str pop_front(self):
+    def pop_front(self):
         if self.length == 0: raise IndexError("pop from empty column")
         cdef char* ptr = self.data_c
         cdef str val = ptr.decode('ascii')
@@ -398,15 +400,16 @@ cdef class Char256Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void concat(self, Char256Column_SoA other):
+    def concat(self, Char256Column_SoA other):
         self._reserve(self.length + other.length)
         memcpy(self.data_c + (self.length * 256), other.data_c, other.length * 256)
         self.length += other.length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void _reorder(self, list indices):
+    def _reorder(self, list indices):
         cdef char* new_data = <char*>malloc(self.capacity * 256)
+        if not new_data: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(self.length):
             memcpy(new_data + (i * 256), self.data_c + (<Py_ssize_t>indices[i] * 256), 256)
@@ -426,6 +429,7 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef bytes b_sub = substring.encode('ascii')
         cdef const char* c_sub = b_sub
         cdef int* out_idx = <int*>malloc(self.length * sizeof(int))
+        if not out_idx: raise MemoryError()
         cdef int count = 0
         cdef Py_ssize_t i
 
@@ -494,11 +498,12 @@ cdef class UCS2Column_SoA(BaseColumn):
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
             self.data_c = <Py_UCS2*>realloc(self.data_c, new_cap * 128 * sizeof(Py_UCS2))
+            if not self.data_c: raise MemoryError()
             self.capacity = new_cap
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void append(self, str val):
+    def append(self, str val):
         if self.length >= self.capacity:
             self._reserve(self.capacity * 2)
 
@@ -521,7 +526,7 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef UCS2Column_SoA copy(self):
+    def copy(self):
         cdef UCS2Column_SoA new_col = UCS2Column_SoA(self.capacity)
         new_col.length = self.length
         memcpy(new_col.data_c, self.data_c, self.length * 128 * sizeof(Py_UCS2))
@@ -529,7 +534,7 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef str pop_back(self):
+    def pop_back(self):
         if self.length == 0: raise IndexError("pop from empty column")
         self.length -= 1
         cdef Py_UCS2* ptr = self.data_c + (self.length * 128)
@@ -537,7 +542,7 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef str pop_front(self):
+    def pop_front(self):
         if self.length == 0: raise IndexError("pop from empty column")
         cdef Py_UCS2* ptr = self.data_c
         cdef str val = PyUnicode_FromKindAndData(2, ptr, _ucs2_len(ptr))
@@ -547,15 +552,16 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void concat(self, UCS2Column_SoA other):
+    def concat(self, UCS2Column_SoA other):
         self._reserve(self.length + other.length)
         memcpy(self.data_c + (self.length * 128), other.data_c, other.length * 128 * sizeof(Py_UCS2))
         self.length += other.length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef void _reorder(self, list indices):
+    def _reorder(self, list indices):
         cdef Py_UCS2* new_data = <Py_UCS2*>malloc(self.capacity * 128 * sizeof(Py_UCS2))
+        if not new_data: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(self.length):
             memcpy(new_data + (i * 128), self.data_c + (<Py_ssize_t>indices[i] * 128), 128 * sizeof(Py_UCS2))
@@ -582,6 +588,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         needle_buf[kw_len] = 0
 
         cdef int* out_idx = <int*>malloc(self.length * sizeof(int))
+        if not out_idx: raise MemoryError()
         cdef int count = 0
         cdef Py_UCS2* current_str
         cdef int cur_len
@@ -640,7 +647,6 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     def append_row(self, **kwargs):
-        """按行追加数据，底层自动路由至对应列的追加"""
         for col_name, val in kwargs.items():
             self.columns[col_name].append(val)
         self.df_length += 1
