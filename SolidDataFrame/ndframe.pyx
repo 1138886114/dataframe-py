@@ -13,7 +13,7 @@ import unicodedata
 import cython
 from cpython.unicode cimport PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR
 from cpython.long cimport PyLong_FromSsize_t
-from cpython.list cimport PyList_Append, PyList_GetItem, PyList_Size, PyList_New, PyList_SetItem, PyList_GET_SIZE
+from cpython.list cimport PyList_Append, PyList_GetItem, PyList_GET_ITEM, PyList_Size, PyList_New, PyList_SetItem, PyList_GET_SIZE
 import inspect
 import re
 
@@ -337,8 +337,9 @@ cdef class StringAccessor:
     def values(self, index=None):
         cdef NDframe df = self.df
         cdef int field = self.field
+        cdef list src = df.text_list if self.field == FIELD_txt else df.text_sep_list
         if index is None:
-            return df.text_list[:] if field == FIELD_txt else df.text_sep_list[:]
+            return src[:]
         cdef Py_ssize_t idx = int(index)
         cdef Py_ssize_t n = df.length
         if n == 0:
@@ -347,8 +348,7 @@ cdef class StringAccessor:
             idx += n
         if idx < 0 or idx >= n:
             raise IndexError(f"Index {index} out of range for NDframe with {n} rows")
-        cdef list src = df.text_list if field == FIELD_txt else df.text_sep_list
-        return src[idx]
+        return <str>PyList_GET_ITEM(src, idx)
 
     @cython.always_allow_keywords(False)
     def len(self):
@@ -856,6 +856,8 @@ cdef class NDframe:
         cdef list sep = self.text_sep_list
         cdef Py_ssize_t n = self.length
         for i in range(n):
+            cur_txt = <str>PyList_GET_ITEM(txt, i)
+            cur_sep = <str>PyList_GET_ITEM(sep, i)
             yield {
                 "idx": rows[i].idx,
                 "x0": rows[i].x0,
@@ -866,8 +868,8 @@ cdef class NDframe:
                 "height": rows[i].height,
                 "page": rows[i].page,
                 "flags": rows[i].flags,
-                "text": txt[i],
-                "text_sep": sep[i]
+                "text": cur_txt,
+                "text_sep": cur_sep
             }
 
     def __repr__(self):
@@ -999,8 +1001,8 @@ cdef class NDframe:
                 "height": self.rows_c[int_key].height,
                 "page": self.rows_c[int_key].page,
                 "flags": self.rows_c[int_key].flags,
-                "text": self.text_list[int_key],
-                "text_sep": self.text_sep_list[int_key]
+                "text": <str>PyList_GET_ITEM(self.text_list, int_key),
+                "text_sep": <str>PyList_GET_ITEM(self.text_sep_list, int_key)
             }
         else:
             raise TypeError("Indices must be integers or slices (e.g. df[0], df[1:3])")
@@ -1071,8 +1073,8 @@ cdef class NDframe:
             self._reserve(self._capacity * 2)
 
         self.rows_c[self.length] = row[0]
-        self.text_list.append(text)
-        self.text_sep_list.append(text_sep)
+        PyList_Append(self.text_list, text)
+        PyList_Append(self.text_sep_list, text_sep)
         self.length += 1
 
     @cython.always_allow_keywords(False)
@@ -1111,12 +1113,14 @@ cdef class NDframe:
         cdef RowC* rows = self.rows_c
         cdef list txt = self.text_list
         cdef list sep = self.text_sep_list
-        cdef list res = [None] * n
+        cdef list res = PyList_New(n)
         cdef Py_ssize_t i
         cdef RowC* row
 
         for i in range(n):
             row = &rows[i]
+            cur_txt = <str>PyList_GET_ITEM(txt, i)
+            cur_sep = <str>PyList_GET_ITEM(sep, i)
             res[i] = {
                 "idx": row.idx,
                 "x0": row.x0,
@@ -1127,8 +1131,8 @@ cdef class NDframe:
                 "height": row.height,
                 "page": row.page,
                 "flags": row.flags,
-                "text": txt[i],
-                "text_sep": sep[i]
+                "text": cur_txt,
+                "text_sep": cur_sep
             }
         return res
 
