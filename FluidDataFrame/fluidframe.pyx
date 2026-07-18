@@ -5,6 +5,7 @@
 # cython: cdivision=True
 
 cimport cython
+from libc.string cimport strncmp
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport strstr, strlen, strncmp, memmove, memcpy, strncat, strncpy
 from libc.math cimport sqrt, NAN
@@ -23,6 +24,12 @@ cdef enum DataType:
     TYPE_DOUBLE = 2
     TYPE_CHAR256 = 3
     TYPE_UCS2 = 4
+
+
+ctypedef fused NumericType:
+    int
+    double
+
 
 class Char256:
     """用于在 Schema 中标记纯 ASCII 256字节定长字符串类型的占位类"""
@@ -606,6 +613,55 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
 
+cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) nogil:
+    if left >= right: return
+    cdef Py_ssize_t i = left, j = right
+    cdef Py_ssize_t pivot_idx = indices[(left + right) // 2]
+    # pivot 是指向对应字符串起始位置的指针
+    cdef char* pivot_ptr = data + (pivot_idx * 256)
+    cdef Py_ssize_t temp
+
+    while i <= j:
+        while strncmp(data + (indices[i] * 256), pivot_ptr, 256) < 0: i += 1
+        while strncmp(data + (indices[j] * 256), pivot_ptr, 256) > 0: j -= 1
+        if i <= j:
+            temp = indices[i]
+            indices[i] = indices[j]
+            indices[j] = temp
+            i += 1
+            j -= 1
+
+    _c_argsort_char256(data, indices, left, j)
+    _c_argsort_char256(data, indices, i, right)
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef void _c_argsort_numeric(NumericType* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) nogil:
+    if left >= right:
+        return
+
+    cdef Py_ssize_t i = left, j = right
+    cdef Py_ssize_t pivot_idx = indices[(left + right) // 2]
+    cdef NumericType pivot = data[pivot_idx]
+    cdef Py_ssize_t temp
+
+    while i <= j:
+        # 使用底层 C 数组的值进行比较
+        while data[indices[i]] < pivot: i += 1
+        while data[indices[j]] > pivot: j -= 1
+        if i <= j:
+            # 交换索引
+            temp = indices[i]
+            indices[i] = indices[j]
+            indices[j] = temp
+            i += 1
+            j -= 1
+
+    _c_argsort_numeric(data, indices, left, j)
+    _c_argsort_numeric(data, indices, i, right)
+
+
 # ==========================================
 # 6. FastDataFrame: 列式极速聚合引擎
 # ==========================================
@@ -700,16 +756,174 @@ cdef class FastDataFrame:
             del self.columns[col_name]
 
     @cython.binding(False)
-    def sort_by(self, str col_name, bint reverse=False):
-        if col_name not in self.columns: raise ValueError(f"Column {col_name} not found")
+    @cython.always_allow_keywords(False)
+    def argsort_by(self, str col_name, bint reverse=False):
+        """
+        根据指定列进行极速排序，返回排序后的行索引列表
+        """
+        if col_name not in self.columns:
+            raise KeyError(f"Column '{col_name}' not found")
 
-        target_col = self.columns[col_name]
-        cdef list temp_list = [target_col[i] for i in range(self.df_length)]
+        cdef BaseColumn col = self.columns[col_name]
+        cdef Py_ssize_t n = self.df_length
+        if n == 0:
+            return []
 
-        cdef list indices = sorted(range(self.df_length), key=lambda i: temp_list[i], reverse=reverse)
+        cdef Py_ssize_t* indices_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        if not indices_c:
+            raise MemoryError()
 
-        for col in self.columns.values():
-            col._reorder(indices)
+        cdef Py_ssize_t i
+        for i in range(n):
+            indices_c[i] = i
+
+        # 注意: nogil 可以在纯 C 执行期间释放 Python 全局锁，允许其他线程运行
+        if isinstance(col, IntColumn):
+            with nogil:
+                _c_argsort_numeric((<IntColumn>col).data_c, indices_c, 0, n - 1)
+
+        elif isinstance(col, DoubleColumn):
+            with nogil:
+                _c_argsort_numeric((<DoubleColumn>col).data_c, indices_c, 0, n - 1)
+
+        elif isinstance(col, Char256Column_SoA):
+            with nogil:
+                _c_argsort_char256((<Char256Column_SoA>col).data_c, indices_c, 0, n - 1)
+        else:
+            free(indices_c)
+            raise TypeError("Sorting not supported for this column type")
+
+        cdef Py_ssize_t temp
+        if reverse:
+            for i in range(n // 2):
+                temp = indices_c[i]
+                indices_c[i] = indices_c[n - 1 - i]
+                indices_c[n - 1 - i] = temp
+
+        cdef list py_indices = [indices_c[j] for j in range(n)]
+        free(indices_c)
+        return py_indices
+
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def sort_values(self, str col_name, bint reverse=False, bint inplace=False):
+        """
+        对整个 DataFrame 进行排序
+        :param inplace: 如果为 True，就地修改当前对象；如果为 False，返回排序后的新对象
+        """
+        cdef Py_ssize_t n = self.df_length
+        if n == 0:
+            return self if inplace else self._clone_empty()
+
+        cdef list py_indices = self.argsort_by(col_name, reverse=reverse)
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        if not idx_c: raise MemoryError()
+        cdef Py_ssize_t i
+        for i in range(n):
+            idx_c[i] = py_indices[i]
+
+        cdef FastDataFrame result_df
+        if inplace:
+            result_df = self
+        else:
+            result_df = FastDataFrame()
+            result_df.df_length = n
+
+        cdef str name
+        cdef BaseColumn col
+        cdef BaseColumn new_col
+
+        for name, col in self.columns.items():
+            if isinstance(col, IntColumn):
+                new_col = self._reorder_int_column(<IntColumn>col, idx_c, n, inplace)
+            elif isinstance(col, DoubleColumn):
+                new_col = self._reorder_double_column(<DoubleColumn>col, idx_c, n, inplace)
+            elif isinstance(col, Char256Column_SoA):
+                new_col = self._reorder_char256_column(<Char256Column_SoA>col, idx_c, n, inplace)
+            else:
+                raise NotImplementedError()
+            if not inplace:
+                result_df.columns[name] = new_col
+
+        free(idx_c)
+        if not inplace:
+            return result_df
+
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef IntColumn _reorder_int_column(self, IntColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        cdef int* old_data = col.data_c
+        cdef int* new_data = <int*>malloc(col.capacity * sizeof(int))
+        if not new_data: raise MemoryError()
+
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                new_data[i] = old_data[indices[i]]
+
+        if inplace:
+            free(col.data_c)
+            col.data_c = new_data
+            return col
+        else:
+            new_col = IntColumn(init_capacity=col.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef DoubleColumn _reorder_double_column(self, DoubleColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        cdef double* old_data = col.data_c
+        cdef double* new_data = <double*>malloc(col.capacity * sizeof(double))
+        if not new_data: raise MemoryError()
+
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                new_data[i] = old_data[indices[i]]
+
+        if inplace:
+            free(col.data_c)
+            col.data_c = new_data
+            return col
+        else:
+            new_col = DoubleColumn(init_capacity=col.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef Char256Column_SoA _reorder_char256_column(self, Char256Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        # 字符串重排使用 memcpy 进行批量 256 字节的拷贝
+        from libc.string cimport memcpy
+        cdef char* old_data = col.data_c
+        cdef char* new_data = <char*>malloc(col.capacity * 256)
+        if not new_data: raise MemoryError()
+
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                memcpy(new_data + (i * 256), old_data + (indices[i] * 256), 256)
+
+        if inplace:
+            free(col.data_c)
+            col.data_c = new_data
+            return col
+        else:
+            new_col = Char256Column_SoA(init_capacity=col.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
