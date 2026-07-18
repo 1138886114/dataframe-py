@@ -870,7 +870,7 @@ cdef class FastDataFrame:
             col.data_c = new_data
             return col
         else:
-            new_col = IntColumn(init_capacity=col.capacity)
+            new_col = IntColumn(col.capacity)
             free(new_col.data_c)
             new_col.data_c = new_data
             new_col.length = n
@@ -893,7 +893,7 @@ cdef class FastDataFrame:
             col.data_c = new_data
             return col
         else:
-            new_col = DoubleColumn(init_capacity=col.capacity)
+            new_col = DoubleColumn(col.capacity)
             free(new_col.data_c)
             new_col.data_c = new_data
             new_col.length = n
@@ -916,11 +916,74 @@ cdef class FastDataFrame:
             col.data_c = new_data
             return col
         else:
-            new_col = Char256Column_SoA(init_capacity=col.capacity)
+            new_col = Char256Column_SoA(col.capacity)
             free(new_col.data_c)
             new_col.data_c = new_data
             new_col.length = n
             return new_col
+
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    def diff(self, str col_name, int periods=1):
+        """
+        计算指定列的差分
+        """
+        if col_name not in self.columns:
+            raise KeyError(f"Column '{col_name}' not found")
+
+        cdef BaseColumn col = self.columns[col_name]
+        if periods < 0:
+            raise ValueError("periods must be >= 0")
+
+        if isinstance(col, DoubleColumn):
+            return self._diff_double(<DoubleColumn>col, periods)
+        elif isinstance(col, IntColumn):
+            return self._diff_int(<IntColumn>col, periods)
+        else:
+            raise TypeError(f"diff is only supported for numeric columns, got {type(col)}")
+
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef DoubleColumn _diff_double(self, DoubleColumn col, int periods):
+        cdef Py_ssize_t n = col.length
+        cdef DoubleColumn new_col = DoubleColumn(init_capacity=col.capacity)
+        new_col.length = n
+
+        cdef double* old_data = col.data_c
+        cdef double* new_data = new_col.data_c
+        cdef Py_ssize_t i
+
+        with nogil:
+            for i in range(n):
+                if i < periods:
+                    new_data[i] = NAN
+                else:
+                    new_data[i] = old_data[i] - old_data[i - periods]
+        return new_col
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef IntColumn _diff_int(self, IntColumn col, int periods):
+        cdef Py_ssize_t n = col.length
+        cdef IntColumn new_col = IntColumn(init_capacity=col.capacity)
+        new_col.length = n
+
+        cdef int* old_data = col.data_c
+        cdef int* new_data = new_col.data_c
+        cdef Py_ssize_t i
+
+        with nogil:
+            for i in range(n):
+                if i < periods:
+                    new_data[i] = 0
+                else:
+                    new_data[i] = old_data[i] - old_data[i - periods]
+
+        return new_col
 
 
     @cython.binding(False)
