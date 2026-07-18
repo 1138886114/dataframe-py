@@ -613,7 +613,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
 
-cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) nogil:
+cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return
     cdef Py_ssize_t i = left, j = right
     cdef Py_ssize_t pivot_idx = indices[(left + right) // 2]
@@ -637,7 +637,7 @@ cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, P
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef void _c_argsort_numeric(NumericType* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) nogil:
+cdef void _c_argsort_numeric(NumericType* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right:
         return
 
@@ -902,8 +902,6 @@ cdef class FastDataFrame:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     cdef Char256Column_SoA _reorder_char256_column(self, Char256Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        # 字符串重排使用 memcpy 进行批量 256 字节的拷贝
-        from libc.string cimport memcpy
         cdef char* old_data = col.data_c
         cdef char* new_data = <char*>malloc(col.capacity * 256)
         if not new_data: raise MemoryError()
