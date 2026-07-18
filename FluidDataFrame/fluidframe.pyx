@@ -950,7 +950,7 @@ cdef class FastDataFrame:
     @cython.wraparound(False)
     cdef DoubleColumn _diff_double(self, DoubleColumn col, int periods):
         cdef Py_ssize_t n = col.length
-        cdef DoubleColumn new_col = DoubleColumn(init_capacity=col.capacity)
+        cdef DoubleColumn new_col = DoubleColumn(col.capacity)
         new_col.length = n
 
         cdef double* old_data = col.data_c
@@ -969,7 +969,7 @@ cdef class FastDataFrame:
     @cython.wraparound(False)
     cdef IntColumn _diff_int(self, IntColumn col, int periods):
         cdef Py_ssize_t n = col.length
-        cdef IntColumn new_col = IntColumn(init_capacity=col.capacity)
+        cdef IntColumn new_col = IntColumn(col.capacity)
         new_col.length = n
 
         cdef int* old_data = col.data_c
@@ -992,7 +992,7 @@ cdef class FastDataFrame:
         cdef IntColumn idx_col = IntColumn(self.df_length)
         cdef Py_ssize_t i
         for i in range(self.df_length):
-            idx_col.append(i)
+            idx_col.data_c[i] = <int>i
         self.columns['index'] = idx_col
 
     @cython.binding(False)
