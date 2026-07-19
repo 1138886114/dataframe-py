@@ -320,6 +320,125 @@ cdef class DoubleColumn(BaseColumn):
         return self.data_c[idx]
 
 
+    # ==========================================
+    # 数值型列：高级统计与算术运算
+    # ==========================================
+    @cython.binding(False)
+    def count_nonzeros(self):
+        cdef Py_ssize_t count = 0
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                if self.data_c[i] != 0: count += 1
+        return count
+
+    @cython.binding(False)
+    def sum(self):
+        cdef double total = 0
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                total += self.data_c[i]
+        return total
+
+    @cython.binding(False)
+    def idxmax(self):
+        if self.length == 0: raise ValueError("empty column")
+        cdef Py_ssize_t max_idx = 0
+        cdef double max_val = self.data_c[0]
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(1, self.length):
+                if self.data_c[i] > max_val:
+                    max_val = self.data_c[i]
+                    max_idx = i
+        return max_idx
+
+    @cython.binding(False)
+    def idxmin(self):
+        if self.length == 0: raise ValueError("empty column")
+        cdef Py_ssize_t min_idx = 0
+        cdef double min_val = self.data_c[0]
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(1, self.length):
+                if self.data_c[i] < min_val:
+                    min_val = self.data_c[i]
+                    min_idx = i
+        return min_idx
+
+    @cython.binding(False)
+    def argmax(self): return self.idxmax()
+
+    @cython.binding(False)
+    def argmin(self): return self.idxmin()
+
+    @cython.binding(False)
+    def median(self):
+        if self.length == 0: return NAN
+        cdef double* temp = <double*>malloc(self.length * sizeof(double))
+        if not temp: raise MemoryError()
+        memcpy(temp, self.data_c, self.length * sizeof(double))
+        # 借助 Python 的 sort，或者这里用 C 的 qsort（为保持极速此处略写 qsort wrapper，直接用 Python）
+        cdef list py_list = [temp[i] for i in range(self.length)]
+        free(temp)
+        py_list.sort()
+        cdef Py_ssize_t mid = self.length // 2
+        if self.length % 2 == 0:
+            return (py_list[mid - 1] + py_list[mid]) / 2.0
+        return py_list[mid]
+
+    @cython.binding(False)
+    def mad(self):
+        """平均绝对离差"""
+        if self.length == 0: return NAN
+        cdef double m = self.mean()
+        cdef double total_dev = 0
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                total_dev += fabs(self.data_c[i] - m)
+        return total_dev / self.length
+
+    # 元素级四则运算 (支持标量)
+    @cython.binding(False)
+    def add(self, double val, double fill_value=0.0):
+        cdef DoubleColumn res = DoubleColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length): res.data_c[i] = self.data_c[i] + val
+        return res
+
+    @cython.binding(False)
+    def sub(self, double val, double fill_value=0.0):
+        cdef DoubleColumn res = DoubleColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length): res.data_c[i] = self.data_c[i] - val
+        return res
+
+    @cython.binding(False)
+    def mul(self, double val, double fill_value=0.0):
+        cdef DoubleColumn res = DoubleColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length): res.data_c[i] = self.data_c[i] * val
+        return res
+
+    @cython.binding(False)
+    def div(self, double val, double fill_value=0.0):
+        cdef DoubleColumn res = DoubleColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = self.data_c[i] / val if val != 0 else NAN
+        return res
+
+
 # ==========================================
 # 4. 纯 ASCII 定长 256 存储组件 (Char256)
 # ==========================================
@@ -460,6 +579,150 @@ cdef class Char256Column_SoA(BaseColumn):
             for i in range(self.length):
                 _c_str_replace_inplace(self.data_c + (i * 256), c_old, c_new)
         return self
+
+
+    # ==========================================
+    # 字符串操作：Pandas str 风格接口
+    # ==========================================
+    @cython.binding(False)
+    def replaces(self, *args):
+        """支持连续替换 df['txt'].replaces('old1','new1', 'old2','new2')"""
+        if len(args) % 2 != 0: raise ValueError("Arguments must be in pairs")
+        cdef int i
+        for i in range(0, len(args), 2):
+            self.replace(args[i], args[i+1])
+        return self
+
+    @cython.binding(False)
+    def extract(self, str pattern):
+        """返回匹配的第一个捕获组新列"""
+        prog = re.compile(pattern)
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = (self.data_c + i * 256).decode('ascii', errors='ignore')
+            match = prog.search(s)
+            if match and match.groups():
+                res.append(match.group(1))
+            else:
+                res.append("")
+        return res
+
+    @cython.binding(False)
+    def extract_twice(self, str pattern):
+        """返回符合第一、二个捕获组，赋值给两个新列"""
+        prog = re.compile(pattern)
+        cdef Char256Column_SoA res1 = Char256Column_SoA(self.capacity)
+        cdef Char256Column_SoA res2 = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = (self.data_c + i * 256).decode('ascii', errors='ignore')
+            match = prog.search(s)
+            if match and len(match.groups()) >= 2:
+                res1.append(match.group(1))
+                res2.append(match.group(2))
+            else:
+                res1.append("")
+                res2.append("")
+        return res1, res2
+
+    @cython.binding(False)
+    def len(self):
+        """返回字符串长度 IntColumn"""
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = <int>strlen(self.data_c + i * 256)
+        return res
+
+    @cython.binding(False)
+    def len_list(self):
+        return [strlen(self.data_c + i * 256) for i in range(self.length)]
+
+    @cython.binding(False)
+    def startswith(self, str prefix):
+        cdef bytes b_pre = prefix.encode('ascii')
+        cdef const char* c_pre = b_pre
+        cdef Py_ssize_t pre_len = strlen(c_pre)
+        cdef IntColumn res = IntColumn(self.capacity) # 用 1/0 表示 True/False
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if strncmp(self.data_c + i * 256, c_pre, pre_len) == 0 else 0
+        return res
+
+    @cython.binding(False)
+    def endswith(self, str suffix):
+        cdef bytes b_suf = suffix.encode('ascii')
+        cdef const char* c_suf = b_suf
+        cdef Py_ssize_t suf_len = strlen(c_suf)
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i, curr_len
+        cdef char* ptr
+        with nogil:
+            for i in range(self.length):
+                ptr = self.data_c + i * 256
+                curr_len = strlen(ptr)
+                if curr_len >= suf_len and strncmp(ptr + curr_len - suf_len, c_suf, suf_len) == 0:
+                    res.data_c[i] = 1
+                else:
+                    res.data_c[i] = 0
+        return res
+
+    @cython.binding(False)
+    def lower(self):
+        cdef Char256Column_SoA res = self.copy()
+        cdef Py_ssize_t i, j
+        cdef char* ptr
+        with nogil:
+            for i in range(self.length):
+                ptr = res.data_c + i * 256
+                for j in range(256):
+                    if ptr[j] == b'\0': break
+                    ptr[j] = tolower(ptr[j])
+        return res
+
+    @cython.binding(False)
+    def upper(self):
+        cdef Char256Column_SoA res = self.copy()
+        cdef Py_ssize_t i, j
+        cdef char* ptr
+        with nogil:
+            for i in range(self.length):
+                ptr = res.data_c + i * 256
+                for j in range(256):
+                    if ptr[j] == b'\0': break
+                    ptr[j] = toupper(ptr[j])
+        return res
+
+    @cython.binding(False)
+    def isdigit(self):
+        """是否全部是数字"""
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i, j
+        cdef char* ptr
+        cdef bint valid
+        with nogil:
+            for i in range(self.length):
+                ptr = self.data_c + i * 256
+                if ptr[0] == b'\0':
+                    res.data_c[i] = 0
+                    continue
+                valid = 1
+                for j in range(256):
+                    if ptr[j] == b'\0': break
+                    if not isdigit(ptr[j]):
+                        valid = 0
+                        break
+                res.data_c[i] = valid
+        return res
 
 
 # ==========================================
@@ -1034,3 +1297,230 @@ cdef class FastDataFrame:
     @cython.always_allow_keywords(False)
     def __repr__(self):
         return f"<FastDataFrame: {self.df_length} rows, columns: {list(self.columns.keys())}>"
+
+
+    # ==========================================
+    # FastDataFrame 结构操控
+    # ==========================================
+    @cython.binding(False)
+    def drop_col(self, str col_name):
+        """等同于 del df['col']"""
+        self.drop(col_name)
+
+    @cython.binding(False)
+    def sort_index(self, bint ascending=True, bint inplace=False):
+        """按照 'index' 列重排"""
+        if 'index' not in self.columns:
+            raise KeyError("No 'index' column found. Call reset_index() first.")
+        return self.sort_values('index', reverse=not ascending, inplace=inplace)
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef UCS2Column_SoA _reorder_ucs2_column(self, UCS2Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        """重新排布 UCS2 变长字符串的内存池，自动清除被删除项留下的内存碎片"""
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>malloc((n + 1) * sizeof(Py_ssize_t))
+        cdef Py_UCS2* new_chars = <Py_UCS2*>malloc(col.char_capacity * sizeof(Py_UCS2))
+        if not new_offsets or not new_chars: raise MemoryError()
+
+        new_offsets[0] = 0
+        cdef Py_ssize_t current_char_len = 0
+        cdef Py_ssize_t i, idx, start, end, str_len
+
+        # 内存压缩：只提取保留部分的字符数据到新的连续块
+        with nogil:
+            for i in range(n):
+                idx = indices[i]
+                start = col.offsets_c[idx]
+                end = col.offsets_c[idx + 1]
+                str_len = end - start
+
+                if str_len > 0:
+                    memcpy(new_chars + current_char_len, col.chars_c + start, str_len * sizeof(Py_UCS2))
+
+                current_char_len += str_len
+                new_offsets[i + 1] = current_char_len
+
+        if inplace:
+            free(col.offsets_c)
+            free(col.chars_c)
+            col.offsets_c = new_offsets
+            col.chars_c = new_chars
+            col.char_length = current_char_len
+            col.length = n
+            return col
+        else:
+            cdef UCS2Column_SoA new_col = UCS2Column_SoA(col.capacity)
+            free(new_col.offsets_c)
+            free(new_col.chars_c)
+            new_col.offsets_c = new_offsets
+            new_col.chars_c = new_chars
+            new_col.char_length = current_char_len
+            new_col.char_capacity = col.char_capacity
+            new_col.length = n
+            return new_col
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    @cython.binding(False)
+    def drop_with_index(self, list drop_indices, bint inplace=False):
+        """
+        批量删除指定行索引的行。
+        采用 C 级别掩码标记机制，完美解决“越删索引越偏”的问题，
+        全程仅发生一次内存拷贝重组，时间复杂度 O(N)。
+        """
+        cdef Py_ssize_t n_orig = self.df_length
+        if n_orig == 0:
+            return self if inplace else self.copy()
+
+        # 1. 申请 C 级别布尔掩码数组并初始化为 0 (0: 保留, 1: 删除)
+        cdef char* drop_mask = <char*>malloc(n_orig * sizeof(char))
+        if not drop_mask: raise MemoryError()
+        cdef Py_ssize_t i
+        for i in range(n_orig):
+            drop_mask[i] = 0
+
+        # 2. 标记需要删除的行 (支持负数索引倒数)
+        cdef Py_ssize_t idx
+        for py_idx in drop_indices:
+            idx = <Py_ssize_t>py_idx
+            if idx < 0: idx += n_orig
+            if idx < 0 or idx >= n_orig:
+                free(drop_mask)
+                raise IndexError(f"Index {py_idx} out of bounds")
+            drop_mask[idx] = 1
+
+        # 3. 统计需要保留的行数
+        cdef Py_ssize_t keep_count = 0
+        for i in range(n_orig):
+            if drop_mask[i] == 0:
+                keep_count += 1
+
+        # 如果全删或全不删的捷径处理
+        if keep_count == n_orig:
+            free(drop_mask)
+            return self if inplace else self.copy()
+        if keep_count == 0:
+            free(drop_mask)
+            if inplace:
+                # 若原地删除全部，直接重置长度
+                self.df_length = 0
+                for col_obj in self.columns.values(): col_obj.length = 0
+                return self
+            else:
+                return FastDataFrame() # 返回空表
+
+        # 4. 构建保留行的新连续 C 数组
+        cdef Py_ssize_t* keep_idx_c = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
+        if not keep_idx_c:
+            free(drop_mask)
+            raise MemoryError()
+
+        cdef Py_ssize_t j = 0
+        for i in range(n_orig):
+            if drop_mask[i] == 0:
+                keep_idx_c[j] = i
+                j += 1
+        free(drop_mask) # 掩码用完即毁
+
+        # 5. 调用底层的多态列级重建，并行化更新各列内存
+        cdef FastDataFrame result_df
+        if inplace:
+            result_df = self
+            self.df_length = keep_count
+        else:
+            result_df = FastDataFrame()
+            result_df.df_length = keep_count
+
+        cdef str name
+        cdef BaseColumn col, new_col
+        for name, col in self.columns.items():
+            if isinstance(col, IntColumn):
+                new_col = self._reorder_int_column(<IntColumn>col, keep_idx_c, keep_count, inplace)
+            elif isinstance(col, DoubleColumn):
+                new_col = self._reorder_double_column(<DoubleColumn>col, keep_idx_c, keep_count, inplace)
+            elif isinstance(col, Char256Column_SoA):
+                new_col = self._reorder_char256_column(<Char256Column_SoA>col, keep_idx_c, keep_count, inplace)
+            elif isinstance(col, UCS2Column_SoA):
+                new_col = self._reorder_ucs2_column(<UCS2Column_SoA>col, keep_idx_c, keep_count, inplace)
+            else:
+                free(keep_idx_c)
+                raise TypeError(f"Drop not supported for column {name}")
+
+            if not inplace:
+                result_df.columns[name] = new_col
+
+        free(keep_idx_c)
+        if not inplace:
+            return result_df
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    @cython.binding(False)
+    def drop_raw(self, Py_ssize_t row_idx):
+        """
+        极速硬删除指定行（索引）。
+        底层通过 C 的 memmove 将后续所有数据整体前移 1 位，时间复杂度 O(N)
+        """
+        if row_idx < 0 or row_idx >= self.df_length:
+            raise IndexError("Row index out of range")
+
+        cdef str name
+        cdef BaseColumn col
+        cdef Py_ssize_t rem_len = self.df_length - row_idx - 1
+
+        for name, col in self.columns.items():
+            if isinstance(col, IntColumn):
+                if rem_len > 0:
+                    memmove((<IntColumn>col).data_c + row_idx,
+                            (<IntColumn>col).data_c + row_idx + 1,
+                            rem_len * sizeof(int))
+                (<IntColumn>col).length -= 1
+
+            elif isinstance(col, DoubleColumn):
+                if rem_len > 0:
+                    memmove((<DoubleColumn>col).data_c + row_idx,
+                            (<DoubleColumn>col).data_c + row_idx + 1,
+                            rem_len * sizeof(double))
+                (<DoubleColumn>col).length -= 1
+
+            elif isinstance(col, Char256Column_SoA):
+                if rem_len > 0:
+                    memmove((<Char256Column_SoA>col).data_c + (row_idx * 256),
+                            (<Char256Column_SoA>col).data_c + ((row_idx + 1) * 256),
+                            rem_len * 256)
+                (<Char256Column_SoA>col).length -= 1
+
+            elif isinstance(col, UCS2Column_SoA):
+                # 对于定长池的变长字符串，删除中间的行最为复杂，需调整后续所有字符池和偏移量
+                self._drop_row_ucs2(<UCS2Column_SoA>col, row_idx, rem_len)
+
+        self.df_length -= 1
+
+    cdef void _drop_row_ucs2(self, UCS2Column_SoA col, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        cdef Py_ssize_t start_offset = col.offsets_c[row_idx]
+        cdef Py_ssize_t end_offset = col.offsets_c[row_idx + 1]
+        cdef Py_ssize_t char_len = end_offset - start_offset
+
+        # 1. 挪动字符池 (清除碎片)
+        cdef Py_ssize_t rem_chars = col.char_length - end_offset
+        if rem_chars > 0:
+            memmove(col.chars_c + start_offset,
+                    col.chars_c + end_offset,
+                    rem_chars * sizeof(Py_UCS2))
+        col.char_length -= char_len
+
+        # 2. 挪动并更新偏移量数组
+        cdef Py_ssize_t i
+        for i in range(row_idx, col.length):
+            col.offsets_c[i] = col.offsets_c[i + 1] - char_len
+        col.length -= 1
+
+    @cython.binding(False)
+    def argmax(self, str col_name):
+        """返回指定列最大值所在的 DataFrame 级别索引"""
+        return self.columns[col_name].idxmax()
+
+    @cython.binding(False)
+    def argmin(self, str col_name):
+        """返回指定列最小值所在的 DataFrame 级别索引"""
+        return self.columns[col_name].idxmin()
