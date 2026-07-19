@@ -8,12 +8,25 @@ cimport cython
 from libc.string cimport strncmp
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport strstr, strlen, strncmp, memmove, memcpy, strncat, strncpy
-from libc.math cimport sqrt, NAN
+from libc.math cimport sqrt, fabs, NAN
+
+cdef extern from "<ctype.h>" nogil:
+    int tolower(int)
+    int toupper(int)
+    int isdigit(int)
+    int isspace(int)
+    int isalpha(int)
+    int isalnum(int)
+    int islower(int)
+    int isupper(int)
+
 from cpython.unicode cimport (
     PyUnicode_4BYTE_KIND, PyUnicode_FromKindAndData,
     PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR, PyUnicode_AsUCS4,
+    PyUnicode_KIND, PyUnicode_2BYTE_KIND, PyUnicode_DATA,
     Py_UCS2
 )
+import re
 
 # ==========================================
 # 1. 枚举与基础类型定义
@@ -168,6 +181,130 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def std(self):
         return sqrt(self.var())
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def count_nonzeros(self):
+        cdef Py_ssize_t count = 0
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                if self.data_c[i] != 0: count += 1
+        return count
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def sum(self):
+        cdef double total = 0
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                total += self.data_c[i]
+        return total
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def idxmax(self):
+        if self.length == 0: raise ValueError("empty column")
+        cdef Py_ssize_t max_idx = 0
+        cdef int max_val = self.data_c[0]
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(1, self.length):
+                if self.data_c[i] > max_val:
+                    max_val = self.data_c[i]
+                    max_idx = i
+        return max_idx
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def idxmin(self):
+        if self.length == 0: raise ValueError("empty column")
+        cdef Py_ssize_t min_idx = 0
+        cdef int min_val = self.data_c[0]
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(1, self.length):
+                if self.data_c[i] < min_val:
+                    min_val = self.data_c[i]
+                    min_idx = i
+        return min_idx
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def argmax(self): return self.idxmax()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def argmin(self): return self.idxmin()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def median(self):
+        if self.length == 0: return NAN
+        cdef int* temp = <int*>malloc(self.length * sizeof(int))
+        if not temp: raise MemoryError()
+        memcpy(temp, self.data_c, self.length * sizeof(int))
+        cdef list py_list = [temp[i] for i in range(self.length)]
+        free(temp)
+        py_list.sort()
+        cdef Py_ssize_t mid = self.length // 2
+        if self.length % 2 == 0:
+            return (py_list[mid - 1] + py_list[mid]) / 2.0
+        return py_list[mid]
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def mad(self):
+        if self.length == 0: return NAN
+        cdef double m = self.mean()
+        cdef double total_dev = 0
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                total_dev += fabs(<double>self.data_c[i] - m)
+        return total_dev / self.length
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def add(self, int val, int fill_value=0):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length): res.data_c[i] = self.data_c[i] + val
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def sub(self, int val, int fill_value=0):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length): res.data_c[i] = self.data_c[i] - val
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def mul(self, int val, int fill_value=0):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length): res.data_c[i] = self.data_c[i] * val
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def div(self, int val, int fill_value=0):
+        cdef DoubleColumn res = DoubleColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = <double>self.data_c[i] / val if val != 0 else NAN
+        return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -724,6 +861,267 @@ cdef class Char256Column_SoA(BaseColumn):
                 res.data_c[i] = valid
         return res
 
+    @cython.binding(False)
+    def strip(self):
+        cdef Char256Column_SoA res = self.copy()
+        cdef Py_ssize_t i, left, right
+        cdef char* ptr
+        with nogil:
+            for i in range(self.length):
+                ptr = res.data_c + i * 256
+                left = 0
+                while left < 256 and ptr[left] != b'\0' and isspace(ptr[left]):
+                    left += 1
+                if left == 256 or ptr[left] == b'\0':
+                    ptr[0] = b'\0'
+                    continue
+                right = 255
+                while right >= 0 and (ptr[right] == b'\0' or isspace(ptr[right])):
+                    right -= 1
+                if left > 0:
+                    memmove(ptr, ptr + left, right - left + 1)
+                ptr[right - left + 1] = b'\0'
+        return res
+
+    @cython.binding(False)
+    def lstrip(self):
+        cdef Char256Column_SoA res = self.copy()
+        cdef Py_ssize_t i, left, remaining
+        cdef char* ptr
+        with nogil:
+            for i in range(self.length):
+                ptr = res.data_c + i * 256
+                left = 0
+                while left < 256 and ptr[left] != b'\0' and isspace(ptr[left]):
+                    left += 1
+                if left > 0:
+                    remaining = 255 - left
+                    memmove(ptr, ptr + left, remaining + 1)
+                    ptr[remaining] = b'\0'
+        return res
+
+    @cython.binding(False)
+    def rstrip(self):
+        cdef Char256Column_SoA res = self.copy()
+        cdef Py_ssize_t i, right
+        cdef char* ptr
+        with nogil:
+            for i in range(self.length):
+                ptr = res.data_c + i * 256
+                right = 255
+                while right >= 0 and (ptr[right] == b'\0' or isspace(ptr[right])):
+                    right -= 1
+                if right < 255:
+                    ptr[right + 1] = b'\0'
+        return res
+
+    @cython.binding(False)
+    def find(self, str substring):
+        cdef bytes b_sub = substring.encode('ascii')
+        cdef const char* c_sub = b_sub
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef char* match
+        with nogil:
+            for i in range(self.length):
+                match = strstr(self.data_c + i * 256, c_sub)
+                if match != NULL:
+                    res.data_c[i] = <int>(match - (self.data_c + i * 256))
+                else:
+                    res.data_c[i] = -1
+        return res
+
+    @cython.binding(False)
+    def count(self, str substring):
+        cdef bytes b_sub = substring.encode('ascii')
+        cdef const char* c_sub = b_sub
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef char* ptr
+        cdef char* match
+        cdef int cnt
+        with nogil:
+            for i in range(self.length):
+                ptr = self.data_c + i * 256
+                cnt = 0
+                match = strstr(ptr, c_sub)
+                while match != NULL:
+                    cnt += 1
+                    match = strstr(match + 1, c_sub)
+                res.data_c[i] = cnt
+        return res
+
+    @cython.binding(False)
+    def isalpha(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i, j
+        cdef char* ptr
+        cdef bint valid
+        with nogil:
+            for i in range(self.length):
+                ptr = self.data_c + i * 256
+                if ptr[0] == b'\0':
+                    res.data_c[i] = 0
+                    continue
+                valid = 1
+                for j in range(256):
+                    if ptr[j] == b'\0': break
+                    if not isalpha(ptr[j]):
+                        valid = 0
+                        break
+                res.data_c[i] = valid
+        return res
+
+    @cython.binding(False)
+    def isalnum(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i, j
+        cdef char* ptr
+        cdef bint valid
+        with nogil:
+            for i in range(self.length):
+                ptr = self.data_c + i * 256
+                if ptr[0] == b'\0':
+                    res.data_c[i] = 0
+                    continue
+                valid = 1
+                for j in range(256):
+                    if ptr[j] == b'\0': break
+                    if not isalnum(ptr[j]):
+                        valid = 0
+                        break
+                res.data_c[i] = valid
+        return res
+
+    @cython.binding(False)
+    def isspace(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i, j
+        cdef char* ptr
+        cdef bint valid
+        with nogil:
+            for i in range(self.length):
+                ptr = self.data_c + i * 256
+                if ptr[0] == b'\0':
+                    res.data_c[i] = 0
+                    continue
+                valid = 1
+                for j in range(256):
+                    if ptr[j] == b'\0': break
+                    if not isspace(ptr[j]):
+                        valid = 0
+                        break
+                res.data_c[i] = valid
+        return res
+
+    @cython.binding(False)
+    def islower(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i, j
+        cdef char* ptr
+        cdef bint has_letter, all_lower
+        with nogil:
+            for i in range(self.length):
+                ptr = self.data_c + i * 256
+                if ptr[0] == b'\0':
+                    res.data_c[i] = 0
+                    continue
+                has_letter = 0
+                all_lower = 1
+                for j in range(256):
+                    if ptr[j] == b'\0': break
+                    if isalpha(ptr[j]):
+                        has_letter = 1
+                        if not islower(ptr[j]):
+                            all_lower = 0
+                            break
+                res.data_c[i] = 1 if (has_letter and all_lower) else 0
+        return res
+
+    @cython.binding(False)
+    def isupper(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i, j
+        cdef char* ptr
+        cdef bint has_letter, all_upper
+        with nogil:
+            for i in range(self.length):
+                ptr = self.data_c + i * 256
+                if ptr[0] == b'\0':
+                    res.data_c[i] = 0
+                    continue
+                has_letter = 0
+                all_upper = 1
+                for j in range(256):
+                    if ptr[j] == b'\0': break
+                    if isalpha(ptr[j]):
+                        has_letter = 1
+                        if not isupper(ptr[j]):
+                            all_upper = 0
+                            break
+                res.data_c[i] = 1 if (has_letter and all_upper) else 0
+        return res
+
+    @cython.binding(False)
+    def removeprefix(self, str prefix):
+        cdef bytes b_pre = prefix.encode('ascii')
+        cdef const char* c_pre = b_pre
+        cdef Py_ssize_t pre_len = len(b_pre)
+        cdef Char256Column_SoA res = self.copy()
+        cdef Py_ssize_t i
+        cdef char* ptr
+        cdef Py_ssize_t curr_len
+        with nogil:
+            for i in range(self.length):
+                ptr = res.data_c + i * 256
+                curr_len = strlen(ptr)
+                if curr_len >= pre_len and strncmp(ptr, c_pre, pre_len) == 0:
+                    memmove(ptr, ptr + pre_len, curr_len - pre_len + 1)
+        return res
+
+    @cython.binding(False)
+    def removesuffix(self, str suffix):
+        cdef bytes b_suf = suffix.encode('ascii')
+        cdef const char* c_suf = b_suf
+        cdef Py_ssize_t suf_len = len(b_suf)
+        cdef Char256Column_SoA res = self.copy()
+        cdef Py_ssize_t i
+        cdef char* ptr
+        cdef Py_ssize_t curr_len
+        with nogil:
+            for i in range(self.length):
+                ptr = res.data_c + i * 256
+                curr_len = strlen(ptr)
+                if curr_len >= suf_len and strncmp(ptr + curr_len - suf_len, c_suf, suf_len) == 0:
+                    ptr[curr_len - suf_len] = b'\0'
+        return res
+
+    @cython.binding(False)
+    def zfill(self, Py_ssize_t width):
+        cdef Char256Column_SoA res = self.copy()
+        cdef Py_ssize_t i, j, curr_len, pad
+        cdef char* ptr
+        with nogil:
+            for i in range(self.length):
+                ptr = res.data_c + i * 256
+                curr_len = strlen(ptr)
+                if curr_len >= width or curr_len >= 255:
+                    continue
+                pad = width - curr_len
+                if curr_len + pad > 255:
+                    pad = 255 - curr_len
+                memmove(ptr + pad, ptr, curr_len + 1)
+                for j in range(pad):
+                    ptr[j] = b'0'
+        return res
+
 
 # ==========================================
 # 5. UCS2 存储引擎 (处理普通 Python 字符串)
@@ -760,8 +1158,8 @@ cdef inline Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle,
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class UCS2Column_SoA(BaseColumn):
-    cdef public Py_UCS2* chars_c        # 连续字符池
-    cdef public Py_ssize_t* offsets_c   # 偏移量数组 (长度为 length + 1)
+    cdef Py_UCS2* chars_c        # 连续字符池
+    cdef Py_ssize_t* offsets_c   # 偏移量数组 (长度为 length + 1)
     cdef public Py_ssize_t char_capacity
     cdef public Py_ssize_t char_length
 
@@ -910,6 +1308,196 @@ cdef class UCS2Column_SoA(BaseColumn):
             return ""
         return PyUnicode_FromKindAndData(2, self.chars_c + start, str_len)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pop_back(self):
+        if self.length == 0: raise IndexError("pop from empty column")
+        self.length -= 1
+        cdef Py_ssize_t start = self.offsets_c[self.length]
+        cdef Py_ssize_t str_len = self.char_length - start
+        self.char_length -= str_len
+        if str_len == 0:
+            return ""
+        return PyUnicode_FromKindAndData(2, self.chars_c + start, str_len)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pop_front(self):
+        if self.length == 0: raise IndexError("pop from empty column")
+        cdef Py_ssize_t str_len = self.offsets_c[1] - self.offsets_c[0]
+        cdef str val
+        if str_len == 0:
+            val = ""
+        else:
+            val = PyUnicode_FromKindAndData(2, self.chars_c + self.offsets_c[0], str_len)
+        cdef Py_ssize_t rem_chars = self.char_length - self.offsets_c[1]
+        if rem_chars > 0:
+            memmove(self.chars_c, self.chars_c + self.offsets_c[1], rem_chars * sizeof(Py_UCS2))
+        self.char_length -= str_len
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            self.offsets_c[i] = self.offsets_c[i + 1] - str_len
+        self.length -= 1
+        return val
+
+    @cython.binding(False)
+    def len(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = <int>(self.offsets_c[i + 1] - self.offsets_c[i])
+        return res
+
+    @cython.binding(False)
+    def startswith(self, str prefix):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.data_c[i] = 1 if s.startswith(prefix) else 0
+        return res
+
+    @cython.binding(False)
+    def endswith(self, str suffix):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.data_c[i] = 1 if s.endswith(suffix) else 0
+        return res
+
+    @cython.binding(False)
+    def contains(self, str substring):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.data_c[i] = 1 if substring in s else 0
+        return res
+
+    @cython.binding(False)
+    def find(self, str substring):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.data_c[i] = <int>s.find(substring)
+        return res
+
+    @cython.binding(False)
+    def replace(self, str old, str new):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.append(s.replace(old, new))
+        return res
+
+    @cython.binding(False)
+    def lower(self):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.append(s.lower())
+        return res
+
+    @cython.binding(False)
+    def upper(self):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.append(s.upper())
+        return res
+
+    @cython.binding(False)
+    def strip(self):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.append(s.strip())
+        return res
+
+    @cython.binding(False)
+    def lstrip(self):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.append(s.lstrip())
+        return res
+
+    @cython.binding(False)
+    def rstrip(self):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.append(s.rstrip())
+        return res
+
+    @cython.binding(False)
+    def isdigit(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.data_c[i] = 1 if s.isdigit() else 0
+        return res
+
+    @cython.binding(False)
+    def isalpha(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.data_c[i] = 1 if s.isalpha() else 0
+        return res
+
+    @cython.binding(False)
+    def isalnum(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.data_c[i] = 1 if s.isalnum() else 0
+        return res
+
+    @cython.binding(False)
+    def isspace(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self[i]
+            res.data_c[i] = 1 if s.isspace() else 0
+        return res
+
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return
@@ -958,6 +1546,40 @@ cdef void _c_argsort_numeric(NumericType* data, Py_ssize_t* indices, Py_ssize_t 
 
     _c_argsort_numeric(data, indices, left, j)
     _c_argsort_numeric(data, indices, i, right)
+
+
+cdef inline int _ucs2_cmp_at(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t i, Py_ssize_t j) noexcept nogil:
+    cdef int i_start = offsets[i], i_len = offsets[i+1] - i_start
+    cdef int j_start = offsets[j], j_len = offsets[j+1] - j_start
+    cdef int k, min_len = i_len if i_len < j_len else j_len
+    for k in range(min_len):
+        if chars[i_start + k] < chars[j_start + k]: return -1
+        if chars[i_start + k] > chars[j_start + k]: return 1
+    if i_len < j_len: return -1
+    if i_len > j_len: return 1
+    return 0
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
+    if left >= right: return
+    cdef Py_ssize_t i = left, j = right
+    cdef Py_ssize_t pivot_idx = indices[(left + right) // 2]
+    cdef Py_ssize_t temp
+
+    while i <= j:
+        while _ucs2_cmp_at(chars, offsets, indices[i], pivot_idx) < 0: i += 1
+        while _ucs2_cmp_at(chars, offsets, indices[j], pivot_idx) > 0: j -= 1
+        if i <= j:
+            temp = indices[i]
+            indices[i] = indices[j]
+            indices[j] = temp
+            i += 1
+            j -= 1
+
+    _c_argsort_ucs2(chars, offsets, indices, left, j)
+    _c_argsort_ucs2(chars, offsets, indices, i, right)
 
 
 # ==========================================
@@ -1087,6 +1709,10 @@ cdef class FastDataFrame:
         elif isinstance(col, Char256Column_SoA):
             with nogil:
                 _c_argsort_char256((<Char256Column_SoA>col).data_c, indices_c, 0, n - 1)
+
+        elif isinstance(col, UCS2Column_SoA):
+            with nogil:
+                _c_argsort_ucs2((<UCS2Column_SoA>col).chars_c, (<UCS2Column_SoA>col).offsets_c, indices_c, 0, n - 1)
         else:
             free(indices_c)
             raise TypeError("Sorting not supported for this column type")
@@ -1141,6 +1767,8 @@ cdef class FastDataFrame:
                 new_col = self._reorder_double_column(<DoubleColumn>col, idx_c, n, inplace)
             elif isinstance(col, Char256Column_SoA):
                 new_col = self._reorder_char256_column(<Char256Column_SoA>col, idx_c, n, inplace)
+            elif isinstance(col, UCS2Column_SoA):
+                new_col = self._reorder_ucs2_column(<UCS2Column_SoA>col, idx_c, n, inplace)
             else:
                 raise NotImplementedError()
             if not inplace:
@@ -1325,6 +1953,7 @@ cdef class FastDataFrame:
         new_offsets[0] = 0
         cdef Py_ssize_t current_char_len = 0
         cdef Py_ssize_t i, idx, start, end, str_len
+        cdef UCS2Column_SoA new_col
 
         # 内存压缩：只提取保留部分的字符数据到新的连续块
         with nogil:
@@ -1349,7 +1978,7 @@ cdef class FastDataFrame:
             col.length = n
             return col
         else:
-            cdef UCS2Column_SoA new_col = UCS2Column_SoA(col.capacity)
+            new_col = UCS2Column_SoA(col.capacity)
             free(new_col.offsets_c)
             free(new_col.chars_c)
             new_col.offsets_c = new_offsets
@@ -1524,3 +2153,189 @@ cdef class FastDataFrame:
     def argmin(self, str col_name):
         """返回指定列最小值所在的 DataFrame 级别索引"""
         return self.columns[col_name].idxmin()
+
+    # ==========================================
+    # 结构操控与元数据
+    # ==========================================
+    cdef FastDataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n):
+        cdef FastDataFrame result = FastDataFrame()
+        result.df_length = n
+        cdef str name
+        cdef BaseColumn col
+        for name, col in self.columns.items():
+            if isinstance(col, IntColumn):
+                result.columns[name] = self._reorder_int_column(<IntColumn>col, indices, n, False)
+            elif isinstance(col, DoubleColumn):
+                result.columns[name] = self._reorder_double_column(<DoubleColumn>col, indices, n, False)
+            elif isinstance(col, Char256Column_SoA):
+                result.columns[name] = self._reorder_char256_column(<Char256Column_SoA>col, indices, n, False)
+            elif isinstance(col, UCS2Column_SoA):
+                result.columns[name] = self._reorder_ucs2_column(<UCS2Column_SoA>col, indices, n, False)
+        return result
+
+    @cython.binding(False)
+    def head(self, Py_ssize_t n=5):
+        if n < 0: raise ValueError("n must be non-negative")
+        n = min(n, self.df_length)
+        if n == 0: return FastDataFrame()
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        if not idx_c: raise MemoryError()
+        cdef Py_ssize_t i
+        for i in range(n): idx_c[i] = i
+        cdef FastDataFrame result = self._take(idx_c, n)
+        free(idx_c)
+        return result
+
+    @cython.binding(False)
+    def tail(self, Py_ssize_t n=5):
+        if n < 0: raise ValueError("n must be non-negative")
+        n = min(n, self.df_length)
+        if n == 0: return FastDataFrame()
+        cdef Py_ssize_t start = self.df_length - n
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        if not idx_c: raise MemoryError()
+        cdef Py_ssize_t i
+        for i in range(n): idx_c[i] = start + i
+        cdef FastDataFrame result = self._take(idx_c, n)
+        free(idx_c)
+        return result
+
+    @property
+    def shape(self):
+        return (self.df_length, len(self.columns))
+
+    @property
+    def col_names(self):
+        return list(self.columns.keys())
+
+    @property
+    def dtypes(self):
+        cdef dict result = {}
+        cdef str name
+        cdef BaseColumn col
+        for name, col in self.columns.items():
+            if isinstance(col, IntColumn):
+                result[name] = int
+            elif isinstance(col, DoubleColumn):
+                result[name] = float
+            elif isinstance(col, Char256Column_SoA):
+                result[name] = Char256
+            elif isinstance(col, UCS2Column_SoA):
+                result[name] = str
+        return result
+
+    @cython.binding(False)
+    def rename(self, dict mapper):
+        cdef FastDataFrame result = self.copy()
+        cdef str old_name, new_name
+        for old_name, new_name in mapper.items():
+            if old_name in result.columns:
+                result.columns[new_name] = result.columns.pop(old_name)
+        return result
+
+    @cython.binding(False)
+    def describe(self):
+        cdef dict stats = {}
+        cdef str name
+        cdef BaseColumn col
+        for name, col in self.columns.items():
+            if isinstance(col, (IntColumn, DoubleColumn)):
+                stats[name] = {
+                    'count': col.length,
+                    'mean': col.mean(),
+                    'std': col.std(),
+                    'min': col.min(),
+                    '50%': col.median(),
+                    'max': col.max(),
+                }
+            elif isinstance(col, (Char256Column_SoA, UCS2Column_SoA)):
+                stats[name] = {'count': col.length}
+        return stats
+
+    @cython.binding(False)
+    def isnull(self):
+        cdef FastDataFrame result = FastDataFrame()
+        result.df_length = self.df_length
+        cdef str name
+        cdef BaseColumn col
+        cdef IntColumn new_col
+        cdef Py_ssize_t i
+        cdef double* d_data
+        for name, col in self.columns.items():
+            new_col = IntColumn(self.df_length)
+            new_col.length = self.df_length
+            if isinstance(col, DoubleColumn):
+                d_data = (<DoubleColumn>col).data_c
+                with nogil:
+                    for i in range(self.df_length):
+                        new_col.data_c[i] = 1 if d_data[i] != d_data[i] else 0
+            else:
+                with nogil:
+                    for i in range(self.df_length):
+                        new_col.data_c[i] = 0
+            result.columns[name] = new_col
+        return result
+
+    @cython.binding(False)
+    def fillna(self, double value, col_names=None):
+        cdef FastDataFrame result = self.copy()
+        cdef str name
+        cdef BaseColumn col
+        cdef Py_ssize_t i
+        cdef double* d_data
+        if col_names is None:
+            col_names = list(self.columns.keys())
+        for name in col_names:
+            if name not in result.columns: continue
+            col = result.columns[name]
+            if isinstance(col, DoubleColumn):
+                d_data = (<DoubleColumn>col).data_c
+                with nogil:
+                    for i in range(self.df_length):
+                        if d_data[i] != d_data[i]:
+                            d_data[i] = value
+        return result
+
+    @cython.binding(False)
+    def dropna(self):
+        if self.df_length == 0: return self.copy()
+        cdef Py_ssize_t n = self.df_length
+        cdef char* keep_mask = <char*>malloc(n * sizeof(char))
+        if not keep_mask: raise MemoryError()
+        cdef Py_ssize_t i
+        cdef double* d_data
+        cdef str name
+        cdef BaseColumn col
+
+        for i in range(n): keep_mask[i] = 1
+
+        for name, col in self.columns.items():
+            if isinstance(col, DoubleColumn):
+                d_data = (<DoubleColumn>col).data_c
+                with nogil:
+                    for i in range(n):
+                        if keep_mask[i] and d_data[i] != d_data[i]:
+                            keep_mask[i] = 0
+
+        cdef Py_ssize_t keep_count = 0
+        for i in range(n):
+            if keep_mask[i]: keep_count += 1
+
+        if keep_count == n:
+            free(keep_mask)
+            return self.copy()
+        if keep_count == 0:
+            free(keep_mask)
+            return FastDataFrame()
+
+        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
+        if not keep_idx: raise MemoryError()
+        cdef Py_ssize_t j = 0
+        for i in range(n):
+            if keep_mask[i]:
+                keep_idx[j] = i
+                j += 1
+        free(keep_mask)
+        cdef FastDataFrame result = self._take(keep_idx, keep_count)
+        free(keep_idx)
+        return result
