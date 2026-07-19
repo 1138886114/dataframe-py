@@ -486,6 +486,13 @@ cdef inline Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle,
     return NULL
 
 
+####################################################
+#       UCS2 存储引擎
+#================================================
+# 通过统计业务数据设置如下
+# 行数初始容量设为 64
+# 初始字符池子：1024
+####################################################
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -497,11 +504,11 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def __cinit__(self, Py_ssize_t init_capacity=16):
+    def __cinit__(self, Py_ssize_t init_capacity=64):
         self.capacity = max(init_capacity, 1)
         self.length = 0
 
-        self.char_capacity = self.capacity * 16
+        self.char_capacity = max(self.capacity * 16, 1024)
         self.char_length = 0
 
         self.offsets_c = <Py_ssize_t*>malloc((self.capacity + 1) * sizeof(Py_ssize_t))
@@ -540,23 +547,31 @@ cdef class UCS2Column_SoA(BaseColumn):
 
         # 2. 检查并扩容字符池
         if self.char_length + str_len > self.char_capacity:
-            # 翻倍扩容，或者根据实际需要加上至少 1024 个字符缓冲
             self._reserve_chars(max(self.char_capacity * 2, self.char_length + str_len + 1024))
 
         # 3. 极速填入字符
-        cdef Py_ssize_t i
-        cdef Py_UCS4 char_code
-        for i in range(str_len):
-            char_code = PyUnicode_READ_CHAR(val, i)
-            if char_code > 0xFFFF:
-                self.chars_c[self.char_length + i] = 0x003F # '?' 替换生僻字/Emoji
+        if str_len > 0:
+            if PyUnicode_KIND(val) == PyUnicode_2BYTE_KIND:
+                memcpy(self.chars_c + self.char_length, PyUnicode_DATA(val), str_len * sizeof(Py_UCS2))
             else:
-                self.chars_c[self.char_length + i] = <Py_UCS2>char_code
+                # 兼容处理 1 byte (ASCII) 和 4 byte (Emoji/生僻字) 的情况
+                self._fallback_copy_chars(val, str_len)
 
         # 4. 更新状态
         self.char_length += str_len
         self.length += 1
         self.offsets_c[self.length] = self.char_length
+
+    cdef inline void _fallback_copy_chars(self, str val, Py_ssize_t str_len):
+        """处理非 UCS2 编码字符串的后备方法"""
+        cdef Py_ssize_t i
+        cdef Py_UCS4 char_code
+        for i in range(str_len):
+            char_code = PyUnicode_READ_CHAR(val, i)
+            if char_code > 0xFFFF:
+                self.chars_c[self.char_length + i] = 0x003F # '?'
+            else:
+                self.chars_c[self.char_length + i] = <Py_UCS2>char_code
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
