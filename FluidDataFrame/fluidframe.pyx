@@ -485,132 +485,152 @@ cdef inline Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle,
             if match: return haystack + i
     return NULL
 
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class UCS2Column_SoA(BaseColumn):
-    cdef Py_UCS2* data_c
+    cdef public Py_UCS2* chars_c        # 连续字符池
+    cdef public Py_ssize_t* offsets_c   # 偏移量数组 (长度为 length + 1)
+    cdef public Py_ssize_t char_capacity
+    cdef public Py_ssize_t char_length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __cinit__(self, Py_ssize_t init_capacity=16):
         self.capacity = max(init_capacity, 1)
         self.length = 0
-        self.data_c = <Py_UCS2*>malloc(self.capacity * 128 * sizeof(Py_UCS2))
-        if not self.data_c: raise MemoryError()
+
+        self.char_capacity = self.capacity * 16
+        self.char_length = 0
+
+        self.offsets_c = <Py_ssize_t*>malloc((self.capacity + 1) * sizeof(Py_ssize_t))
+        self.chars_c = <Py_UCS2*>malloc(self.char_capacity * sizeof(Py_UCS2))
+
+        if not self.offsets_c or not self.chars_c:
+            raise MemoryError()
+
+        self.offsets_c[0] = 0
 
     def __dealloc__(self):
-        if self.data_c is not NULL: free(self.data_c)
+        if self.offsets_c is not NULL: free(self.offsets_c)
+        if self.chars_c is not NULL: free(self.chars_c)
 
-    cdef void _reserve(self, Py_ssize_t new_cap):
+    cdef void _reserve_rows(self, Py_ssize_t new_cap) except *:
         if new_cap > self.capacity:
-            self.data_c = <Py_UCS2*>realloc(self.data_c, new_cap * 128 * sizeof(Py_UCS2))
-            if not self.data_c: raise MemoryError()
+            self.offsets_c = <Py_ssize_t*>realloc(self.offsets_c, (new_cap + 1) * sizeof(Py_ssize_t))
+            if not self.offsets_c: raise MemoryError()
             self.capacity = new_cap
+
+    cdef void _reserve_chars(self, Py_ssize_t new_char_cap) except *:
+        if new_char_cap > self.char_capacity:
+            self.chars_c = <Py_UCS2*>realloc(self.chars_c, new_char_cap * sizeof(Py_UCS2))
+            if not self.chars_c: raise MemoryError()
+            self.char_capacity = new_char_cap
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, str val):
+        """支持任意长度的字符串追加，永不截断"""
+        cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val) if val else 0
+
+        # 1. 检查并扩容行数
         if self.length >= self.capacity:
-            self._reserve(self.capacity * 2)
+            self._reserve_rows(self.capacity * 2)
 
-        cdef Py_UCS2* target_ptr = self.data_c + (self.length * 128)
-        cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val)
-        cdef Py_ssize_t copy_len = str_len if str_len < 127 else 127
+        # 2. 检查并扩容字符池
+        if self.char_length + str_len > self.char_capacity:
+            # 翻倍扩容，或者根据实际需要加上至少 1024 个字符缓冲
+            self._reserve_chars(max(self.char_capacity * 2, self.char_length + str_len + 1024))
 
+        # 3. 极速填入字符
         cdef Py_ssize_t i
         cdef Py_UCS4 char_code
-
-        for i in range(copy_len):
+        for i in range(str_len):
             char_code = PyUnicode_READ_CHAR(val, i)
             if char_code > 0xFFFF:
-                target_ptr[i] = 0x003F # '?'
+                self.chars_c[self.char_length + i] = 0x003F # '?' 替换生僻字/Emoji
             else:
-                target_ptr[i] = <Py_UCS2>char_code
+                self.chars_c[self.char_length + i] = <Py_UCS2>char_code
 
-        target_ptr[copy_len] = 0
+        # 4. 更新状态
+        self.char_length += str_len
         self.length += 1
+        self.offsets_c[self.length] = self.char_length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
         cdef UCS2Column_SoA new_col = UCS2Column_SoA(self.capacity)
+        new_col._reserve_chars(self.char_capacity)
+
         new_col.length = self.length
-        memcpy(new_col.data_c, self.data_c, self.length * 128 * sizeof(Py_UCS2))
+        new_col.char_length = self.char_length
+
+        memcpy(new_col.offsets_c, self.offsets_c, (self.length + 1) * sizeof(Py_ssize_t))
+        memcpy(new_col.chars_c, self.chars_c, self.char_length * sizeof(Py_UCS2))
         return new_col
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def pop_back(self):
-        if self.length == 0: raise IndexError("pop from empty column")
-        self.length -= 1
-        cdef Py_UCS2* ptr = self.data_c + (self.length * 128)
-        return PyUnicode_FromKindAndData(2, ptr, _ucs2_len(ptr))
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def pop_front(self):
-        if self.length == 0: raise IndexError("pop from empty column")
-        cdef Py_UCS2* ptr = self.data_c
-        cdef str val = PyUnicode_FromKindAndData(2, ptr, _ucs2_len(ptr))
-        memmove(self.data_c, self.data_c + 128, (self.length - 1) * 128 * sizeof(Py_UCS2))
-        self.length -= 1
-        return val
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
     def concat(self, UCS2Column_SoA other):
-        self._reserve(self.length + other.length)
-        memcpy(self.data_c + (self.length * 128), other.data_c, other.length * 128 * sizeof(Py_UCS2))
+        self._reserve_rows(self.length + other.length)
+        self._reserve_chars(self.char_length + other.char_length)
+
+        cdef Py_ssize_t i
+        # 复制字符数据
+        memcpy(self.chars_c + self.char_length, other.chars_c, other.char_length * sizeof(Py_UCS2))
+
+        # 调整并复制偏移量
+        cdef Py_ssize_t base_offset = self.char_length
+        for i in range(other.length):
+            self.offsets_c[self.length + 1 + i] = base_offset + other.offsets_c[i + 1]
+
         self.length += other.length
+        self.char_length += other.char_length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
-        cdef Py_UCS2* new_data = <Py_UCS2*>malloc(self.capacity * 128 * sizeof(Py_UCS2))
-        if not new_data: raise MemoryError()
+        """通过重建连续内存块实现重排，彻底清除碎片"""
+        cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>malloc((self.capacity + 1) * sizeof(Py_ssize_t))
+        cdef Py_UCS2* new_chars = <Py_UCS2*>malloc(self.char_capacity * sizeof(Py_UCS2))
+        if not new_offsets or not new_chars: raise MemoryError()
+
+        new_offsets[0] = 0
+        cdef Py_ssize_t current_char_len = 0
+        cdef Py_ssize_t idx, start, end, str_len
         cdef Py_ssize_t i
-        for i in range(self.length):
-            memcpy(new_data + (i * 128), self.data_c + (<Py_ssize_t>indices[i] * 128), 128 * sizeof(Py_UCS2))
-        free(self.data_c)
-        self.data_c = new_data
+
+        for i in range(n):
+            idx = <Py_ssize_t>indices[i]
+            start = self.offsets_c[idx]
+            end = self.offsets_c[idx + 1]
+            str_len = end - start
+
+            if str_len > 0:
+                memcpy(new_chars + current_char_len, self.chars_c + start, str_len * sizeof(Py_UCS2))
+
+            current_char_len += str_len
+            new_offsets[i + 1] = current_char_len
+
+        free(self.offsets_c)
+        free(self.chars_c)
+        self.offsets_c = new_offsets
+        self.chars_c = new_chars
+        self.char_length = current_char_len
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0 or idx >= self.length: raise IndexError()
-        cdef Py_UCS2* ptr = self.data_c + (idx * 128)
-        cdef int char_len = _ucs2_len(ptr)
-        return PyUnicode_FromKindAndData(2, ptr, char_len)
+        cdef Py_ssize_t start = self.offsets_c[idx]
+        cdef Py_ssize_t str_len = self.offsets_c[idx + 1] - start
 
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def contains_exact(self, str keyword):
-        cdef Py_ssize_t kw_len = PyUnicode_GET_LENGTH(keyword)
-        cdef Py_UCS2 needle_buf[128]
-        cdef Py_ssize_t i
-
-        for i in range(kw_len):
-            needle_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(keyword, i)
-        needle_buf[kw_len] = 0
-
-        cdef int* out_idx = <int*>malloc(self.length * sizeof(int))
-        if not out_idx: raise MemoryError()
-        cdef int count = 0
-        cdef Py_UCS2* current_str
-        cdef int cur_len
-
-        with nogil:
-            for i in range(self.length):
-                current_str = self.data_c + (i * 128)
-                cur_len = _ucs2_len(current_str)
-                if _ucs2_strstr(current_str, cur_len, needle_buf, kw_len) != NULL:
-                    out_idx[count] = i
-                    count += 1
-
-        cdef list res = [out_idx[j] for j in range(count)]
-        free(out_idx)
-        return res
+        if str_len == 0:
+            return ""
+        return PyUnicode_FromKindAndData(2, self.chars_c + start, str_len)
 
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
