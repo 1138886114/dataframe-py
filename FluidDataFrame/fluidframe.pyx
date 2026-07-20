@@ -2155,6 +2155,49 @@ cdef class FastDataFrame:
         return self.columns[col_name].idxmin()
 
     # ==========================================
+    # 持久化：Pickle / CSV / TSV
+    # ==========================================
+    @cython.binding(False)
+    def to_pickle(self, filename):
+        import pickle
+        cdef dict data = {'df_length': self.df_length, 'columns': {}}
+        cdef str name
+        cdef BaseColumn col
+        cdef list values
+        cdef Py_ssize_t i
+        for name, col in self.columns.items():
+            values = [col[i] for i in range(col.length)]
+            if isinstance(col, IntColumn):
+                data['columns'][name] = ('int', values)
+            elif isinstance(col, DoubleColumn):
+                data['columns'][name] = ('float', values)
+            elif isinstance(col, Char256Column_SoA):
+                data['columns'][name] = ('char256', values)
+            elif isinstance(col, UCS2Column_SoA):
+                data['columns'][name] = ('ucs2', values)
+        with open(filename, 'wb') as f:
+            pickle.dump(data, f)
+
+    @cython.binding(False)
+    def to_csv(self, filename, sep=','):
+        import csv
+        cdef list col_names = list(self.columns.keys())
+        cdef Py_ssize_t i
+        cdef str name
+        cdef BaseColumn col
+        cdef list row
+        with open(filename, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f, delimiter=sep)
+            writer.writerow(col_names)
+            for i in range(self.df_length):
+                row = [str(self.columns[name][i]) for name in col_names]
+                writer.writerow(row)
+
+    @cython.binding(False)
+    def to_tsv(self, filename):
+        self.to_csv(filename, sep='\t')
+
+    # ==========================================
     # 结构操控与元数据
     # ==========================================
     cdef FastDataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n):
@@ -2339,3 +2382,131 @@ cdef class FastDataFrame:
         cdef FastDataFrame result = self._take(keep_idx, keep_count)
         free(keep_idx)
         return result
+
+
+# ==========================================
+# 7. 持久化函数 (Module-level)
+# ==========================================
+def from_pickle(filename):
+    """从 pickle 文件恢复 FastDataFrame"""
+    import pickle
+    with open(filename, 'rb') as f:
+        data = pickle.load(f)
+    df = FastDataFrame()
+    df.df_length = data['df_length']
+    for col_name, (typ, values) in data['columns'].items():
+        if typ == 'int':
+            col = IntColumn()
+            for v in values:
+                col.append(v)
+        elif typ == 'float':
+            col = DoubleColumn()
+            for v in values:
+                col.append(v)
+        elif typ == 'char256':
+            col = Char256Column_SoA()
+            for v in values:
+                col.append(v)
+        elif typ == 'ucs2':
+            col = UCS2Column_SoA()
+            for v in values:
+                col.append(v)
+        df.columns[col_name] = col
+    return df
+
+
+def read_csv(filename, sep=',', schema=None):
+    """读取 CSV 文件，返回 FastDataFrame。自动推断列类型或由 schema 指定"""
+    import csv
+    with open(filename, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f, delimiter=sep)
+        headers = next(reader)
+        rows = list(reader)
+
+    cdef Py_ssize_t n_rows = len(rows)
+    cdef Py_ssize_t n_cols = len(headers)
+    cdef Py_ssize_t i, j
+    df = FastDataFrame()
+
+    if n_rows == 0:
+        for j in range(n_cols):
+            df.columns[headers[j]] = UCS2Column_SoA()
+        return df
+
+    if schema is not None:
+        parsed = _parse_schema(schema)
+        for j, name in enumerate(headers):
+            py_type = parsed.get(name, str)
+            if py_type == TYPE_INT:
+                col = IntColumn(n_rows)
+                for i in range(n_rows):
+                    val = rows[i][j].strip()
+                    col.append(int(val) if val else 0)
+            elif py_type == TYPE_DOUBLE:
+                col = DoubleColumn(n_rows)
+                for i in range(n_rows):
+                    val = rows[i][j].strip()
+                    col.append(float(val) if val else NAN)
+            elif py_type == TYPE_CHAR256:
+                col = Char256Column_SoA(n_rows)
+                for i in range(n_rows):
+                    col.append(rows[i][j])
+            else:
+                col = UCS2Column_SoA(n_rows)
+                for i in range(n_rows):
+                    col.append(rows[i][j])
+            df.columns[name] = col
+        df.df_length = n_rows
+        return df
+
+    # 类型推断
+    cdef list types = []
+    cdef bint all_int, all_float
+    for j in range(n_cols):
+        all_int = True
+        all_float = True
+        for i in range(n_rows):
+            val = rows[i][j].strip()
+            if val == '':
+                continue
+            if all_int:
+                try:
+                    int(val)
+                except ValueError:
+                    all_int = False
+            if all_float:
+                try:
+                    float(val)
+                except ValueError:
+                    all_float = False
+        if all_int:
+            types.append(int)
+        elif all_float:
+            types.append(float)
+        else:
+            types.append(str)
+
+    for j, name in enumerate(headers):
+        dtype = types[j]
+        if dtype is int:
+            col = IntColumn(n_rows)
+            for i in range(n_rows):
+                val = rows[i][j].strip()
+                col.append(int(val) if val else 0)
+        elif dtype is float:
+            col = DoubleColumn(n_rows)
+            for i in range(n_rows):
+                val = rows[i][j].strip()
+                col.append(float(val) if val else NAN)
+        else:
+            col = UCS2Column_SoA(n_rows)
+            for i in range(n_rows):
+                col.append(rows[i][j])
+        df.columns[name] = col
+    df.df_length = n_rows
+    return df
+
+
+def read_tsv(filename, schema=None):
+    """读取 TSV 文件（tab 分隔），返回 FastDataFrame"""
+    return read_csv(filename, sep='\t', schema=schema)
