@@ -37,16 +37,24 @@ cdef enum DataType:
     TYPE_DOUBLE = 2
     TYPE_CHAR256 = 3
     TYPE_UCS2 = 4
+    TYPE_TIMESTAMP = 5
 
 
 ctypedef fused NumericType:
     int
     double
+    long long
 
 
 class Char256:
     """用于在 Schema 中标记纯 ASCII 256字节定长字符串类型的占位类"""
     pass
+
+
+class Timestamp:
+    """时间戳类型，内部按 YYYYMMDD 整数存储；构造时支持 Timestamp('20160101') 或 Timestamp(20160101)"""
+    def __init__(self, val=None):
+        pass
 
 @cython.binding(False)
 @cython.always_allow_keywords(False)
@@ -57,6 +65,7 @@ def _parse_schema(dict schema_dict):
         elif v is float: parsed[k] = TYPE_DOUBLE
         elif v is Char256: parsed[k] = TYPE_CHAR256
         elif v is str: parsed[k] = TYPE_UCS2
+        elif v is Timestamp: parsed[k] = TYPE_TIMESTAMP
         else: raise TypeError(f"Unsupported type: {v}")
     return parsed
 
@@ -334,6 +343,19 @@ cdef class IntColumn(BaseColumn):
         if idx < 0 or idx >= self.length: raise IndexError()
         return self.data_c[idx]
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def unique(self):
+        cdef set seen = set()
+        cdef list result = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            val = self.data_c[i]
+            if val not in seen:
+                seen.add(val)
+                result.append(val)
+        return result
+
 
 @cython.final
 @cython.boundscheck(False)
@@ -574,6 +596,18 @@ cdef class DoubleColumn(BaseColumn):
             for i in range(self.length):
                 res.data_c[i] = self.data_c[i] / val if val != 0 else NAN
         return res
+
+    @cython.binding(False)
+    def unique(self):
+        cdef set seen = set()
+        cdef list result = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            val = self.data_c[i]
+            if val not in seen:
+                seen.add(val)
+                result.append(val)
+        return result
 
 
 # ==========================================
@@ -1122,6 +1156,18 @@ cdef class Char256Column_SoA(BaseColumn):
                     ptr[j] = b'0'
         return res
 
+    @cython.binding(False)
+    def unique(self):
+        cdef set seen = set()
+        cdef list result = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            val = (self.data_c + i * 256).decode('ascii')
+            if val not in seen:
+                seen.add(val)
+                result.append(val)
+        return result
+
 
 # ==========================================
 # 5. UCS2 存储引擎 (处理普通 Python 字符串)
@@ -1498,6 +1544,191 @@ cdef class UCS2Column_SoA(BaseColumn):
             res.data_c[i] = 1 if s.isspace() else 0
         return res
 
+    @cython.binding(False)
+    def unique(self):
+        cdef set seen = set()
+        cdef list result = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            s = self[i]
+            if s not in seen:
+                seen.add(s)
+                result.append(s)
+        return result
+
+
+# ==========================================
+# 5b. 时间戳列 (Timestamp YYYYMMDD)
+# ==========================================
+@cython.final
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef class TimestampColumn(BaseColumn):
+    cdef long long* data_c
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __cinit__(self, Py_ssize_t init_capacity=16):
+        self.capacity = max(init_capacity, 1)
+        self.length = 0
+        self.data_c = <long long*>malloc(self.capacity * sizeof(long long))
+        if not self.data_c: raise MemoryError()
+
+    def __dealloc__(self):
+        if self.data_c is not NULL: free(self.data_c)
+
+    cdef void _reserve(self, Py_ssize_t new_cap):
+        if new_cap > self.capacity:
+            self.data_c = <long long*>realloc(self.data_c, new_cap * sizeof(long long))
+            if not self.data_c: raise MemoryError()
+            self.capacity = new_cap
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def append(self, val):
+        cdef long long v
+        if isinstance(val, str):
+            v = self._parse(<str>val)
+        else:
+            v = <long long>val
+        if self.length >= self.capacity:
+            self._reserve(self.capacity * 2)
+        self.data_c[self.length] = v
+        self.length += 1
+
+    cdef inline long long _parse(self, str s) noexcept:
+        cdef bytes b = s.encode('ascii')
+        cdef const unsigned char* buf = <const unsigned char*>b
+        cdef long long val = 0
+        cdef int i = 0
+        while buf[i] >= 48 and buf[i] <= 57:
+            val = val * 10 + (buf[i] - 48)
+            i += 1
+        return val
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def copy(self):
+        cdef TimestampColumn new_col = TimestampColumn(self.capacity)
+        new_col.length = self.length
+        memcpy(new_col.data_c, self.data_c, self.length * sizeof(long long))
+        return new_col
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pop_back(self):
+        if self.length == 0: raise IndexError("pop from empty column")
+        self.length -= 1
+        return self.data_c[self.length]
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pop_front(self):
+        if self.length == 0: raise IndexError("pop from empty column")
+        cdef long long val = self.data_c[0]
+        memmove(self.data_c, self.data_c + 1, (self.length - 1) * sizeof(long long))
+        self.length -= 1
+        return val
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def concat(self, TimestampColumn other):
+        self._reserve(self.length + other.length)
+        memcpy(self.data_c + self.length, other.data_c, other.length * sizeof(long long))
+        self.length += other.length
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def max(self):
+        if self.length == 0: raise ValueError("empty column")
+        cdef long long max_val = self.data_c[0]
+        for i in range(1, self.length):
+            if self.data_c[i] > max_val: max_val = self.data_c[i]
+        return max_val
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def min(self):
+        if self.length == 0: raise ValueError("empty column")
+        cdef long long min_val = self.data_c[0]
+        for i in range(1, self.length):
+            if self.data_c[i] < min_val: min_val = self.data_c[i]
+        return min_val
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def _reorder(self, list indices):
+        cdef long long* new_data = <long long*>malloc(self.capacity * sizeof(long long))
+        if not new_data: raise MemoryError()
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            new_data[i] = self.data_c[<Py_ssize_t>indices[i]]
+        free(self.data_c)
+        self.data_c = new_data
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __getitem__(self, Py_ssize_t idx):
+        if idx < 0 or idx >= self.length: raise IndexError()
+        return self.data_c[idx]
+
+    @cython.binding(False)
+    def unique(self):
+        cdef set seen = set()
+        cdef list result = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            val = self.data_c[i]
+            if val not in seen:
+                seen.add(val)
+                result.append(val)
+        return result
+
+    # ---- 时间戳解析 ----
+    @cython.binding(False)
+    def year(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = <int>(self.data_c[i] / 10000)
+        return res
+
+    @cython.binding(False)
+    def month(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = <int>((self.data_c[i] / 100) % 100)
+        return res
+
+    @cython.binding(False)
+    def day(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = <int>(self.data_c[i] % 100)
+        return res
+
+    @cython.binding(False)
+    def strftime(self, str fmt):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef long long val
+        cdef int y, m, d
+        for i in range(self.length):
+            val = self.data_c[i]
+            y = <int>(val / 10000)
+            m = <int>((val / 100) % 100)
+            d = <int>(val % 100)
+            res.append(fmt.replace('%Y', f'{y:04d}').replace('%m', f'{m:02d}').replace('%d', f'{d:02d}'))
+        return res
+
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return
@@ -1609,6 +1840,8 @@ cdef class FastDataFrame:
                     self.columns[col_name] = Char256Column_SoA()
                 elif dtype == TYPE_UCS2:
                     self.columns[col_name] = UCS2Column_SoA()
+                elif dtype == TYPE_TIMESTAMP:
+                    self.columns[col_name] = TimestampColumn()
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1713,6 +1946,10 @@ cdef class FastDataFrame:
         elif isinstance(col, UCS2Column_SoA):
             with nogil:
                 _c_argsort_ucs2((<UCS2Column_SoA>col).chars_c, (<UCS2Column_SoA>col).offsets_c, indices_c, 0, n - 1)
+
+        elif isinstance(col, TimestampColumn):
+            with nogil:
+                _c_argsort_numeric((<TimestampColumn>col).data_c, indices_c, 0, n - 1)
         else:
             free(indices_c)
             raise TypeError("Sorting not supported for this column type")
@@ -1769,6 +2006,8 @@ cdef class FastDataFrame:
                 new_col = self._reorder_char256_column(<Char256Column_SoA>col, idx_c, n, inplace)
             elif isinstance(col, UCS2Column_SoA):
                 new_col = self._reorder_ucs2_column(<UCS2Column_SoA>col, idx_c, n, inplace)
+            elif isinstance(col, TimestampColumn):
+                new_col = self._reorder_timestamp_column(<TimestampColumn>col, idx_c, n, inplace)
             else:
                 raise NotImplementedError()
             if not inplace:
@@ -1848,6 +2087,27 @@ cdef class FastDataFrame:
             new_col.length = n
             return new_col
 
+    cdef TimestampColumn _reorder_timestamp_column(self, TimestampColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        cdef long long* old_data = col.data_c
+        cdef long long* new_data = <long long*>malloc(col.capacity * sizeof(long long))
+        if not new_data: raise MemoryError()
+
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                new_data[i] = old_data[indices[i]]
+
+        if inplace:
+            free(col.data_c)
+            col.data_c = new_data
+            return col
+        else:
+            new_col = TimestampColumn(col.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1919,6 +2179,7 @@ cdef class FastDataFrame:
         cdef Py_ssize_t i
         for i in range(self.df_length):
             idx_col.data_c[i] = <int>i
+        idx_col.length = self.df_length
         self.columns['index'] = idx_col
 
     @cython.binding(False)
@@ -2071,6 +2332,8 @@ cdef class FastDataFrame:
                 new_col = self._reorder_char256_column(<Char256Column_SoA>col, keep_idx_c, keep_count, inplace)
             elif isinstance(col, UCS2Column_SoA):
                 new_col = self._reorder_ucs2_column(<UCS2Column_SoA>col, keep_idx_c, keep_count, inplace)
+            elif isinstance(col, TimestampColumn):
+                new_col = self._reorder_timestamp_column(<TimestampColumn>col, keep_idx_c, keep_count, inplace)
             else:
                 free(keep_idx_c)
                 raise TypeError(f"Drop not supported for column {name}")
@@ -2120,8 +2383,14 @@ cdef class FastDataFrame:
                 (<Char256Column_SoA>col).length -= 1
 
             elif isinstance(col, UCS2Column_SoA):
-                # 对于定长池的变长字符串，删除中间的行最为复杂，需调整后续所有字符池和偏移量
                 self._drop_row_ucs2(<UCS2Column_SoA>col, row_idx, rem_len)
+
+            elif isinstance(col, TimestampColumn):
+                if rem_len > 0:
+                    memmove((<TimestampColumn>col).data_c + row_idx,
+                            (<TimestampColumn>col).data_c + row_idx + 1,
+                            rem_len * sizeof(long long))
+                (<TimestampColumn>col).length -= 1
 
         self.df_length -= 1
 
@@ -2154,6 +2423,11 @@ cdef class FastDataFrame:
         """返回指定列最小值所在的 DataFrame 级别索引"""
         return self.columns[col_name].idxmin()
 
+    @cython.binding(False)
+    def unique(self, str col_name):
+        """返回指定列的唯一值列表"""
+        return self.columns[col_name].unique()
+
     # ==========================================
     # 持久化：Pickle / CSV / TSV
     # ==========================================
@@ -2175,6 +2449,8 @@ cdef class FastDataFrame:
                 data['columns'][name] = ('char256', values)
             elif isinstance(col, UCS2Column_SoA):
                 data['columns'][name] = ('ucs2', values)
+            elif isinstance(col, TimestampColumn):
+                data['columns'][name] = ('timestamp', values)
         with open(filename, 'wb') as f:
             pickle.dump(data, f)
 
@@ -2214,6 +2490,8 @@ cdef class FastDataFrame:
                 result.columns[name] = self._reorder_char256_column(<Char256Column_SoA>col, indices, n, False)
             elif isinstance(col, UCS2Column_SoA):
                 result.columns[name] = self._reorder_ucs2_column(<UCS2Column_SoA>col, indices, n, False)
+            elif isinstance(col, TimestampColumn):
+                result.columns[name] = self._reorder_timestamp_column(<TimestampColumn>col, indices, n, False)
         return result
 
     @cython.binding(False)
@@ -2265,6 +2543,8 @@ cdef class FastDataFrame:
                 result[name] = Char256
             elif isinstance(col, UCS2Column_SoA):
                 result[name] = str
+            elif isinstance(col, TimestampColumn):
+                result[name] = Timestamp
         return result
 
     @cython.binding(False)
@@ -2411,6 +2691,10 @@ def from_pickle(filename):
             col = UCS2Column_SoA()
             for v in values:
                 col.append(v)
+        elif typ == 'timestamp':
+            col = TimestampColumn()
+            for v in values:
+                col.append(v)
         df.columns[col_name] = col
     return df
 
@@ -2451,6 +2735,10 @@ def read_csv(filename, sep=',', schema=None):
                 col = Char256Column_SoA(n_rows)
                 for i in range(n_rows):
                     col.append(rows[i][j])
+            elif py_type == TYPE_TIMESTAMP:
+                col = TimestampColumn(n_rows)
+                for i in range(n_rows):
+                    col.append(rows[i][j].strip())
             else:
                 col = UCS2Column_SoA(n_rows)
                 for i in range(n_rows):
@@ -2518,6 +2806,7 @@ def read_tsv(filename, schema=None):
 cdef inline object _default_val(BaseColumn col):
     if isinstance(col, IntColumn): return 0
     if isinstance(col, DoubleColumn): return float('nan')
+    if isinstance(col, TimestampColumn): return 0
     return ''
 
 
@@ -2525,6 +2814,7 @@ cdef inline BaseColumn _empty_col(BaseColumn col):
     if isinstance(col, IntColumn): return IntColumn()
     if isinstance(col, DoubleColumn): return DoubleColumn()
     if isinstance(col, Char256Column_SoA): return Char256Column_SoA()
+    if isinstance(col, TimestampColumn): return TimestampColumn()
     return UCS2Column_SoA()
 
 
