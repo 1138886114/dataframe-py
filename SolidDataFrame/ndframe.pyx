@@ -265,6 +265,7 @@ cdef class StringAccessor:
     def keep_numeric_punct(self):
         return self.df._keep_charset(self.field, False)
 
+    @cython.always_allow_keywords(False)
     def contains(self, pattern):
         """正则过滤，返回新 NDframe"""
         pattern = _ensure_regex(pattern)
@@ -299,6 +300,7 @@ cdef class StringAccessor:
         self.df._regex_replace(self.field, pattern, rewrite)
         return self.df
 
+    @cython.always_allow_keywords(False)
     def regex_extract(self, object pattern):
         """正则提取，返回新 NDframe"""
         pattern = _ensure_regex(pattern)
@@ -373,16 +375,19 @@ cdef class StringAccessor:
     # ========================================================
     # 正则 + 字符串长度组合筛选 (C++ df_regex_strlen_xxx)
     # ========================================================
+    @cython.always_allow_keywords(False)
     def regex_strlen_greater(self, object pattern, int n):
         """正则匹配 && 字符串长度 > n 的行 → 新 NDframe"""
         pattern = _ensure_regex(pattern)
         return self.df._df_regex_strlen_cmp(self.field, pattern, n, OP_GREATER)
 
+    @cython.always_allow_keywords(False)
     def regex_strlen_less(self, object pattern, int n):
         """正则匹配 && 字符串长度 < n 的行 → 新 NDframe"""
         pattern = _ensure_regex(pattern)
         return self.df._df_regex_strlen_cmp(self.field, pattern, n, OP_LESS)
 
+    @cython.always_allow_keywords(False)
     def regex_strlen_equal(self, object pattern, int n):
         """正则匹配 && 字符串长度 == n 的行 → 新 NDframe"""
         pattern = _ensure_regex(pattern)
@@ -849,6 +854,8 @@ cdef class NDframe:
     def data(self):
         return self.to_list()
 
+
+    @cython.always_allow_keywords(False)
     def __iter__(self):
         cdef Py_ssize_t i
         cdef RowC* rows = self.rows_c
