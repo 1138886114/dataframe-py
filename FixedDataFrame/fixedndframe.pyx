@@ -115,14 +115,11 @@ cdef enum StrTransformMode:
 
 
 cdef inline int _get_field_val(RowC* row, int field) noexcept:
-    if 0 <= field <= FIELD_flags:
-        return (&row.x0)[field]
-    return 0
+    return (&row.idx)[field]
 
 
 cdef inline void _add_field_value(RowC* row, int field, int offset) noexcept:
-    if 0 <= field <= FIELD_flags:
-        (&row.x0)[field] += offset
+    (&row.idx)[field] += offset
 
 
 cdef inline object _ensure_regex(object pattern):
@@ -1299,8 +1296,6 @@ cdef str _truncate_str(str s, int max_chars=90, int head=79, int tail=8):
 # ==========================================
 # 3. 核心 NDframe 定义
 # ==========================================
-# 结构体成员顺序与 FieldID 枚举一一对应（全部为 int，无 padding），
-# 因此 _get_field_val 可用 (&row.x0)[field] 指针索引直接取数，0 次分支判断。
 cdef struct RowC:
     int idx      # FIELD_idx   = 0
     int x0       # FIELD_x0    = 1
@@ -1314,7 +1309,7 @@ cdef struct RowC:
 
 
 cdef inline int* _row_field_ptr(RowC* row, int field) noexcept:
-    return &row.x0 + field
+    return &row.idx + field
 
 
 @cython.final
@@ -1776,15 +1771,24 @@ cdef class NDframe:
                 continue
 
             # 数值字段宽度计算
-            iw = _int_display_width(self.rows_c[i].idx);    if iw > widths[0]: widths[0] = iw
-            iw = _int_display_width(self.rows_c[i].x0);     if iw > widths[1]: widths[1] = iw
-            iw = _int_display_width(self.rows_c[i].y0);     if iw > widths[2]: widths[2] = iw
-            iw = _int_display_width(self.rows_c[i].x1);     if iw > widths[3]: widths[3] = iw
-            iw = _int_display_width(self.rows_c[i].y1);     if iw > widths[4]: widths[4] = iw
-            iw = _int_display_width(self.rows_c[i].width);  if iw > widths[5]: widths[5] = iw
-            iw = _int_display_width(self.rows_c[i].height); if iw > widths[6]: widths[6] = iw
-            iw = _int_display_width(self.rows_c[i].page);   if iw > widths[7]: widths[7] = iw
-            iw = _int_display_width(self.rows_c[i].flags);  if iw > widths[8]: widths[8] = iw
+            iw = _int_display_width(self.rows_c[i].idx)
+            if iw > widths[0]: widths[0] = iw
+            iw = _int_display_width(self.rows_c[i].x0)
+            if iw > widths[1]: widths[1] = iw
+            iw = _int_display_width(self.rows_c[i].y0)
+            if iw > widths[2]: widths[2] = iw
+            iw = _int_display_width(self.rows_c[i].x1)
+            if iw > widths[3]: widths[3] = iw
+            iw = _int_display_width(self.rows_c[i].y1)
+            if iw > widths[4]: widths[4] = iw
+            iw = _int_display_width(self.rows_c[i].width)
+            if iw > widths[5]: widths[5] = iw
+            iw = _int_display_width(self.rows_c[i].height)
+            if iw > widths[6]: widths[6] = iw
+            iw = _int_display_width(self.rows_c[i].page)
+            if iw > widths[7]: widths[7] = iw
+            iw = _int_display_width(self.rows_c[i].flags)
+            if iw > widths[8]: widths[8] = iw
 
             # 字符串字段宽度计算（适配新的 UCS2Column_SoA 引擎）
             s_val = _truncate_str(self.text_col._get_str(i))
@@ -2205,7 +2209,7 @@ cdef class NDframe:
     cdef int _max_col(self, int field):
         """寻找最大值（field 分支收敛为指针索引，循环内 0 分支）"""
         cdef Py_ssize_t n = self.length
-        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
+        if n == 0 or field < FIELD_idx or field > FIELD_flags:
             return 0
         cdef RowC* rows = self.rows_c
         cdef Py_ssize_t i
@@ -2220,7 +2224,7 @@ cdef class NDframe:
     cdef int _min_col(self, int field):
         """寻找最小值（field 分支收敛为指针索引，循环内 0 分支）"""
         cdef Py_ssize_t n = self.length
-        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
+        if n == 0 or field < FIELD_idx or field > FIELD_flags:
             return 0
         cdef RowC* rows = self.rows_c
         cdef Py_ssize_t i
@@ -2233,7 +2237,7 @@ cdef class NDframe:
 
     cdef double _mean_col(self, int field):
         cdef Py_ssize_t n = self.length
-        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
+        if n == 0 or field < FIELD_idx or field > FIELD_flags:
             return 0.0
         cdef RowC* rows = self.rows_c
         cdef Py_ssize_t i
@@ -2953,7 +2957,7 @@ cdef class NDframe:
         rows_c 走临时缓冲重排，两列字符池走 UCS2Column_SoA._reorder 重建。
         """
         cdef Py_ssize_t n = self.length
-        if n < 2 or field_id < FIELD_x0 or field_id > FIELD_flags:
+        if n < 2 or field_id < FIELD_idx or field_id > FIELD_flags:
             return
 
         cdef Py_ssize_t i
@@ -3012,7 +3016,7 @@ cdef class NDframe:
     cdef void _add_col(self, int field, int value) except *:
         """对该字段所有值加法"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or value == 0 or field < FIELD_x0 or field > FIELD_flags:
+        if n == 0 or value == 0 or field < FIELD_idx or field > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
         for i in range(n):
@@ -3027,7 +3031,7 @@ cdef class NDframe:
     cdef void _sub_col(self, int field, int value) except *:
         """对该字段所有值减法（不低于0）"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or value == 0 or field < FIELD_x0 or field > FIELD_flags:
+        if n == 0 or value == 0 or field < FIELD_idx or field > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
         cdef int* f
@@ -3072,7 +3076,7 @@ cdef class NDframe:
     cdef void _apply_if_greater_add(self, int cond_id, int target_id, int threshold, int offset) except *:
         """如果 cond_id > threshold，则 target_id += offset"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or offset == 0 or cond_id < FIELD_x0 or cond_id > FIELD_flags:
+        if n == 0 or offset == 0 or cond_id < FIELD_idx or cond_id > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
         for i in range(n):
@@ -3082,7 +3086,7 @@ cdef class NDframe:
     cdef void _apply_if_less_add(self, int cond_id, int target_id, int threshold, int offset) except *:
         """如果 cond_id < threshold，则 target_id += offset"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or offset == 0 or cond_id < FIELD_x0 or cond_id > FIELD_flags:
+        if n == 0 or offset == 0 or cond_id < FIELD_idx or cond_id > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
         for i in range(n):
@@ -3092,7 +3096,7 @@ cdef class NDframe:
     cdef void _apply_if_greater_add_y(self, int cond_id, int threshold, int offset) except *:
         """如果 cond_id > threshold，则 y0 += offset, y1 += offset"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or offset == 0 or cond_id < FIELD_x0 or cond_id > FIELD_flags:
+        if n == 0 or offset == 0 or cond_id < FIELD_idx or cond_id > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
         for i in range(n):
@@ -3103,7 +3107,7 @@ cdef class NDframe:
     cdef void _apply_if_less_add_y(self, int cond_id, int threshold, int offset) except *:
         """如果 cond_id < threshold，则 y0 += offset, y1 += offset"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or offset == 0 or cond_id < FIELD_x0 or cond_id > FIELD_flags:
+        if n == 0 or offset == 0 or cond_id < FIELD_idx or cond_id > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
         for i in range(n):
@@ -3369,7 +3373,7 @@ cdef class NDframe:
     cdef list _diff_col(self, int field):
         """C 级别的一阶差分实现（field 分支收敛为指针索引）"""
         cdef Py_ssize_t n = self.length
-        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
+        if n == 0 or field < FIELD_idx or field > FIELD_flags:
             return []
 
         cdef RowC* rows = self.rows_c
@@ -3389,7 +3393,7 @@ cdef class NDframe:
     cdef double _var_col(self, int field, int ddof):
         """C 级别的方差计算实现（两趟遍历算法确保数值稳定）"""
         cdef Py_ssize_t n = self.length
-        if n <= ddof or field < FIELD_x0 or field > FIELD_flags:
+        if n <= ddof or field < FIELD_idx or field > FIELD_flags:
             return 0.0
 
         cdef RowC* rows = self.rows_c
@@ -3454,7 +3458,7 @@ cdef class NDframe:
         直接遍历 C 数组，避免创建临时列表。
         """
         cdef Py_ssize_t n = self.length
-        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
+        if n == 0 or field < FIELD_idx or field > FIELD_flags:
             return (0, 0)
 
         cdef RowC* rows = self.rows_c
