@@ -925,12 +925,13 @@ cdef class StringAccessor:
     def drop_regex(self, object pattern):
         """就地删除匹配该正则的行，返回原 df"""
         return self.df._drop_in_regex(self.field, pattern)
-
     @cython.always_allow_keywords(False)
     def idx_contains(self, object pattern):
+        pattern = _ensure_regex(pattern)
         return self.df._idx_regex(self.field, pattern)
 
     def idx_contains_in_bbox(self, object pattern, int x0, int y0, int x1, int y1):
+        pattern = _ensure_regex(pattern)
         if x0 < 0: x0 = 0
         if x1 < 0: x1 = 0
         if y0 < 0: y0 = 0
@@ -961,16 +962,19 @@ cdef class StringAccessor:
     def idx_regex_strlen_greater(self, object pattern, int n):
         if n < 0:
             raise ValueError(f"invalid length: {n}")
+        pattern = _ensure_regex(pattern)
         return self.df._idx_regex_strlen_cmp(self.field, pattern, n, OP_GREATER)
 
     def idx_regex_strlen_less(self, object pattern, int n):
         if n < 0:
             raise ValueError(f"invalid length: {n}")
+        pattern = _ensure_regex(pattern)
         return self.df._idx_regex_strlen_cmp(self.field, pattern, n, OP_LESS)
 
     def idx_regex_strlen_equal(self, object pattern, int n):
         if n < 0:
             raise ValueError(f"invalid length: {n}")
+        pattern = _ensure_regex(pattern)
         return self.df._idx_regex_strlen_cmp(self.field, pattern, n, OP_EQUAL)
 
 
@@ -1618,7 +1622,7 @@ cdef class NDframe:
             return []
 
         cdef RowC* rows = self.rows_c
-        cdef list res = PyList_New(n)
+        cdef list res = [None] * n
         cdef Py_ssize_t i
         cdef RowC* row
         cdef str cur_txt, cur_sep
@@ -1896,23 +1900,27 @@ cdef class NDframe:
         """
         cdef int total = 0
         cdef Py_ssize_t n = self.length
-        if n == 0 or not sub:
+        if n == 0:
             return 0
+
+        cdef Py_ssize_t i, j, k
+        cdef Py_UCS4 cp
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
         cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(sub)
         if sub_len == 0:
-            return 0
+            # Python 语义: "abc".count("") == 4，空子串在每串首尾及每个字符间隙各计 1 次
+            for i in range(n):
+                total += (src.offsets_c[i + 1] - src.offsets_c[i]) + 1
+            return total
 
         # 1. 预先提取 Python search 字符串到 C 连续数组中
         cdef Py_UCS2* sub_buf = <Py_UCS2*>malloc(sub_len * sizeof(Py_UCS2))
         if not sub_buf: raise MemoryError()
-        cdef Py_ssize_t i, j, k
-        cdef Py_UCS4 cp
         for i in range(sub_len):
             cp = PyUnicode_READ_CHAR(sub, i)
             sub_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
-        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
         cdef Py_ssize_t start, end, str_len
         cdef bint match
         cdef Py_UCS2* chars = src.chars_c
@@ -2078,6 +2086,7 @@ cdef class NDframe:
                     _df_copy_row(new_df, self, i, &write_idx)
 
         free(sub_buf)
+        new_df.length = write_idx
         return new_df
 
     @cython.boundscheck(False)
@@ -2123,6 +2132,7 @@ cdef class NDframe:
             if match:
                 _df_copy_row(new_df, self, i, &write_idx)
 
+        new_df.length = write_idx
         return new_df
 
 
@@ -2159,6 +2169,7 @@ cdef class NDframe:
             if match:
                 _df_copy_row(new_df, self, i, &write_idx)
 
+        new_df.length = write_idx
         return new_df
 
 

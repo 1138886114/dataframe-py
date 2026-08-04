@@ -1120,7 +1120,7 @@ cdef class NDframe:
         cdef RowC* rows = self.rows_c
         cdef list txt = self.text_list
         cdef list sep = self.text_sep_list
-        cdef list res = PyList_New(n)
+        cdef list res = [None] * n
         cdef Py_ssize_t i
         cdef RowC* row
 
