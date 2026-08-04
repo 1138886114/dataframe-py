@@ -9,7 +9,6 @@ from libc.string cimport strstr, strlen, strncmp, memmove, memcpy, strncat, strn
 
 from libc.stdio cimport printf
 from libc.math cimport sqrt
-from libc.string cimport
 import unicodedata
 import cython
 from cpython.unicode cimport PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR
@@ -53,6 +52,7 @@ from cpython.unicode cimport (
 # 1. 前向声明，解决访问器与 NDframe 互相引用的问题
 # ============================================
 cdef class NDframe
+cdef class UCS2Column_SoA
 cdef tuple HEADERS = ("idx", "x0", "y0", "x1", "y1", "width", "height", "page", "flags", "text", "text_sep")
 cdef tuple HEADER_LENS = (3, 2, 2, 2, 2, 5, 6, 4, 5, 4, 8)
 
@@ -114,38 +114,15 @@ cdef enum StrTransformMode:
     TRM_SWAPCASE = 4
 
 
-cdef inline int _get_field_val(RowC* row, int field) nogil:
-    if field == FIELD_x0: return row.x0
-    elif field == FIELD_y0: return row.y0
-    elif field == FIELD_x1: return row.x1
-    elif field == FIELD_y1: return row.y1
-    elif field == FIELD_width: return row.width
-    elif field == FIELD_height: return row.height
-    elif field == FIELD_idx: return row.idx
-    elif field == FIELD_page: return row.page
-    elif field == FIELD_flags: return row.flags
-    else: return 0
+cdef inline int _get_field_val(RowC* row, int field) noexcept:
+    if 0 <= field <= FIELD_flags:
+        return (&row.x0)[field]
+    return 0
 
 
-cdef inline void _add_field_value(RowC* row, int field, int offset) noexcept nogil:
-    if field == FIELD_x0:
-        row.x0 += offset
-    elif field == FIELD_y0:
-        row.y0 += offset
-    elif field == FIELD_x1:
-        row.x1 += offset
-    elif field == FIELD_y1:
-        row.y1 += offset
-    elif field == FIELD_width:
-        row.width += offset
-    elif field == FIELD_height:
-        row.height += offset
-    elif field == FIELD_idx:
-        row.idx += offset
-    elif field == FIELD_page:
-        row.page += offset
-    elif field == FIELD_flags:
-        row.flags += offset
+cdef inline void _add_field_value(RowC* row, int field, int offset) noexcept:
+    if 0 <= field <= FIELD_flags:
+        (&row.x0)[field] += offset
 
 
 cdef inline object _ensure_regex(object pattern):
@@ -162,6 +139,79 @@ cdef inline object _ensure_regex(object pattern):
         raise TypeError(f"Expected string or compiled regex pattern, got {type(pattern).__name__}")
 
     return pattern
+
+
+# ============================================
+# 模块级极速匹配 / 比较 / 拷贝帮助函数
+# ============================================
+cdef Py_UCS2* _str_to_ucs2_buf(str s, Py_ssize_t* out_len) except NULL:
+    """将 Python str 提取为 UCS2 连续缓冲（>0xFFFF 的字符按存储引擎约定降级为 '?'）"""
+    cdef Py_ssize_t n = PyUnicode_GET_LENGTH(s)
+    cdef Py_UCS2* buf = NULL
+    if n > 0:
+        buf = <Py_UCS2*>malloc(n * sizeof(Py_UCS2))
+        if buf == NULL:
+            raise MemoryError()
+        cdef Py_ssize_t i
+        cdef Py_UCS4 cp
+        for i in range(n):
+            cp = PyUnicode_READ_CHAR(s, i)
+            buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+    out_len[0] = n
+    return buf
+
+
+cdef inline bint _substr_contains(Py_UCS2* chars, Py_ssize_t start, Py_ssize_t end,
+                                  Py_UCS2* sub_buf, Py_ssize_t sub_len) noexcept:
+    """纯 C 内存滑动窗口子串匹配（O(N*M)，无任何 Python 对象创建）"""
+    if sub_len == 0:
+        return True
+    cdef Py_ssize_t str_len = end - start
+    if str_len < sub_len:
+        return False
+    cdef Py_ssize_t j, k
+    cdef bint ok
+    for j in range(start, end - sub_len + 1):
+        if chars[j] != sub_buf[0]:
+            continue
+        ok = True
+        for k in range(1, sub_len):
+            if chars[j + k] != sub_buf[k]:
+                ok = False
+                break
+        if ok:
+            return True
+    return False
+
+
+cdef inline bint _int_cmp_pass(Py_ssize_t val, int op, Py_ssize_t arg1, Py_ssize_t arg2) noexcept:
+    """统一整数比较谓词：把 OP_GREATER/LESS/EQUAL/BETWEEN 的分支收敛到一个函数"""
+    if op == OP_GREATER:
+        return val > arg1
+    elif op == OP_LESS:
+        return val < arg1
+    elif op == OP_EQUAL:
+        return val == arg1
+    elif op == OP_BETWEEN:
+        return val > arg1 and val < arg2
+    return False
+
+
+cdef inline bint _is_strip_default_char(Py_UCS2 c) noexcept:
+    return c == 32 or c == 9 or c == 10 or c == 13
+
+
+cdef inline bint _is_in_chars(Py_UCS2 c, Py_UCS2* chars_buf, Py_ssize_t chars_len) noexcept:
+    cdef Py_ssize_t k
+    for k in range(chars_len):
+        if c == chars_buf[k]:
+            return True
+    return False
+
+
+# 前向声明：定义体在 UCS2Column_SoA / NDframe 类之后
+cdef void _col_copy_row(UCS2Column_SoA dst, UCS2Column_SoA src, Py_ssize_t src_idx) except *
+cdef void _df_copy_row(NDframe dst, NDframe src, Py_ssize_t src_idx, Py_ssize_t* write_idx) except *
 
 
 ####################################################
@@ -570,45 +620,36 @@ cdef class UCS2Column_SoA:
 
     # ... isalpha, isalnum 依葫芦画瓢即可 ...
 
-
-    def lower(self):
-        ... # TODO
-
-
-    def upper(self):
-        ... # TODO
-
-
-    def strip(self):
-        ... # TODO
-
-
-    def lstrip(self):
-        ... # TODO
-
-    def rstrip(self):
-        ... # TODO
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef void _remove_at(self, Py_ssize_t idx) noexcept:
+        """就地删除第 idx 行：字符池 memmove 挤压 + 偏移量整体平移"""
+        cdef Py_ssize_t start = self.offsets_c[idx]
+        cdef Py_ssize_t end = self.offsets_c[idx + 1]
+        cdef Py_ssize_t c_len = end - start
+        cdef Py_ssize_t tail = self.char_length - end
+        if tail > 0:
+            memmove(self.chars_c + start, self.chars_c + end, tail * sizeof(Py_UCS2))
+        self.char_length -= c_len
+        cdef Py_ssize_t i
+        for i in range(idx, self.length):
+            self.offsets_c[i] = self.offsets_c[i + 1] - c_len
+        self.length -= 1
 
 
-    def isdigit(self):
-        ... # TODO
-
-
-    def isalpha(self):
-        ... # TODO
-
-
-    def isalnum(self):
-        ... # TODO
-
-
-    def isspace(self):
-        ... # TODO
-
-
-    def unique(self):
-        ... # TODO
-
+cdef void _col_copy_row(UCS2Column_SoA dst, UCS2Column_SoA src, Py_ssize_t src_idx) except *:
+    """把 src 的第 src_idx 行以纯 C memcpy 方式追加到 dst 列尾部（0 次 Python 对象创建）"""
+    cdef Py_ssize_t start = src.offsets_c[src_idx]
+    cdef Py_ssize_t c_len = src.offsets_c[src_idx + 1] - start
+    if dst.length >= dst.capacity:
+        dst._reserve_rows(dst.capacity * 2)
+    if dst.char_length + c_len > dst.char_capacity:
+        dst._reserve_chars(dst.char_length + c_len + 1024)
+    if c_len > 0:
+        memcpy(dst.chars_c + dst.char_length, src.chars_c + start, c_len * sizeof(Py_UCS2))
+    dst.char_length += c_len
+    dst.length += 1
+    dst.offsets_c[dst.length] = dst.char_length
 
 
 # ==========================================
@@ -1244,16 +1285,22 @@ cdef str _truncate_str(str s, int max_chars=90, int head=79, int tail=8):
 # ==========================================
 # 3. 核心 NDframe 定义
 # ==========================================
+# 结构体成员顺序与 FieldID 枚举一一对应（全部为 int，无 padding），
+# 因此 _get_field_val 可用 (&row.x0)[field] 指针索引直接取数，0 次分支判断。
 cdef struct RowC:
-    int idx
-    int x0
-    int y0
-    int x1
-    int y1
-    int width
-    int height
-    int page
-    int flags
+    int x0       # FIELD_x0    = 0
+    int y0       # FIELD_y0    = 1
+    int x1       # FIELD_x1    = 2
+    int y1       # FIELD_y1    = 3
+    int width    # FIELD_width = 4
+    int height   # FIELD_height= 5
+    int idx      # FIELD_idx   = 6
+    int page     # FIELD_page  = 7
+    int flags    # FIELD_flags = 8
+
+
+cdef inline int* _row_field_ptr(RowC* row, int field) noexcept:
+    return &row.x0 + field
 
 
 @cython.final
@@ -1277,7 +1324,7 @@ cdef class NDframe:
         if not self.rows_c:
             raise MemoryError()
 
-        sself.text_col = UCS2Column_SoA(self._capacity)
+        self.text_col = UCS2Column_SoA(self._capacity)
         self.text_sep_col = UCS2Column_SoA(self._capacity)
 
     def __dealloc__(self):
@@ -1356,8 +1403,8 @@ cdef class NDframe:
             html.append(f"<td>{self.rows_c[i].height}</td>")
             html.append(f"<td>{self.rows_c[i].page}</td>")
             html.append(f"<td>{self.rows_c[i].flags}</td>")
-            html.append(f"<td style='text-align: left;'>{self.text_list[i]}</td>")
-            html.append(f"<td style='text-align: left;'>{self.text_sep_list[i]}</td>")
+            html.append(f"<td style='text-align: left;'>{self.text_col._get_str(i)}</td>")
+            html.append(f"<td style='text-align: left;'>{self.text_sep_col._get_str(i)}</td>")
             html.append("</tr>")
 
         html.append("</tbody></table></div>")
@@ -1562,16 +1609,15 @@ cdef class NDframe:
             return []
 
         cdef RowC* rows = self.rows_c
-        cdef list txt = self.text_list
-        cdef list sep = self.text_sep_list
         cdef list res = PyList_New(n)
         cdef Py_ssize_t i
         cdef RowC* row
+        cdef str cur_txt, cur_sep
 
         for i in range(n):
             row = &rows[i]
-            cur_txt = <str>PyList_GET_ITEM(txt, i)
-            cur_sep = <str>PyList_GET_ITEM(sep, i)
+            cur_txt = self.text_col._get_str(i)
+            cur_sep = self.text_sep_col._get_str(i)
             res[i] = {
                 "idx": row.idx,
                 "x0": row.x0,
@@ -2242,144 +2288,43 @@ cdef class NDframe:
     # 聚合与计算功能
     # ========================================================
     cdef int _max_col(self, int field):
-        """寻找最大值"""
+        """寻找最大值（field 分支收敛为指针索引，循环内 0 分支）"""
         cdef Py_ssize_t n = self.length
-        if n == 0:
+        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
             return 0
         cdef RowC* rows = self.rows_c
         cdef Py_ssize_t i
-        cdef int max_val
-
-        if field == FIELD_x0:
-            max_val = rows[0].x0
-            for i in range(1, n):
-                if rows[i].x0 > max_val: max_val = rows[i].x0
-        elif field == FIELD_y0:
-            max_val = rows[0].y0
-            for i in range(1, n):
-                if rows[i].y0 > max_val: max_val = rows[i].y0
-        elif field == FIELD_x1:
-            max_val = rows[0].x1
-            for i in range(1, n):
-                if rows[i].x1 > max_val: max_val = rows[i].x1
-        elif field == FIELD_y1:
-            max_val = rows[0].y1
-            for i in range(1, n):
-                if rows[i].y1 > max_val: max_val = rows[i].y1
-        elif field == FIELD_width:
-            max_val = rows[0].width
-            for i in range(1, n):
-                if rows[i].width > max_val: max_val = rows[i].width
-        elif field == FIELD_height:
-            max_val = rows[0].height
-            for i in range(1, n):
-                if rows[i].height > max_val: max_val = rows[i].height
-        elif field == FIELD_idx:
-            max_val = rows[0].idx
-            for i in range(1, n):
-                if rows[i].idx > max_val: max_val = rows[i].idx
-        elif field == FIELD_page:
-            max_val = rows[0].page
-            for i in range(1, n):
-                if rows[i].page > max_val: max_val = rows[i].page
-        elif field == FIELD_flags:
-            max_val = rows[0].flags
-            for i in range(1, n):
-                if rows[i].flags > max_val: max_val = rows[i].flags
-        else:
-            printf("warning: unsupported field!\n")
-            return 0
+        cdef int max_val = _get_field_val(&rows[0], field)
+        cdef int v
+        for i in range(1, n):
+            v = _get_field_val(&rows[i], field)
+            if v > max_val: max_val = v
         return max_val
 
 
     cdef int _min_col(self, int field):
-        """寻找最小值"""
+        """寻找最小值（field 分支收敛为指针索引，循环内 0 分支）"""
         cdef Py_ssize_t n = self.length
-        if n == 0:
+        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
             return 0
         cdef RowC* rows = self.rows_c
         cdef Py_ssize_t i
-        cdef int min_val
-
-        if field == FIELD_x0:
-            min_val = rows[0].x0
-            for i in range(1, n):
-                if rows[i].x0 < min_val: min_val = rows[i].x0
-        elif field == FIELD_y0:
-            min_val = rows[0].y0
-            for i in range(1, n):
-                if rows[i].y0 < min_val: min_val = rows[i].y0
-        elif field == FIELD_x1:
-            min_val = rows[0].x1
-            for i in range(1, n):
-                if rows[i].x1 < min_val: min_val = rows[i].x1
-        elif field == FIELD_y1:
-            min_val = rows[0].y1
-            for i in range(1, n):
-                if rows[i].y1 < min_val: min_val = rows[i].y1
-        elif field == FIELD_width:
-            min_val = rows[0].width
-            for i in range(1, n):
-                if rows[i].width < min_val: min_val = rows[i].width
-        elif field == FIELD_height:
-            min_val = rows[0].height
-            for i in range(1, n):
-                if rows[i].height < min_val: min_val = rows[i].height
-        elif field == FIELD_idx:
-            min_val = rows[0].idx
-            for i in range(1, n):
-                if rows[i].idx < min_val: min_val = rows[i].idx
-        elif field == FIELD_page:
-            min_val = rows[0].page
-            for i in range(1, n):
-                if rows[i].page < min_val: min_val = rows[i].page
-        elif field == FIELD_flags:
-            min_val = rows[0].flags
-            for i in range(1, n):
-                if rows[i].flags < min_val: min_val = rows[i].flags
-        else:
-            printf("warning: unsupported field!\n")
-            return 0
+        cdef int min_val = _get_field_val(&rows[0], field)
+        cdef int v
+        for i in range(1, n):
+            v = _get_field_val(&rows[i], field)
+            if v < min_val: min_val = v
         return min_val
 
     cdef double _mean_col(self, int field):
         cdef Py_ssize_t n = self.length
-        if n == 0:
+        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
             return 0.0
         cdef RowC* rows = self.rows_c
         cdef Py_ssize_t i
         cdef double sum_val = 0.0
-
-        if field == FIELD_x0:
-            for i in range(n):
-                sum_val += rows[i].x0
-        elif field == FIELD_y0:
-            for i in range(n):
-                sum_val += rows[i].y0
-        elif field == FIELD_x1:
-            for i in range(n):
-                sum_val += rows[i].x1
-        elif field == FIELD_y1:
-            for i in range(n):
-                sum_val += rows[i].y1
-        elif field == FIELD_width:
-            for i in range(n):
-                sum_val += rows[i].width
-        elif field == FIELD_height:
-            for i in range(n):
-                sum_val += rows[i].height
-        elif field == FIELD_idx:
-            for i in range(n):
-                sum_val += rows[i].idx
-        elif field == FIELD_page:
-            for i in range(n):
-                sum_val += rows[i].page
-        elif field == FIELD_flags:
-            for i in range(n):
-                sum_val += rows[i].flags
-        else:
-            printf("warning: only support integral fields!\n")
-            return -1.0
+        for i in range(n):
+            sum_val += _get_field_val(&rows[i], field)
         return sum_val / <double>n
 
     # ========================================================
@@ -2944,20 +2889,11 @@ cdef class NDframe:
 
         cdef Py_ssize_t i, write_idx = 0
         cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
 
         for i in range(n):
             if (src_rows[i].x0 > x0 and src_rows[i].y0 > y0 and
                 src_rows[i].x1 < x1 and src_rows[i].y1 < y1):
-                dst_rows[write_idx] = src_rows[i]
-                PyList_Append(dst_txt, src_txt[i])
-                PyList_Append(dst_sep, src_sep[i])
-                write_idx += 1
+                _df_copy_row(new_df, self, i, &write_idx)
 
         new_df.length = write_idx
         return new_df
@@ -2971,19 +2907,10 @@ cdef class NDframe:
 
         cdef Py_ssize_t i, write_idx = 0
         cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
 
         for i in range(n):
             if src_rows[i].x0 > x0 and src_rows[i].x1 < x1:
-                dst_rows[write_idx] = src_rows[i]
-                PyList_Append(dst_txt, src_txt[i])
-                PyList_Append(dst_sep, src_sep[i])
-                write_idx += 1
+                _df_copy_row(new_df, self, i, &write_idx)
         new_df.length = write_idx
         return new_df
 
@@ -2996,18 +2923,10 @@ cdef class NDframe:
 
         cdef Py_ssize_t i, write_idx = 0
         cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
 
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
         for i in range(n):
             if src_rows[i].y0 > y0 and src_rows[i].y1 < y1:
-                dst_rows[write_idx] = src_rows[i]
-                PyList_Append(dst_txt, src_txt[i])
-                PyList_Append(dst_sep, src_sep[i])
-                write_idx += 1
+                _df_copy_row(new_df, self, i, &write_idx)
         new_df.length = write_idx
         return new_df
 
@@ -3020,19 +2939,10 @@ cdef class NDframe:
 
         cdef Py_ssize_t i, write_idx = 0
         cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
 
         for i in range(n):
             if src_rows[i].x0 > x0_val and src_rows[i].y0 > y0_val:
-                dst_rows[write_idx] = src_rows[i]
-                PyList_Append(dst_txt, src_txt[i])
-                PyList_Append(dst_sep, src_sep[i])
-                write_idx += 1
+                _df_copy_row(new_df, self, i, &write_idx)
         new_df.length = write_idx
         return new_df
 
@@ -3045,19 +2955,10 @@ cdef class NDframe:
 
         cdef Py_ssize_t i, write_idx = 0
         cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
 
         for i in range(n):
             if src_rows[i].x1 < x1_val and src_rows[i].y1 < y1_val:
-                dst_rows[write_idx] = src_rows[i]
-                PyList_Append(dst_txt, src_txt[i])
-                PyList_Append(dst_sep, src_sep[i])
-                write_idx += 1
+                _df_copy_row(new_df, self, i, &write_idx)
         new_df.length = write_idx
         return new_df
 
@@ -3071,39 +2972,11 @@ cdef class NDframe:
             return new_df
 
         cdef Py_ssize_t i, write_idx = 0
-        cdef int val
         cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
 
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
-
-        if op == OP_GREATER:
-            for i in range(n):
-                val = _get_field_val(&src_rows[i], field)
-                if val > arg1:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        elif op == OP_LESS:
-            for i in range(n):
-                val = _get_field_val(&src_rows[i], field)
-                if val < arg1:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        elif op == OP_BETWEEN:
-            for i in range(n):
-                val = _get_field_val(&src_rows[i], field)
-                if val > arg1 and val < arg2:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
+        for i in range(n):
+            if _int_cmp_pass(_get_field_val(&src_rows[i], field), op, arg1, arg2):
+                _df_copy_row(new_df, self, i, &write_idx)
         new_df.length = write_idx
         return new_df
 
@@ -3117,44 +2990,11 @@ cdef class NDframe:
             return new_df
 
         cdef Py_ssize_t i, write_idx = 0
-        cdef int ln
-        cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
-
-        cdef list target_list = src_txt if field == FIELD_txt else src_sep
-
-        if op == OP_GREATER:
-            for i in range(n):
-                ln = len(target_list[i])
-                if ln > th:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        elif op == OP_LESS:
-            for i in range(n):
-                ln = len(target_list[i])
-                if ln < th:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        elif op == OP_EQUAL:
-            for i in range(n):
-                ln = len(target_list[i])
-                if ln == th:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        else:
-            printf("ERROR: Invalid operation\n")
-            return new_df
+        for i in range(n):
+            if _int_cmp_pass(src.offsets_c[i + 1] - src.offsets_c[i], op, th, 0):
+                _df_copy_row(new_df, self, i, &write_idx)
         new_df.length = write_idx
         return new_df
 
@@ -3168,15 +3008,9 @@ cdef class NDframe:
             return []
         cdef list result = [0] * n
         cdef Py_ssize_t i
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-
-        if field == FIELD_txt:
-            for i in range(n):
-                result[i] = PyLong_FromSsize_t(PyUnicode_GET_LENGTH(src_txt[i]))
-        else:
-            for i in range(n):
-                result[i] = PyLong_FromSsize_t(PyUnicode_GET_LENGTH(src_sep[i]))
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+        for i in range(n):
+            result[i] = PyLong_FromSsize_t(src.offsets_c[i + 1] - src.offsets_c[i])
         return result
 
     cdef NDframe _df_is_in(self, int field, object texts):
@@ -3187,22 +3021,11 @@ cdef class NDframe:
 
         cdef set text_set = set(texts)
         cdef Py_ssize_t i, write_idx = 0
-        cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
-
-        cdef list target_list = src_txt if field == FIELD_txt else src_sep
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
         for i in range(n):
-            if target_list[i] in text_set:
-                dst_rows[write_idx] = src_rows[i]
-                PyList_Append(dst_txt, src_txt[i])
-                PyList_Append(dst_sep, src_sep[i])
-                write_idx += 1
+            if src._get_str(i) in text_set:
+                _df_copy_row(new_df, self, i, &write_idx)
 
         new_df.length = write_idx
         return new_df
@@ -3215,30 +3038,11 @@ cdef class NDframe:
 
         cdef set text_set = set(texts)
         cdef Py_ssize_t i, write_idx = 0
-        cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
-
-        if field == FIELD_txt:
-            for i in range(n):
-                if src_txt[i] not in text_set:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        elif field == FIELD_sep:
-            for i in range(n):
-                if src_sep[i] not in text_set:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        else:
-            return new_df
+        for i in range(n):
+            if src._get_str(i) not in text_set:
+                _df_copy_row(new_df, self, i, &write_idx)
         new_df.length = write_idx
         return new_df
 
@@ -3249,20 +3053,14 @@ cdef class NDframe:
         if n == 0:
             return False
 
-        cdef list text_list
-        if field == FIELD_txt:
-            text_list = self.text_list
-        elif field == FIELD_sep:
-            text_list = self.text_sep_list
-        else:
-            return False
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
         cdef str txt, t
         cdef tuple text_tuple = tuple(texts) if not isinstance(texts, tuple) else texts
         cdef Py_ssize_t m = len(text_tuple)
 
         for i in range(n):
-            txt = text_list[i]
+            txt = src._get_str(i)
             if not txt:
                 continue
             for j in range(m):
@@ -3271,120 +3069,21 @@ cdef class NDframe:
                     return True
         return False
 
-    # ========================================================
-    # 正则 + 字符串长度组合筛选 (cdef 实现)
-    # ========================================================
-    cdef NDframe _df_regex_strlen_cmp(self, int field, object pattern, int threshold, int op):
-        """正则匹配 && 字符串长度比较 -> 新 NDframe"""
-        cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if n == 0:
-            return new_df
-
-        cdef Py_ssize_t i, write_idx = 0
-        cdef str txt
-        cdef int ln
-        cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-        cdef object search_fn = pattern.search
-
-        cdef list dst_txt = new_df.text_list
-        cdef list dst_sep = new_df.text_sep_list
-
-        if field == FIELD_txt:
-            if op == OP_GREATER:
-                for i in range(n):
-                    txt = <str>src_txt[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) > threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, txt)
-                        PyList_Append(dst_sep, src_sep[i])
-                        write_idx += 1
-            elif op == OP_LESS:
-                for i in range(n):
-                    txt = <str>src_txt[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) < threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, txt)
-                        PyList_Append(dst_sep, src_sep[i])
-                        write_idx += 1
-            elif op == OP_EQUAL:
-                for i in range(n):
-                    txt = <str>src_txt[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) == threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, txt)
-                        PyList_Append(dst_sep, src_sep[i])
-                        write_idx += 1
-        elif field == FIELD_sep:
-            if op == OP_GREATER:
-                for i in range(n):
-                    txt = <str>src_sep[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) > threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, src_txt[i])
-                        PyList_Append(dst_sep, txt)
-                        write_idx += 1
-            elif op == OP_LESS:
-                for i in range(n):
-                    txt = <str>src_sep[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) < threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, src_txt[i])
-                        PyList_Append(dst_sep, txt)
-                        write_idx += 1
-            elif op == OP_EQUAL:
-                for i in range(n):
-                    txt = <str>src_sep[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) == threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, src_txt[i])
-                        PyList_Append(dst_sep, txt)
-                        write_idx += 1
-        else:
-            return new_df
-
-        new_df.length = write_idx
-        return new_df
-
-
     cdef void _replace_cross(self, int src_field, int dst_field, str old_str, str new_str) except *:
-        """将 src_field 中 old_str 替换为 new_str，结果写入 dst_field（就地）"""
-        cdef Py_ssize_t i, n = self.length
-        if n == 0:
+        """将 src_field 中 old_str 替换为 new_str，结果写入 dst_field（就地）
+        源列直接走 UCS2Column_SoA.replace 的纯 C 通道，新列整体挂载到目标列。
+        """
+        cdef Py_ssize_t n = self.length
+        if n == 0 or not old_str:
             return
 
-        cdef list src_list, dst_list
-        cdef object replace_method = str.replace
+        cdef UCS2Column_SoA src = self.text_col if src_field == FIELD_txt else self.text_sep_col
+        cdef UCS2Column_SoA new_col = src.replace(old_str, new_str)
 
-        # 确定源列表和目标列表
-        if src_field == FIELD_txt:
-            src_list = self.text_list
+        if dst_field == FIELD_txt:
+            self.text_col = new_col
         else:
-            src_list = self.text_sep_list
-
-        if dst_field == FIELD_sep:
-            dst_list = self.text_sep_list
-        else:
-            dst_list = self.text_list
-
-        for i in range(n):
-            if src_list[i]:
-                dst_list[i] = replace_method(src_list[i], old_str, new_str)
+            self.text_sep_col = new_col
 
 
     cdef void _regex_replace_cross(self, int src_field, int dst_field, object pattern, str rewrite) except *:
@@ -3393,66 +3092,39 @@ cdef class NDframe:
         if n == 0:
             return
 
-        cdef list src_list, dst_list
+        cdef UCS2Column_SoA src = self.text_col if src_field == FIELD_txt else self.text_sep_col
+        cdef UCS2Column_SoA new_col = UCS2Column_SoA(n)
         cdef object sub = pattern.sub
-
-        if src_field == FIELD_txt:
-            src_list = self.text_list
-        else:
-            src_list = self.text_sep_list
-
-        if dst_field == FIELD_sep:
-            dst_list = self.text_sep_list
-        else:
-            dst_list = self.text_list
+        cdef str txt
 
         for i in range(n):
-            if src_list[i]:
-                dst_list[i] = sub(rewrite, src_list[i])
+            txt = src._get_str(i)
+            if txt:
+                txt = sub(rewrite, txt)
+            new_col.append(txt)
+
+        if dst_field == FIELD_txt:
+            self.text_col = new_col
+        else:
+            self.text_sep_col = new_col
 
     # ========================================================
     # 排序
     # ========================================================
     cdef void _sort_col(self, int field_id, bint descending) except *:
-        """核心排序实现：按 int field_id 排序（就地）"""
+        """核心排序实现：按 int field_id 排序（就地）
+        rows_c 走临时缓冲重排，两列字符池走 UCS2Column_SoA._reorder 重建。
+        """
         cdef Py_ssize_t n = self.length
-        if n < 2:
+        if n < 2 or field_id < FIELD_x0 or field_id > FIELD_flags:
             return
 
         cdef Py_ssize_t i
         cdef RowC* rows = self.rows_c
         cdef list pairs = [None] * n   # 预分配列表
 
-        # 构建 (value, index) 对，直接访问结构体成员
-        if field_id == FIELD_x0:
-            for i in range(n):
-                pairs[i] = (rows[i].x0, i)
-        elif field_id == FIELD_y0:
-            for i in range(n):
-                pairs[i] = (rows[i].y0, i)
-        elif field_id == FIELD_x1:
-            for i in range(n):
-                pairs[i] = (rows[i].x1, i)
-        elif field_id == FIELD_y1:
-            for i in range(n):
-                pairs[i] = (rows[i].y1, i)
-        elif field_id == FIELD_width:
-            for i in range(n):
-                pairs[i] = (rows[i].width, i)
-        elif field_id == FIELD_height:
-            for i in range(n):
-                pairs[i] = (rows[i].height, i)
-        elif field_id == FIELD_idx:
-            for i in range(n):
-                pairs[i] = (rows[i].idx, i)
-        elif field_id == FIELD_page:
-            for i in range(n):
-                pairs[i] = (rows[i].page, i)
-        elif field_id == FIELD_flags:
-            for i in range(n):
-                pairs[i] = (rows[i].flags, i)
-        else:
-            return
+        for i in range(n):
+            pairs[i] = (_get_field_val(&rows[i], field_id), i)
 
         pairs.sort(reverse=descending)
         cdef list indices = [idx for _, idx in pairs]
@@ -3461,21 +3133,12 @@ cdef class NDframe:
         if not temp_rows:
             raise MemoryError()
 
-        cdef list temp_text = [None] * n
-        cdef list temp_sep  = [None] * n
-        cdef list src_text = self.text_list
-        cdef list src_sep  = self.text_sep_list
-
         try:
             for i in range(n):
-                idx = indices[i]
-                temp_rows[i] = rows[idx]
-                temp_text[i] = src_text[idx]
-                temp_sep[i]  = src_sep[idx]
-
+                temp_rows[i] = rows[<Py_ssize_t>indices[i]]
             memcpy(rows, temp_rows, <size_t>n * sizeof(RowC))
-            self.text_list = temp_text
-            self.text_sep_list = temp_sep
+            self.text_col._reorder(indices)
+            self.text_sep_col._reorder(indices)
         finally:
             free(temp_rows)
 
@@ -3497,9 +3160,11 @@ cdef class NDframe:
         memcpy(result.rows_c, df1.rows_c, len1 * sizeof(RowC))
         memcpy(result.rows_c + len1, df2.rows_c, len2 * sizeof(RowC))
 
-        # 合并 Python 列表（C 级拼接，高效）
-        result.text_list = df1.text_list + df2.text_list
-        result.text_sep_list = df1.text_sep_list + df2.text_sep_list
+        # 字符池拼接：copy + concat 全程 memcpy，0 次 Python 字符串创建
+        result.text_col = df1.text_col.copy()
+        result.text_col.concat(df2.text_col)
+        result.text_sep_col = df1.text_sep_col.copy()
+        result.text_sep_col.concat(df2.text_sep_col)
 
         result.length = total
         return result
@@ -3510,106 +3175,30 @@ cdef class NDframe:
     cdef void _add_col(self, int field, int value) except *:
         """对该字段所有值加法"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or value == 0:
+        if n == 0 or value == 0 or field < FIELD_x0 or field > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
-
-        if field == FIELD_x0:
-            for i in range(n):
-                rows[i].x0 += value
-        elif field == FIELD_y0:
-            for i in range(n):
-                rows[i].y0 += value
-        elif field == FIELD_x1:
-            for i in range(n):
-                rows[i].x1 += value
-        elif field == FIELD_y1:
-            for i in range(n):
-                rows[i].y1 += value
-        elif field == FIELD_width:
-            for i in range(n):
-                rows[i].width += value
-        elif field == FIELD_height:
-            for i in range(n):
-                rows[i].height += value
-        elif field == FIELD_idx:
-            for i in range(n):
-                rows[i].idx += value
-        elif field == FIELD_page:
-            for i in range(n):
-                rows[i].page += value
-        elif field == FIELD_flags:
-            for i in range(n):
-                rows[i].flags += value
+        for i in range(n):
+            _add_field_value(&rows[i], field, value)
 
 
     cdef void _add_col_at(self, int field, Py_ssize_t i, int value) except *:
         """对指定行的指定字段执行加法"""
-        cdef RowC* row = &self.rows_c[i]
-        if field == FIELD_x0:
-            row.x0 += value
-        elif field == FIELD_y0:
-            row.y0 += value
-        elif field == FIELD_x1:
-            row.x1 += value
-        elif field == FIELD_y1:
-            row.y1 += value
-        elif field == FIELD_width:
-            row.width += value
-        elif field == FIELD_height:
-            row.height += value
-        elif field == FIELD_idx:
-            row.idx += value
-        elif field == FIELD_page:
-            row.page += value
-        elif field == FIELD_flags:
-            row.flags += value
+        _add_field_value(&self.rows_c[i], field, value)
 
 
     cdef void _sub_col(self, int field, int value) except *:
         """对该字段所有值减法（不低于0）"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or value == 0:
+        if n == 0 or value == 0 or field < FIELD_x0 or field > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
+        cdef int* f
         cdef int v
-
-        if field == FIELD_x0:
-            for i in range(n):
-                v = rows[i].x0
-                rows[i].x0 = v - value if v > value else 0
-        elif field == FIELD_y0:
-            for i in range(n):
-                v = rows[i].y0
-                rows[i].y0 = v - value if v > value else 0
-        elif field == FIELD_x1:
-            for i in range(n):
-                v = rows[i].x1
-                rows[i].x1 = v - value if v > value else 0
-        elif field == FIELD_y1:
-            for i in range(n):
-                v = rows[i].y1
-                rows[i].y1 = v - value if v > value else 0
-        elif field == FIELD_width:
-            for i in range(n):
-                v = rows[i].width
-                rows[i].width = v - value if v > value else 0
-        elif field == FIELD_height:
-            for i in range(n):
-                v = rows[i].height
-                rows[i].height = v - value if v > value else 0
-        elif field == FIELD_idx:
-            for i in range(n):
-                v = rows[i].idx
-                rows[i].idx = v - value if v > value else 0
-        elif field == FIELD_page:
-            for i in range(n):
-                v = rows[i].page
-                rows[i].page = v - value if v > value else 0
-        elif field == FIELD_flags:
-            for i in range(n):
-                v = rows[i].flags
-                rows[i].flags = v - value if v > value else 0
+        for i in range(n):
+            f = _row_field_ptr(&rows[i], field)
+            v = f[0]
+            f[0] = v - value if v > value else 0
 
     cdef NDframe _df_drop(self, int index):
         """返回不含 index 行的新 NDframe"""
@@ -3619,26 +3208,11 @@ cdef class NDframe:
             return new_df
 
         cdef Py_ssize_t i, write_idx = 0
-        cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-        cdef list new_text = [None] * n
-        cdef list new_sep = [None] * n
-
         for i in range(n):
             if i != index:
-                dst_rows[write_idx] = src_rows[i]
-                new_text[write_idx] = src_txt[i]
-                new_sep[write_idx]  = src_sep[i]
-                write_idx += 1
+                _df_copy_row(new_df, self, i, &write_idx)
 
         new_df.length = write_idx
-        if write_idx < n:
-            del new_text[write_idx:]
-            del new_sep[write_idx:]
-        new_df.text_list = new_text
-        new_df.text_sep_list = new_sep
         return new_df
 
     cdef NDframe _df_drops(self, object idx_set):
@@ -3650,219 +3224,55 @@ cdef class NDframe:
 
         cdef set idx_set_c = set(idx_set)   # 转换为 set 加速 in 测试
         cdef Py_ssize_t i, write_idx = 0
-        cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-        cdef list new_text = [None] * n
-        cdef list new_sep = [None] * n
 
         for i in range(n):
             if i not in idx_set_c:
-                dst_rows[write_idx] = src_rows[i]
-                new_text[write_idx] = src_txt[i]
-                new_sep[write_idx]  = src_sep[i]
-                write_idx += 1
+                _df_copy_row(new_df, self, i, &write_idx)
 
         new_df.length = write_idx
-        if write_idx < n:
-            del new_text[write_idx:]
-            del new_sep[write_idx:]
-        new_df.text_list = new_text
-        new_df.text_sep_list = new_sep
         return new_df
 
     cdef void _apply_if_greater_add(self, int cond_id, int target_id, int threshold, int offset) except *:
+        """如果 cond_id > threshold，则 target_id += offset"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or offset == 0:
+        if n == 0 or offset == 0 or cond_id < FIELD_x0 or cond_id > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
-
-        if cond_id == FIELD_x0:
-            for i in range(n):
-                if rows[i].x0 > threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_y0:
-            for i in range(n):
-                if rows[i].y0 > threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_x1:
-            for i in range(n):
-                if rows[i].x1 > threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_y1:
-            for i in range(n):
-                if rows[i].y1 > threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_width:
-            for i in range(n):
-                if rows[i].width > threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_height:
-            for i in range(n):
-                if rows[i].height > threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_idx:
-            for i in range(n):
-                if rows[i].idx > threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_page:
-            for i in range(n):
-                if rows[i].page > threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_flags:
-            for i in range(n):
-                if rows[i].flags > threshold:
-                    _add_field_value(&rows[i], target_id, offset)
+        for i in range(n):
+            if _get_field_val(&rows[i], cond_id) > threshold:
+                _add_field_value(&rows[i], target_id, offset)
 
     cdef void _apply_if_less_add(self, int cond_id, int target_id, int threshold, int offset) except *:
         """如果 cond_id < threshold，则 target_id += offset"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or offset == 0:
+        if n == 0 or offset == 0 or cond_id < FIELD_x0 or cond_id > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
-
-        if cond_id == FIELD_x0:
-            for i in range(n):
-                if rows[i].x0 < threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_y0:
-            for i in range(n):
-                if rows[i].y0 < threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_x1:
-            for i in range(n):
-                if rows[i].x1 < threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_y1:
-            for i in range(n):
-                if rows[i].y1 < threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_width:
-            for i in range(n):
-                if rows[i].width < threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_height:
-            for i in range(n):
-                if rows[i].height < threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_idx:
-            for i in range(n):
-                if rows[i].idx < threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_page:
-            for i in range(n):
-                if rows[i].page < threshold:
-                    _add_field_value(&rows[i], target_id, offset)
-        elif cond_id == FIELD_flags:
-            for i in range(n):
-                if rows[i].flags < threshold:
-                    _add_field_value(&rows[i], target_id, offset)
+        for i in range(n):
+            if _get_field_val(&rows[i], cond_id) < threshold:
+                _add_field_value(&rows[i], target_id, offset)
 
     cdef void _apply_if_greater_add_y(self, int cond_id, int threshold, int offset) except *:
+        """如果 cond_id > threshold，则 y0 += offset, y1 += offset"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or offset == 0:
+        if n == 0 or offset == 0 or cond_id < FIELD_x0 or cond_id > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
-
-        if cond_id == FIELD_x0:
-            for i in range(n):
-                if rows[i].x0 > threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_y0:
-            for i in range(n):
-                if rows[i].y0 > threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_x1:
-            for i in range(n):
-                if rows[i].x1 > threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_y1:
-            for i in range(n):
-                if rows[i].y1 > threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_width:
-            for i in range(n):
-                if rows[i].width > threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_height:
-            for i in range(n):
-                if rows[i].height > threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_idx:
-            for i in range(n):
-                if rows[i].idx > threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_page:
-            for i in range(n):
-                if rows[i].page > threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_flags:
-            for i in range(n):
-                if rows[i].flags > threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
+        for i in range(n):
+            if _get_field_val(&rows[i], cond_id) > threshold:
+                rows[i].y0 += offset
+                rows[i].y1 += offset
 
     cdef void _apply_if_less_add_y(self, int cond_id, int threshold, int offset) except *:
         """如果 cond_id < threshold，则 y0 += offset, y1 += offset"""
         cdef Py_ssize_t i, n = self.length
-        if n == 0 or offset == 0:
+        if n == 0 or offset == 0 or cond_id < FIELD_x0 or cond_id > FIELD_flags:
             return
         cdef RowC* rows = self.rows_c
-
-        if cond_id == FIELD_x0:
-            for i in range(n):
-                if rows[i].x0 < threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_y0:
-            for i in range(n):
-                if rows[i].y0 < threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_x1:
-            for i in range(n):
-                if rows[i].x1 < threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_y1:
-            for i in range(n):
-                if rows[i].y1 < threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_width:
-            for i in range(n):
-                if rows[i].width < threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_height:
-            for i in range(n):
-                if rows[i].height < threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_idx:
-            for i in range(n):
-                if rows[i].idx < threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_page:
-            for i in range(n):
-                if rows[i].page < threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
-        elif cond_id == FIELD_flags:
-            for i in range(n):
-                if rows[i].flags < threshold:
-                    rows[i].y0 += offset
-                    rows[i].y1 += offset
+        for i in range(n):
+            if _get_field_val(&rows[i], cond_id) < threshold:
+                rows[i].y0 += offset
+                rows[i].y1 += offset
 
 
     cdef list _col_values(self, int field):
@@ -3870,11 +3280,17 @@ cdef class NDframe:
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t i
         cdef RowC* rows = self.rows_c
-        cdef list result = None
+        cdef list result
         if field == FIELD_txt:
-            return self.text_list[:]          # 返回拷贝
+            result = [None] * n
+            for i in range(n):
+                result[i] = self.text_col._get_str(i)
+            return result
         elif field == FIELD_sep:
-            return self.text_sep_list[:]      # 返回拷贝
+            result = [None] * n
+            for i in range(n):
+                result[i] = self.text_sep_col._get_str(i)
+            return result
         else:
             result = [0] * n
             for i in range(n):
@@ -3886,40 +3302,29 @@ cdef class NDframe:
     # 就地正则删除
     # ========================================================
     cdef NDframe _drop_in_regex(self, int field, object pattern):
-        cdef Py_ssize_t read_idx = 0
+        """就地删除匹配正则的行：rows_c 就地挤压，两列重建为紧凑字符池"""
+        cdef Py_ssize_t read_idx
         cdef Py_ssize_t write_idx = 0
         cdef Py_ssize_t n = self.length
         cdef str txt
         cdef object search_fn = pattern.search
 
         cdef RowC* rows = self.rows_c
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+        cdef UCS2Column_SoA n_txt = UCS2Column_SoA(n)
+        cdef UCS2Column_SoA n_sep = UCS2Column_SoA(n)
 
-        if field == FIELD_txt:
-            for read_idx in range(n):
-                txt = txt_list[read_idx]
-                if not (txt and search_fn(txt) is not None):
-                    if read_idx != write_idx:
-                        rows[write_idx] = rows[read_idx]
-                        txt_list[write_idx] = txt_list[read_idx]
-                        sep_list[write_idx] = sep_list[read_idx]
-                    write_idx += 1
-        else:
-            for read_idx in range(n):
-                txt = sep_list[read_idx]
-                if not (txt and search_fn(txt) is not None):
-                    if read_idx != write_idx:
-                        rows[write_idx] = rows[read_idx]
-                        txt_list[write_idx] = txt_list[read_idx]
-                        sep_list[write_idx] = sep_list[read_idx]
-                    write_idx += 1
-
-        if write_idx < n:
-            del txt_list[write_idx:]
-            del sep_list[write_idx:]
+        for read_idx in range(n):
+            txt = src._get_str(read_idx)
+            if not (txt and search_fn(txt) is not None):
+                rows[write_idx] = rows[read_idx]
+                _col_copy_row(n_txt, self.text_col, read_idx)
+                _col_copy_row(n_sep, self.text_sep_col, read_idx)
+                write_idx += 1
 
         self.length = write_idx
+        self.text_col = n_txt
+        self.text_sep_col = n_sep
         return self
 
     # ========================================================
@@ -3931,20 +3336,12 @@ cdef class NDframe:
         cdef Py_ssize_t i
         cdef str txt
         cdef object search_fn = pattern.search
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
-
-        if field == FIELD_txt:
-            for i in range(n):
-                txt = txt_list[i]
-                if txt and search_fn(txt) is not None:
-                    res.append(i)
-        else:
-            for i in range(n):
-                txt = sep_list[i]
-                if txt and search_fn(txt) is not None:
-                    res.append(i)
+        for i in range(n):
+            txt = src._get_str(i)
+            if txt and search_fn(txt) is not None:
+                res.append(i)
         return res
 
     cdef list _idx_regex_in_bbox(self, int field, object pattern, int x0, int y0, int x1, int y1):
@@ -3954,60 +3351,25 @@ cdef class NDframe:
         cdef str txt
         cdef object search_fn = pattern.search
         cdef RowC* rows = self.rows_c
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
-
-        if field == FIELD_txt:
-            for i in range(n):
-                if (rows[i].x0 > x0 and rows[i].x1 < x1 and
-                    rows[i].y0 > y0 and rows[i].y1 < y1):
-                    txt = txt_list[i]
-                    if txt and search_fn(txt) is not None:
-                        res.append(i)
-        else:
-            for i in range(n):
-                if (rows[i].x0 > x0 and rows[i].x1 < x1 and
-                    rows[i].y0 > y0 and rows[i].y1 < y1):
-                    txt = sep_list[i]
-                    if txt and search_fn(txt) is not None:
-                        res.append(i)
+        for i in range(n):
+            if (rows[i].x0 > x0 and rows[i].x1 < x1 and
+                rows[i].y0 > y0 and rows[i].y1 < y1):
+                txt = src._get_str(i)
+                if txt and search_fn(txt) is not None:
+                    res.append(i)
         return res
 
     cdef list _idx_strlen_cmp(self, int field, int n, int op):
         cdef Py_ssize_t length = self.length
         cdef list res = []
         cdef Py_ssize_t i
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
-
-        if field == FIELD_txt:
-            if op == OP_GREATER:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(txt_list[i]) > n:
-                        res.append(i)
-            elif op == OP_LESS:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(txt_list[i]) < n:
-                        res.append(i)
-            elif op == OP_EQUAL:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(txt_list[i]) == n:
-                        res.append(i)
-        else:
-            if op == OP_GREATER:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(sep_list[i]) > n:
-                        res.append(i)
-            elif op == OP_LESS:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(sep_list[i]) < n:
-                        res.append(i)
-            elif op == OP_EQUAL:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(sep_list[i]) == n:
-                        res.append(i)
+        for i in range(length):
+            if _int_cmp_pass(src.offsets_c[i + 1] - src.offsets_c[i], op, n, 0):
+                res.append(i)
         return res
 
     cdef list _idx_regex_strlen_cmp(self, int field, object pattern, int n, int op):
@@ -4016,68 +3378,24 @@ cdef class NDframe:
         cdef Py_ssize_t i
         cdef str txt
         cdef object search_fn = pattern.search
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
-
-        if field == FIELD_txt:
-            if op == OP_GREATER:
-                for i in range(length):
-                    txt = txt_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) > n and search_fn(txt) is not None:
-                        res.append(i)
-            elif op == OP_LESS:
-                for i in range(length):
-                    txt = txt_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) < n and search_fn(txt) is not None:
-                        res.append(i)
-            elif op == OP_EQUAL:
-                for i in range(length):
-                    txt = txt_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) == n and search_fn(txt) is not None:
-                        res.append(i)
-        else:
-            if op == OP_GREATER:
-                for i in range(length):
-                    txt = sep_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) > n and search_fn(txt) is not None:
-                        res.append(i)
-            elif op == OP_LESS:
-                for i in range(length):
-                    txt = sep_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) < n and search_fn(txt) is not None:
-                        res.append(i)
-            elif op == OP_EQUAL:
-                for i in range(length):
-                    txt = sep_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) == n and search_fn(txt) is not None:
-                        res.append(i)
+        for i in range(length):
+            txt = src._get_str(i)
+            if (txt and _int_cmp_pass(PyUnicode_GET_LENGTH(txt), op, n, 0)
+                    and search_fn(txt) is not None):
+                res.append(i)
         return res
 
     cdef list _idx_filter_by_int(self, int field, int arg1, int arg2, int op):
         cdef Py_ssize_t length = self.length
         cdef list res = []
         cdef Py_ssize_t i
-        cdef int val
         cdef RowC* rows = self.rows_c
 
-        if op == OP_GREATER:
-            for i in range(length):
-                if _get_field_val(&rows[i], field) > arg1:
-                    res.append(i)
-        elif op == OP_LESS:
-            for i in range(length):
-                if _get_field_val(&rows[i], field) < arg1:
-                    res.append(i)
-        elif op == OP_EQUAL:
-            for i in range(length):
-                if _get_field_val(&rows[i], field) == arg1:
-                    res.append(i)
-        elif op == OP_BETWEEN:
-            for i in range(length):
-                val = _get_field_val(&rows[i], field)
-                if val > arg1 and val < arg2:
-                    res.append(i)
+        for i in range(length):
+            if _int_cmp_pass(_get_field_val(&rows[i], field), op, arg1, arg2):
+                res.append(i)
         return res
 
 
@@ -4095,8 +3413,8 @@ cdef class NDframe:
         if move_count > 0:
             memmove(&rows[index], &rows[index + 1], move_count * sizeof(RowC))
 
-        self.text_list.pop(index)
-        self.text_sep_list.pop(index)
+        self.text_col._remove_at(index)
+        self.text_sep_col._remove_at(index)
         self.length = n - 1
         return self
 
@@ -4106,26 +3424,23 @@ cdef class NDframe:
         if n == 0:
             return self
 
-        cdef Py_ssize_t read_idx = 0
+        cdef Py_ssize_t read_idx
         cdef Py_ssize_t write_idx = 0
         cdef RowC* rows = self.rows_c
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
+        cdef UCS2Column_SoA n_txt = UCS2Column_SoA(n)
+        cdef UCS2Column_SoA n_sep = UCS2Column_SoA(n)
 
         for read_idx in range(n):
             if not (rows[read_idx].x0 > x0 and rows[read_idx].y0 > y0 and
                     rows[read_idx].x1 < x1 and rows[read_idx].y1 < y1):
-                if read_idx != write_idx:
-                    rows[write_idx] = rows[read_idx]
-                    txt_list[write_idx] = txt_list[read_idx]
-                    sep_list[write_idx] = sep_list[read_idx]
+                rows[write_idx] = rows[read_idx]
+                _col_copy_row(n_txt, self.text_col, read_idx)
+                _col_copy_row(n_sep, self.text_sep_col, read_idx)
                 write_idx += 1
 
-        if write_idx < n:
-            del txt_list[write_idx:]
-            del sep_list[write_idx:]
-
         self.length = write_idx
+        self.text_col = n_txt
+        self.text_sep_col = n_sep
         return self
 
     cdef NDframe _merge_line(self, int width_threshold, int height_threshold, str sep=""):
@@ -4137,10 +3452,8 @@ cdef class NDframe:
         cdef NDframe result = NDframe(n)
         cdef RowC* src_rows = self.rows_c
         cdef RowC* dst_rows = result.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-        cdef list dst_txt = [None] * n
-        cdef list dst_sep = [None] * n
+        cdef UCS2Column_SoA dst_txt_col = result.text_col
+        cdef UCS2Column_SoA dst_sep_col = result.text_sep_col
 
         cdef Py_ssize_t i = 0
         cdef Py_ssize_t write_idx = 0
@@ -4150,7 +3463,6 @@ cdef class NDframe:
         cdef list merged_text_parts
         cdef list merged_sep_parts
         cdef RowC row
-        cdef str part_txt, part_sep
 
         while i < n:
             min_x0 = src_rows[i].x0
@@ -4159,8 +3471,8 @@ cdef class NDframe:
             max_y1 = src_rows[i].y1
             max_height = src_rows[i].height
 
-            merged_text_parts = [src_txt[i]]
-            merged_sep_parts = [src_sep[i]]
+            merged_text_parts = [self.text_col._get_str(i)]
+            merged_sep_parts = [self.text_sep_col._get_str(i)]
             curr = i
 
             while curr + 1 < n:
@@ -4180,8 +3492,8 @@ cdef class NDframe:
                     if src_rows[curr + 1].height > max_height:
                         max_height = src_rows[curr + 1].height
 
-                    merged_text_parts.append(src_txt[curr + 1])
-                    merged_sep_parts.append(src_sep[curr + 1])
+                    merged_text_parts.append(self.text_col._get_str(curr + 1))
+                    merged_sep_parts.append(self.text_sep_col._get_str(curr + 1))
                     curr += 1
                 else:
                     break
@@ -4207,89 +3519,31 @@ cdef class NDframe:
 
             # 直接赋值到结果 DF
             dst_rows[write_idx] = row
-            dst_txt[write_idx] = merged_text
-            dst_sep[write_idx] = merged_sep
+            dst_txt_col.append(merged_text)
+            dst_sep_col.append(merged_sep)
             write_idx += 1
 
             i = curr + 1
 
-        # 更新结果 DF 的长度并截断多余元素
+        # 更新结果 DF 的长度
         result.length = write_idx
-        if write_idx < n:
-            del dst_txt[write_idx:]
-            del dst_sep[write_idx:]
-        result.text_list = dst_txt
-        result.text_sep_list = dst_sep
         return result
 
     cdef list _diff_col(self, int field):
-        """C 级别的一阶差分实现"""
+        """C 级别的一阶差分实现（field 分支收敛为指针索引）"""
         cdef Py_ssize_t n = self.length
-        if n == 0:
+        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
             return []
 
         cdef RowC* rows = self.rows_c
         cdef list res = [0] * n   # 预分配，第一个元素稍后设为 None
         cdef Py_ssize_t i
         cdef int prev, curr
-
-        if field == FIELD_x0:
-            prev = rows[0].x0
-            for i in range(1, n):
-                curr = rows[i].x0
-                res[i] = curr - prev
-                prev = curr
-        elif field == FIELD_y0:
-            prev = rows[0].y0
-            for i in range(1, n):
-                curr = rows[i].y0
-                res[i] = curr - prev
-                prev = curr
-        elif field == FIELD_x1:
-            prev = rows[0].x1
-            for i in range(1, n):
-                curr = rows[i].x1
-                res[i] = curr - prev
-                prev = curr
-        elif field == FIELD_y1:
-            prev = rows[0].y1
-            for i in range(1, n):
-                curr = rows[i].y1
-                res[i] = curr - prev
-                prev = curr
-        elif field == FIELD_width:
-            prev = rows[0].width
-            for i in range(1, n):
-                curr = rows[i].width
-                res[i] = curr - prev
-                prev = curr
-        elif field == FIELD_height:
-            prev = rows[0].height
-            for i in range(1, n):
-                curr = rows[i].height
-                res[i] = curr - prev
-                prev = curr
-        elif field == FIELD_idx:
-            prev = rows[0].idx
-            for i in range(1, n):
-                curr = rows[i].idx
-                res[i] = curr - prev
-                prev = curr
-        elif field == FIELD_page:
-            prev = rows[0].page
-            for i in range(1, n):
-                curr = rows[i].page
-                res[i] = curr - prev
-                prev = curr
-        elif field == FIELD_flags:
-            prev = rows[0].flags
-            for i in range(1, n):
-                curr = rows[i].flags
-                res[i] = curr - prev
-                prev = curr
-        else:
-            printf("warning: unsupported field for diff!\n")
-            return []
+        prev = _get_field_val(&rows[0], field)
+        for i in range(1, n):
+            curr = _get_field_val(&rows[i], field)
+            res[i] = curr - prev
+            prev = curr
 
         res[0] = None
         return res
@@ -4298,7 +3552,7 @@ cdef class NDframe:
     cdef double _var_col(self, int field, int ddof):
         """C 级别的方差计算实现（两趟遍历算法确保数值稳定）"""
         cdef Py_ssize_t n = self.length
-        if n <= ddof:
+        if n <= ddof or field < FIELD_x0 or field > FIELD_flags:
             return 0.0
 
         cdef RowC* rows = self.rows_c
@@ -4307,45 +3561,9 @@ cdef class NDframe:
         cdef double d_val
         cdef Py_ssize_t i
 
-        if field == FIELD_x0:
-            for i in range(n):
-                d_val = rows[i].x0 - mean_val
-                sum_sq += d_val * d_val
-        elif field == FIELD_y0:
-            for i in range(n):
-                d_val = rows[i].y0 - mean_val
-                sum_sq += d_val * d_val
-        elif field == FIELD_x1:
-            for i in range(n):
-                d_val = rows[i].x1 - mean_val
-                sum_sq += d_val * d_val
-        elif field == FIELD_y1:
-            for i in range(n):
-                d_val = rows[i].y1 - mean_val
-                sum_sq += d_val * d_val
-        elif field == FIELD_width:
-            for i in range(n):
-                d_val = rows[i].width - mean_val
-                sum_sq += d_val * d_val
-        elif field == FIELD_height:
-            for i in range(n):
-                d_val = rows[i].height - mean_val
-                sum_sq += d_val * d_val
-        elif field == FIELD_idx:
-            for i in range(n):
-                d_val = rows[i].idx - mean_val
-                sum_sq += d_val * d_val
-        elif field == FIELD_page:
-            for i in range(n):
-                d_val = rows[i].page - mean_val
-                sum_sq += d_val * d_val
-        elif field == FIELD_flags:
-            for i in range(n):
-                d_val = rows[i].flags - mean_val
-                sum_sq += d_val * d_val
-        else:
-            printf("warning: unsupported field for variance!\n")
-            return 0.0
+        for i in range(n):
+            d_val = _get_field_val(&rows[i], field) - mean_val
+            sum_sq += d_val * d_val
 
         return sum_sq / (n - ddof)
 
@@ -4399,7 +3617,7 @@ cdef class NDframe:
         直接遍历 C 数组，避免创建临时列表。
         """
         cdef Py_ssize_t n = self.length
-        if n == 0:
+        if n == 0 or field < FIELD_x0 or field > FIELD_flags:
             return (0, 0)
 
         cdef RowC* rows = self.rows_c
@@ -4407,45 +3625,9 @@ cdef class NDframe:
         cdef int val
         cdef Py_ssize_t i
 
-        # 字段分支外提，循环内直接访问对应成员
-        if field == FIELD_x0:
-            for i in range(n):
-                val = rows[i].x0
-                freq[val] = freq.get(val, 0) + 1
-        elif field == FIELD_y0:
-            for i in range(n):
-                val = rows[i].y0
-                freq[val] = freq.get(val, 0) + 1
-        elif field == FIELD_x1:
-            for i in range(n):
-                val = rows[i].x1
-                freq[val] = freq.get(val, 0) + 1
-        elif field == FIELD_y1:
-            for i in range(n):
-                val = rows[i].y1
-                freq[val] = freq.get(val, 0) + 1
-        elif field == FIELD_width:
-            for i in range(n):
-                val = rows[i].width
-                freq[val] = freq.get(val, 0) + 1
-        elif field == FIELD_height:
-            for i in range(n):
-                val = rows[i].height
-                freq[val] = freq.get(val, 0) + 1
-        elif field == FIELD_idx:
-            for i in range(n):
-                val = rows[i].idx
-                freq[val] = freq.get(val, 0) + 1
-        elif field == FIELD_page:
-            for i in range(n):
-                val = rows[i].page
-                freq[val] = freq.get(val, 0) + 1
-        elif field == FIELD_flags:
-            for i in range(n):
-                val = rows[i].flags
-                freq[val] = freq.get(val, 0) + 1
-        else:
-            return (0, 0)
+        for i in range(n):
+            val = _get_field_val(&rows[i], field)
+            freq[val] = freq.get(val, 0) + 1
 
         # 寻找众数（若多个众数，返回最小的值）
         cdef int max_count = 0
@@ -4808,3 +3990,11 @@ cdef class NDframe:
         if width_threshold < 0: width_threshold = 0
         if height_threshold < 0: height_threshold = 0
         return self._merge_line(width_threshold, height_threshold, sep)
+
+
+cdef void _df_copy_row(NDframe dst, NDframe src, Py_ssize_t src_idx, Py_ssize_t* write_idx) except *:
+    """整行克隆：结构体副本 + text/text_sep 两列的纯 C 内存拷贝，写入 dst 的 write_idx 位置"""
+    dst.rows_c[write_idx[0]] = src.rows_c[src_idx]
+    _col_copy_row(dst.text_col, src.text_col, src_idx)
+    _col_copy_row(dst.text_sep_col, src.text_sep_col, src_idx)
+    write_idx[0] += 1
