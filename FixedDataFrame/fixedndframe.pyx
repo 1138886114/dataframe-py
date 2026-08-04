@@ -58,13 +58,13 @@ cdef tuple HEADER_LENS = (3, 2, 2, 2, 2, 5, 6, 4, 5, 4, 8)
 
 
 cdef enum FieldID:
-    FIELD_x0 = 0
-    FIELD_y0 = 1
-    FIELD_x1 = 2
-    FIELD_y1 = 3
-    FIELD_width = 4
-    FIELD_height = 5
-    FIELD_idx = 6
+    FIELD_idx = 0
+    FIELD_x0 = 1
+    FIELD_y0 = 2
+    FIELD_x1 = 3
+    FIELD_y1 = 4
+    FIELD_width = 5
+    FIELD_height = 6
     FIELD_page = 7
     FIELD_flags = 8
 
@@ -147,13 +147,13 @@ cdef inline object _ensure_regex(object pattern):
 cdef Py_UCS2* _str_to_ucs2_buf(str s, Py_ssize_t* out_len) except NULL:
     """将 Python str 提取为 UCS2 连续缓冲（>0xFFFF 的字符按存储引擎约定降级为 '?'）"""
     cdef Py_ssize_t n = PyUnicode_GET_LENGTH(s)
+    cdef Py_ssize_t i
+    cdef Py_UCS4 cp
     cdef Py_UCS2* buf = NULL
     if n > 0:
         buf = <Py_UCS2*>malloc(n * sizeof(Py_UCS2))
         if buf == NULL:
             raise MemoryError()
-        cdef Py_ssize_t i
-        cdef Py_UCS4 cp
         for i in range(n):
             cp = PyUnicode_READ_CHAR(s, i)
             buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
@@ -209,11 +209,6 @@ cdef inline bint _is_in_chars(Py_UCS2 c, Py_UCS2* chars_buf, Py_ssize_t chars_le
     return False
 
 
-# 前向声明：定义体在 UCS2Column_SoA / NDframe 类之后
-cdef void _col_copy_row(UCS2Column_SoA dst, UCS2Column_SoA src, Py_ssize_t src_idx) except *
-cdef void _df_copy_row(NDframe dst, NDframe src, Py_ssize_t src_idx, Py_ssize_t* write_idx) except *
-
-
 ####################################################
 #       UCS2 存储引擎
 #================================================
@@ -228,6 +223,8 @@ cdef void _df_copy_row(NDframe dst, NDframe src, Py_ssize_t src_idx, Py_ssize_t*
 cdef class UCS2Column_SoA:
     cdef Py_UCS2* chars_c        # 连续字符池
     cdef Py_ssize_t* offsets_c   # 偏移量数组 (长度为 length + 1)
+    cdef public Py_ssize_t capacity     # 行容量（含已用 length 行）
+    cdef public Py_ssize_t length       # 当前行数
     cdef public Py_ssize_t char_capacity
     cdef public Py_ssize_t char_length
 
@@ -1171,6 +1168,23 @@ cdef inline bint _is_numeric_punct_char(Py_UCS4 cp) noexcept:
     return (0x30 <= cp <= 0x39) or (cp == 0x2E) or (cp == 0x2C)
 
 
+# ==========================================
+# 极速字符判定谓词（供 _df_str_is / _df_is_charset / _keep_charset 的
+# 函数指针表使用：把 mode 分支收敛到循环外的一次指针选取，循环内 0 分支）
+# ==========================================
+cdef inline bint _pred_isalnum(Py_UCS2 c) noexcept: return Py_UNICODE_ISALNUM(c)
+cdef inline bint _pred_isalpha(Py_UCS2 c) noexcept: return Py_UNICODE_ISALPHA(c)
+cdef inline bint _pred_isdigit(Py_UCS2 c) noexcept: return Py_UNICODE_ISDIGIT(c)
+cdef inline bint _pred_isspace(Py_UCS2 c) noexcept: return Py_UNICODE_ISSPACE(c)
+cdef inline bint _pred_islower(Py_UCS2 c) noexcept: return Py_UNICODE_ISLOWER(c)
+cdef inline bint _pred_isupper(Py_UCS2 c) noexcept: return Py_UNICODE_ISUPPER(c)
+cdef inline bint _pred_istitle(Py_UCS2 c) noexcept: return Py_UNICODE_ISTITLE(c) or Py_UNICODE_ISLOWER(c)
+cdef inline bint _pred_isnumeric(Py_UCS2 c) noexcept: return Py_UNICODE_ISNUMERIC(c)
+cdef inline bint _pred_isdecimal(Py_UCS2 c) noexcept: return Py_UNICODE_ISDECIMAL(c)
+cdef inline bint _pred_is_chinese(Py_UCS2 c) noexcept: return _is_chinese_char(c)
+cdef inline bint _pred_is_numeric_punct(Py_UCS2 c) noexcept: return _is_numeric_punct_char(c)
+
+
 cdef str _extract_chinese_chunks(str s):
     cdef Py_ssize_t i, n = PyUnicode_GET_LENGTH(s)
     cdef Py_ssize_t start = -1
@@ -1288,13 +1302,13 @@ cdef str _truncate_str(str s, int max_chars=90, int head=79, int tail=8):
 # 结构体成员顺序与 FieldID 枚举一一对应（全部为 int，无 padding），
 # 因此 _get_field_val 可用 (&row.x0)[field] 指针索引直接取数，0 次分支判断。
 cdef struct RowC:
-    int x0       # FIELD_x0    = 0
-    int y0       # FIELD_y0    = 1
-    int x1       # FIELD_x1    = 2
-    int y1       # FIELD_y1    = 3
-    int width    # FIELD_width = 4
-    int height   # FIELD_height= 5
-    int idx      # FIELD_idx   = 6
+    int idx      # FIELD_idx   = 0
+    int x0       # FIELD_x0    = 1
+    int y0       # FIELD_y0    = 2
+    int x1       # FIELD_x1    = 3
+    int y1       # FIELD_y1    = 4
+    int width    # FIELD_width = 5
+    int height   # FIELD_height= 6
     int page     # FIELD_page  = 7
     int flags    # FIELD_flags = 8
 
@@ -1933,27 +1947,35 @@ cdef class NDframe:
         if n == 0: return self
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef Py_ssize_t i, j, k
+        cdef Py_ssize_t i, j
         cdef Py_ssize_t start, end
+        cdef Py_ssize_t read_start, read_end
+        cdef Py_ssize_t write_idx = 0
+        cdef Py_UCS4 cp
         cdef Py_UCS2 c
-
-        # 如果是 strip 类操作，准备需要清除的字符集
-        cdef bint has_chars = chars is not None and len(chars) > 0
-        cdef Py_ssize_t chars_len = 0
-        cdef Py_UCS2* chars_buf = NULL
+        cdef bint has_chars
+        cdef Py_ssize_t strip_len
+        cdef Py_UCS2 default_strip[4]
+        cdef Py_UCS2* strip_buf
 
         if mode == TRM_STRIP or mode == TRM_LSTRIP or mode == TRM_RSTRIP:
+            # 统一剥离字符集：调用方传入 chars 则用其字符集，否则用默认 {空格,\t,\n,\r}。
+            # 两者收敛为同一个 _is_in_chars 谓词，字符循环内 0 分支。
+            has_chars = chars is not None and len(chars) > 0
+            strip_len = 4
+            strip_buf = default_strip
             if has_chars:
-                chars_len = PyUnicode_GET_LENGTH(chars)
-                chars_buf = <Py_UCS2*>malloc(chars_len * sizeof(Py_UCS2))
-                if not chars_buf: raise MemoryError()
-                for i in range(chars_len):
+                strip_len = PyUnicode_GET_LENGTH(chars)
+                strip_buf = <Py_UCS2*>malloc(strip_len * sizeof(Py_UCS2))
+                if not strip_buf: raise MemoryError()
+                for i in range(strip_len):
                     cp = PyUnicode_READ_CHAR(chars, i)
-                    chars_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
-
-            cdef Py_ssize_t read_start, read_end
-            cdef Py_ssize_t write_idx = 0
-            cdef bint match_char
+                    strip_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+            else:
+                default_strip[0] = 32
+                default_strip[1] = 9
+                default_strip[2] = 10
+                default_strip[3] = 13
 
             for i in range(n):
                 read_start = src.offsets_c[i]
@@ -1963,27 +1985,14 @@ cdef class NDframe:
                 if mode == TRM_STRIP or mode == TRM_LSTRIP:
                     while read_start < read_end:
                         c = src.chars_c[read_start]
-                        match_char = False
-                        if has_chars:
-                            for k in range(chars_len):
-                                if c == chars_buf[k]: match_char = True; break
-                        else:
-                            # 默认去掉空格、换行、回车等
-                            if c == 32 or c == 9 or c == 10 or c == 13: match_char = True
-                        if not match_char: break
+                        if not _is_in_chars(c, strip_buf, strip_len): break
                         read_start += 1
 
                 # 右向修剪
                 if mode == TRM_STRIP or mode == TRM_RSTRIP:
                     while read_end > read_start:
                         c = src.chars_c[read_end - 1]
-                        match_char = False
-                        if has_chars:
-                            for k in range(chars_len):
-                                if c == chars_buf[k]: match_char = True; break
-                        else:
-                            if c == 32 or c == 9 or c == 10 or c == 13: match_char = True
-                        if not match_char: break
+                        if not _is_in_chars(c, strip_buf, strip_len): break
                         read_end -= 1
 
                 # 更新偏移，并通过 memmove 就地挤压字符内存空间！
@@ -1995,7 +2004,7 @@ cdef class NDframe:
             # 缩紧整个字符串池的大小
             src.offsets_c[n] = write_idx
             src.char_length = write_idx
-            if chars_buf != NULL: free(chars_buf)
+            if has_chars: free(strip_buf)
 
         elif mode == TRM_CAPITALIZE:
             for i in range(n):
@@ -2042,12 +2051,9 @@ cdef class NDframe:
             sub_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef Py_ssize_t str_start, str_end, str_len
+        cdef Py_ssize_t str_start, str_end, str_len, cmp_start
+        cdef Py_ssize_t write_idx = 0
         cdef bint match
-
-        # 提取目标列的引用，避免在内部解引用
-        cdef UCS2Column_SoA n_txt = new_df.text_col
-        cdef UCS2Column_SoA n_sep = new_df.text_sep_col
 
         for i in range(n):
             str_start = src.offsets_c[i]
@@ -2055,45 +2061,17 @@ cdef class NDframe:
             str_len = str_end - str_start
 
             if str_len >= sub_len:
+                # starts/ends 收敛为同一条内存比较：仅比较起点偏移不同（循环内 0 分支）
+                cmp_start = str_start if is_starts else str_end - sub_len
                 match = True
-                if is_starts:
-                    for j in range(sub_len):
-                        if src.chars_c[str_start + j] != sub_buf[j]:
-                            match = False; break
-                else:
-                    for j in range(sub_len):
-                        if src.chars_c[str_end - sub_len + j] != sub_buf[j]:
-                            match = False; break
+                for j in range(sub_len):
+                    if src.chars_c[cmp_start + j] != sub_buf[j]:
+                        match = False
+                        break
 
                 # 匹配成功！我们直接纯 C 方式挂载整行（避免调用 Python 的 append 方法）
                 if match:
-                    new_df.rows_c[new_df.length] = self.rows_c[i]
-
-                    # 拷贝 text_col
-                    str_start = self.text_col.offsets_c[i]
-                    str_len = self.text_col.offsets_c[i+1] - str_start
-                    if n_txt.length >= n_txt.capacity: n_txt._reserve_rows(n_txt.capacity * 2)
-                    if n_txt.char_length + str_len > n_txt.char_capacity:
-                        n_txt._reserve_chars(n_txt.char_length + str_len + 1024)
-                    if str_len > 0:
-                        memcpy(n_txt.chars_c + n_txt.char_length, self.text_col.chars_c + str_start, str_len * sizeof(Py_UCS2))
-                    n_txt.char_length += str_len
-                    n_txt.length += 1
-                    n_txt.offsets_c[n_txt.length] = n_txt.char_length
-
-                    # 拷贝 text_sep_col
-                    str_start = self.text_sep_col.offsets_c[i]
-                    str_len = self.text_sep_col.offsets_c[i+1] - str_start
-                    if n_sep.length >= n_sep.capacity: n_sep._reserve_rows(n_sep.capacity * 2)
-                    if n_sep.char_length + str_len > n_sep.char_capacity:
-                        n_sep._reserve_chars(n_sep.char_length + str_len + 1024)
-                    if str_len > 0:
-                        memcpy(n_sep.chars_c + n_sep.char_length, self.text_sep_col.chars_c + str_start, str_len * sizeof(Py_UCS2))
-                    n_sep.char_length += str_len
-                    n_sep.length += 1
-                    n_sep.offsets_c[n_sep.length] = n_sep.char_length
-
-                    new_df.length += 1
+                    _df_copy_row(new_df, self, i, &write_idx)
 
         free(sub_buf)
         return new_df
@@ -2110,76 +2088,36 @@ cdef class NDframe:
         if n == 0: return new_df
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef UCS2Column_SoA n_txt = new_df.text_col
-        cdef UCS2Column_SoA n_sep = new_df.text_sep_col
-
-        cdef Py_ssize_t i, j, start, end, str_len
+        cdef Py_ssize_t i, j, start, end, write_idx = 0
         cdef bint match
         cdef Py_UCS2* chars = src.chars_c
+
+        # mode 分支收敛为循环外的一次函数指针选取，逐字符循环内 0 分支
+        cdef bint (*pred)(Py_UCS2) noexcept
+        if mode == CHK_ISALNUM: pred = _pred_isalnum
+        elif mode == CHK_ISALPHA: pred = _pred_isalpha
+        elif mode == CHK_ISDIGIT: pred = _pred_isdigit
+        elif mode == CHK_ISSPACE: pred = _pred_isspace
+        elif mode == CHK_ISLOWER: pred = _pred_islower
+        elif mode == CHK_ISUPPER: pred = _pred_isupper
+        elif mode == CHK_ISTITLE: pred = _pred_istitle
+        elif mode == CHK_ISNUMERIC: pred = _pred_isnumeric
+        else: pred = _pred_isdecimal
 
         for i in range(n):
             start = src.offsets_c[i]
             end = src.offsets_c[i + 1]
-            str_len = end - start
 
-            if str_len == 0:
+            if start == end:
                 match = False  # Python 的 isalpha 等遇到空串默认返回 False
             else:
                 match = True
-                if mode == CHK_ISALNUM:
-                    for j in range(start, end):
-                        if not Py_UNICODE_ISALNUM(chars[j]): match = False; break
-                elif mode == CHK_ISALPHA:
-                    for j in range(start, end):
-                        if not Py_UNICODE_ISALPHA(chars[j]): match = False; break
-                elif mode == CHK_ISDIGIT:
-                    for j in range(start, end):
-                        if not Py_UNICODE_ISDIGIT(chars[j]): match = False; break
-                elif mode == CHK_ISSPACE:
-                    for j in range(start, end):
-                        if not Py_UNICODE_ISSPACE(chars[j]): match = False; break
-                elif mode == CHK_ISLOWER:
-                    for j in range(start, end):
-                        if not Py_UNICODE_ISLOWER(chars[j]): match = False; break
-                elif mode == CHK_ISUPPER:
-                    for j in range(start, end):
-                        if not Py_UNICODE_ISUPPER(chars[j]): match = False; break
-                elif mode == CHK_ISTITLE:
-                    # title 要求首字母大写，后续小写，此处仅提供基础宏判断
-                    for j in range(start, end):
-                        if not Py_UNICODE_ISTITLE(chars[j]) and not Py_UNICODE_ISLOWER(chars[j]): match = False; break
-                elif mode == CHK_ISNUMERIC:
-                    for j in range(start, end):
-                        if not Py_UNICODE_ISNUMERIC(chars[j]): match = False; break
-                elif mode == CHK_ISDECIMAL:
-                    for j in range(start, end):
-                        if not Py_UNICODE_ISDECIMAL(chars[j]): match = False; break
+                for j in range(start, end):
+                    if not pred(chars[j]): match = False; break
 
             # 匹配成功，直接在 C 内存层进行挂载（复用前面的极速行拷贝逻辑）
             if match:
-                new_df.rows_c[new_df.length] = self.rows_c[i]
-
-                # 极速拷贝 text
-                start = self.text_col.offsets_c[i]
-                str_len = self.text_col.offsets_c[i+1] - start
-                if n_txt.length >= n_txt.capacity: n_txt._reserve_rows(n_txt.capacity * 2)
-                if n_txt.char_length + str_len > n_txt.char_capacity: n_txt._reserve_chars(n_txt.char_length + str_len + 1024)
-                if str_len > 0: memcpy(n_txt.chars_c + n_txt.char_length, self.text_col.chars_c + start, str_len * sizeof(Py_UCS2))
-                n_txt.char_length += str_len
-                n_txt.length += 1
-                n_txt.offsets_c[n_txt.length] = n_txt.char_length
-
-                # 极速拷贝 sep
-                start = self.text_sep_col.offsets_c[i]
-                str_len = self.text_sep_col.offsets_c[i+1] - start
-                if n_sep.length >= n_sep.capacity: n_sep._reserve_rows(n_sep.capacity * 2)
-                if n_sep.char_length + str_len > n_sep.char_capacity: n_sep._reserve_chars(n_sep.char_length + str_len + 1024)
-                if str_len > 0: memcpy(n_sep.chars_c + n_sep.char_length, self.text_sep_col.chars_c + start, str_len * sizeof(Py_UCS2))
-                n_sep.char_length += str_len
-                n_sep.length += 1
-                n_sep.offsets_c[n_sep.length] = n_sep.char_length
-
-                new_df.length += 1
+                _df_copy_row(new_df, self, i, &write_idx)
 
         return new_df
 
@@ -2193,51 +2131,29 @@ cdef class NDframe:
         if n == 0: return new_df
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef UCS2Column_SoA n_txt = new_df.text_col
-        cdef UCS2Column_SoA n_sep = new_df.text_sep_col
-
-        cdef Py_ssize_t i, j, start, end, str_len
+        cdef Py_ssize_t i, j, start, end, write_idx = 0
         cdef bint match
         cdef Py_UCS2* chars = src.chars_c
+
+        cdef bint (*pred)(Py_UCS2) noexcept
+        if is_chinese_mode:
+            pred = _pred_is_chinese
+        else:
+            pred = _pred_is_numeric_punct
 
         for i in range(n):
             start = src.offsets_c[i]
             end = src.offsets_c[i+1]
-            str_len = end - start
 
-            if str_len == 0:
+            if start == end:
                 match = False
             else:
                 match = True
-                if is_chinese_mode:
-                    for j in range(start, end):
-                        if not _is_chinese_char(chars[j]): match = False; break
-                else:
-                    for j in range(start, end):
-                        if not _is_numeric_punct_char(chars[j]): match = False; break
+                for j in range(start, end):
+                    if not pred(chars[j]): match = False; break
 
             if match:
-                new_df.rows_c[new_df.length] = self.rows_c[i]
-
-                start = self.text_col.offsets_c[i]
-                str_len = self.text_col.offsets_c[i+1] - start
-                if n_txt.length >= n_txt.capacity: n_txt._reserve_rows(n_txt.capacity * 2)
-                if n_txt.char_length + str_len > n_txt.char_capacity: n_txt._reserve_chars(n_txt.char_length + str_len + 1024)
-                if str_len > 0: memcpy(n_txt.chars_c + n_txt.char_length, self.text_col.chars_c + start, str_len * sizeof(Py_UCS2))
-                n_txt.char_length += str_len
-                n_txt.length += 1
-                n_txt.offsets_c[n_txt.length] = n_txt.char_length
-
-                start = self.text_sep_col.offsets_c[i]
-                str_len = self.text_sep_col.offsets_c[i+1] - start
-                if n_sep.length >= n_sep.capacity: n_sep._reserve_rows(n_sep.capacity * 2)
-                if n_sep.char_length + str_len > n_sep.char_capacity: n_sep._reserve_chars(n_sep.char_length + str_len + 1024)
-                if str_len > 0: memcpy(n_sep.chars_c + n_sep.char_length, self.text_sep_col.chars_c + start, str_len * sizeof(Py_UCS2))
-                n_sep.char_length += str_len
-                n_sep.length += 1
-                n_sep.offsets_c[n_sep.length] = n_sep.char_length
-
-                new_df.length += 1
+                _df_copy_row(new_df, self, i, &write_idx)
 
         return new_df
 
@@ -2259,6 +2175,12 @@ cdef class NDframe:
         cdef Py_ssize_t write_idx = 0
         cdef Py_UCS2 c
 
+        cdef bint (*pred)(Py_UCS2) noexcept
+        if is_chinese_mode:
+            pred = _pred_is_chinese
+        else:
+            pred = _pred_is_numeric_punct
+
         for i in range(n):
             read_start = src.offsets_c[i]
             read_end = src.offsets_c[i+1]
@@ -2266,18 +2188,11 @@ cdef class NDframe:
             # 更新当前行的起点为挤压后的 write_idx
             src.offsets_c[i] = write_idx
 
-            if is_chinese_mode:
-                for j in range(read_start, read_end):
-                    c = src.chars_c[j]
-                    if _is_chinese_char(c):
-                        src.chars_c[write_idx] = c
-                        write_idx += 1
-            else:
-                for j in range(read_start, read_end):
-                    c = src.chars_c[j]
-                    if _is_numeric_punct_char(c):
-                        src.chars_c[write_idx] = c
-                        write_idx += 1
+            for j in range(read_start, read_end):
+                c = src.chars_c[j]
+                if pred(c):
+                    src.chars_c[write_idx] = c
+                    write_idx += 1
 
         # 终点对齐，缩紧列总字符数
         src.offsets_c[n] = write_idx
@@ -2365,22 +2280,23 @@ cdef class NDframe:
             raise MemoryError()
 
         cdef Py_ssize_t write_idx = 0
-        cdef Py_ssize_t read_start, read_end, row_len
+        cdef Py_ssize_t read_start, row_len
 
-        for i in range(n):
+        # 前 n-1 行：行内容 + 分隔符（循环内 0 分支）
+        for i in range(n - 1):
             read_start = src.offsets_c[i]
-            read_end = src.offsets_c[i+1]
-            row_len = read_end - read_start
-
-            # 拷贝当前行的字符
+            row_len = src.offsets_c[i + 1] - read_start
             if row_len > 0:
                 memcpy(out_buf + write_idx, src.chars_c + read_start, row_len * sizeof(Py_UCS2))
                 write_idx += row_len
+            memcpy(out_buf + write_idx, sep_buf, sep_len * sizeof(Py_UCS2))
+            write_idx += sep_len
 
-            # 拷贝分隔符
-            if i < n - 1:
-                memcpy(out_buf + write_idx, sep_buf, sep_len * sizeof(Py_UCS2))
-                write_idx += sep_len
+        # 最后一行：仅行内容
+        read_start = src.offsets_c[n - 1]
+        row_len = src.offsets_c[n] - read_start
+        if row_len > 0:
+            memcpy(out_buf + write_idx, src.chars_c + read_start, row_len * sizeof(Py_UCS2))
 
         # 一次性生成 Python 字符串交接给外部
         cdef str res = PyUnicode_FromKindAndData(2, out_buf, total_len)
@@ -2590,40 +2506,12 @@ cdef class NDframe:
                     # 1. 结构体行复制 (纯 C)
                     dst_rows[write_idx] = src_rows[i]
 
+                    # 2. 目标列追加提取结果（Python str），伴随列走纯 C memcpy
                     if field == FIELD_txt:
-                        # 2a. 目标列提取出的 Python str 追加进新池子
                         n_txt.append(g)
-
-                        # 3a. 伴随列 (text_sep) 不做任何 Python 转化，纯 C 内存闪电拷贝！
-                        start = self.text_sep_col.offsets_c[i]
-                        str_len = self.text_sep_col.offsets_c[i+1] - start
-
-                        if n_sep.length >= n_sep.capacity: n_sep._reserve_rows(n_sep.capacity * 2)
-                        if n_sep.char_length + str_len > n_sep.char_capacity:
-                            n_sep._reserve_chars(n_sep.char_length + str_len + 1024)
-                        if str_len > 0:
-                            memcpy(n_sep.chars_c + n_sep.char_length, self.text_sep_col.chars_c + start, str_len * sizeof(Py_UCS2))
-
-                        n_sep.char_length += str_len
-                        n_sep.length += 1
-                        n_sep.offsets_c[n_sep.length] = n_sep.char_length
-
+                        _col_copy_row(n_sep, self.text_sep_col, i)
                     else:
-                        # 2b. 伴随列 (text) 纯 C 内存闪电拷贝！
-                        start = self.text_col.offsets_c[i]
-                        str_len = self.text_col.offsets_c[i+1] - start
-
-                        if n_txt.length >= n_txt.capacity: n_txt._reserve_rows(n_txt.capacity * 2)
-                        if n_txt.char_length + str_len > n_txt.char_capacity:
-                            n_txt._reserve_chars(n_txt.char_length + str_len + 1024)
-                        if str_len > 0:
-                            memcpy(n_txt.chars_c + n_txt.char_length, self.text_col.chars_c + start, str_len * sizeof(Py_UCS2))
-
-                        n_txt.char_length += str_len
-                        n_txt.length += 1
-                        n_txt.offsets_c[n_txt.length] = n_txt.char_length
-
-                        # 3b. 目标列 (text_sep) 追加 Python str
+                        _col_copy_row(n_txt, self.text_col, i)
                         n_sep.append(g)
 
                     write_idx += 1
@@ -2638,86 +2526,60 @@ cdef class NDframe:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     cdef NDframe _df_regex(self, int field, object pattern, bint is_regex):
+        """统一入口：is_regex=True → 正则引擎路径；is_regex=False → 纯 C 子串匹配路径。
+
+        两个引擎各自成函数，循环体内 0 分支；本入口仅做一次分发。
+        """
+        if is_regex:
+            return self._df_regex_re(field, pattern)
+        return self._df_regex_pure(field, pattern)
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef NDframe _df_regex_re(self, int field, object pattern):
+        """正则引擎路径：逐行 search，命中行走 100% 纯 C 内存克隆。"""
         cdef Py_ssize_t n = self.length
         cdef NDframe new_df = NDframe(n if n > 0 else 1)
         if n == 0: return new_df
 
-        cdef Py_ssize_t i, j, k, start, end, str_len, write_idx = 0
-        cdef bint match
-        cdef str txt
-
-        cdef RowC* src_rows = self.rows_c
-        cdef RowC* dst_rows = new_df.rows_c
+        cdef Py_ssize_t i, start, end, write_idx = 0
+        cdef object search_fn = pattern.search
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef UCS2Column_SoA n_txt = new_df.text_col
-        cdef UCS2Column_SoA n_sep = new_df.text_sep_col
 
-        # ==========================================
-        # 引擎初始化
-        # ==========================================
-        cdef object search_fn = None
-        cdef Py_ssize_t sub_len = 0
-        cdef Py_UCS2* sub_buf = NULL
-
-        if is_regex:
-            search_fn = pattern.search
-        else:
-            sub_len = PyUnicode_GET_LENGTH(pattern)
-            if sub_len > 0:
-                sub_buf = <Py_UCS2*>malloc(sub_len * sizeof(Py_UCS2))
-                for i in range(sub_len): sub_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(pattern, i)
-
-        # ==========================================
-        # 遍历与匹配
-        # ==========================================
         for i in range(n):
             start = src.offsets_c[i]
-            end = src.offsets_c[i+1]
+            end = src.offsets_c[i + 1]
+            # 空串直接跳过，命中则整行克隆
+            if end > start and search_fn(src._get_str(i)) is not None:
+                _df_copy_row(new_df, self, i, &write_idx)
+
+        new_df.length = write_idx
+        return new_df
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef NDframe _df_regex_pure(self, int field, object pattern):
+        """纯字符串匹配路径（is_regex=False）：0 次 Python 对象创建，循环内 0 分支。
+
+        空 pattern 语义与原来一致：空串行不匹配，非空串行全部匹配。
+        """
+        cdef Py_ssize_t n = self.length
+        cdef NDframe new_df = NDframe(n if n > 0 else 1)
+        if n == 0: return new_df
+
+        cdef Py_ssize_t i, start, end, str_len, write_idx = 0
+        cdef Py_ssize_t sub_len = 0
+        cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(<str>pattern, &sub_len)
+
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+        cdef Py_UCS2* chars = src.chars_c
+
+        for i in range(n):
+            start = src.offsets_c[i]
+            end = src.offsets_c[i + 1]
             str_len = end - start
-            match = False
-
-            if str_len > 0:
-                if is_regex:
-                    # 走 Python 正则
-                    txt = src._get_str(i)
-                    if search_fn(txt) is not None:
-                        match = True
-                else:
-                    # 走 纯 C 内存滑动匹配
-                    if sub_len == 0:
-                        match = True
-                    elif str_len >= sub_len:
-                        for j in range(start, end - sub_len + 1):
-                            match = True
-                            for k in range(sub_len):
-                                if src.chars_c[j + k] != sub_buf[k]: match = False; break
-                            if match: break
-
-            if match:
-                # 命中！执行 100% 纯 C 内存克隆（避开所有 Python Append 开销）
-                dst_rows[write_idx] = src_rows[i]
-
-                # 拷贝 text_col
-                c_start = self.text_col.offsets_c[i]
-                c_len = self.text_col.offsets_c[i+1] - c_start
-                if n_txt.length >= n_txt.capacity: n_txt._reserve_rows(n_txt.capacity * 2)
-                if n_txt.char_length + c_len > n_txt.char_capacity: n_txt._reserve_chars(n_txt.char_length + c_len + 1024)
-                if c_len > 0: memcpy(n_txt.chars_c + n_txt.char_length, self.text_col.chars_c + c_start, c_len * sizeof(Py_UCS2))
-                n_txt.char_length += c_len
-                n_txt.length += 1
-                n_txt.offsets_c[n_txt.length] = n_txt.char_length
-
-                # 拷贝 text_sep_col
-                c_start = self.text_sep_col.offsets_c[i]
-                c_len = self.text_sep_col.offsets_c[i+1] - c_start
-                if n_sep.length >= n_sep.capacity: n_sep._reserve_rows(n_sep.capacity * 2)
-                if n_sep.char_length + c_len > n_sep.char_capacity: n_sep._reserve_chars(n_sep.char_length + c_len + 1024)
-                if c_len > 0: memcpy(n_sep.chars_c + n_sep.char_length, self.text_sep_col.chars_c + c_start, c_len * sizeof(Py_UCS2))
-                n_sep.char_length += c_len
-                n_sep.length += 1
-                n_sep.offsets_c[n_sep.length] = n_sep.char_length
-
-                write_idx += 1
+            if str_len > 0 and _substr_contains(chars, start, end, sub_buf, sub_len):
+                _df_copy_row(new_df, self, i, &write_idx)
 
         if sub_buf != NULL: free(sub_buf)
         new_df.length = write_idx
@@ -2727,72 +2589,61 @@ cdef class NDframe:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     cdef NDframe _df_regex_in_x0y0x1y1(self, int field, object pattern, int x0, int y0, int x1, int y1, bint is_regex):
+        """统一入口：坐标框短路 + 正则/纯串匹配（引擎按 is_regex 分发）"""
+        if is_regex:
+            return self._df_regex_in_x0y0x1y1_re(field, pattern, x0, y0, x1, y1)
+        return self._df_regex_in_x0y0x1y1_pure(field, pattern, x0, y0, x1, y1)
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef NDframe _df_regex_in_x0y0x1y1_re(self, int field, object pattern, int x0, int y0, int x1, int y1):
         cdef Py_ssize_t n = self.length
         cdef NDframe new_df = NDframe(n if n > 0 else 1)
         if n == 0: return new_df
 
-        cdef Py_ssize_t i, j, k, start, end, str_len, write_idx = 0
-        cdef bint match
-        cdef str txt
+        cdef Py_ssize_t i, start, end, write_idx = 0
+        cdef object search_fn = pattern.search
         cdef RowC* src_rows = self.rows_c
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        # [... 相同的引擎初始化代码 ...]
-        cdef object search_fn = pattern.search if is_regex else None
-        cdef Py_ssize_t sub_len = 0
-        cdef Py_UCS2* sub_buf = NULL
-        if not is_regex:
-            sub_len = PyUnicode_GET_LENGTH(pattern)
-            if sub_len > 0:
-                sub_buf = <Py_UCS2*>malloc(sub_len * sizeof(Py_UCS2))
-                for i in range(sub_len): sub_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(pattern, i)
 
         for i in range(n):
             # 短路求值 1：必须先满足坐标边界条件
             if (src_rows[i].x0 > x0 and src_rows[i].x1 < x1 and
                 src_rows[i].y0 > y0 and src_rows[i].y1 < y1):
-
                 start = src.offsets_c[i]
-                end = src.offsets_c[i+1]
-                str_len = end - start
-                match = False
-
+                end = src.offsets_c[i + 1]
                 # 短路求值 2：再匹配字符串
-                if str_len > 0:
-                    if is_regex:
-                        if search_fn(src._get_str(i)) is not None: match = True
-                    else:
-                        if sub_len == 0: match = True
-                        elif str_len >= sub_len:
-                            for j in range(start, end - sub_len + 1):
-                                match = True
-                                for k in range(sub_len):
-                                    if src.chars_c[j + k] != sub_buf[k]: match = False; break
-                                if match: break
+                if end > start and search_fn(src._get_str(i)) is not None:
+                    _df_copy_row(new_df, self, i, &write_idx)
 
-                if match:
-                    # 命中！执行 100% 纯 C 内存克隆（避开所有 Python Append 开销）
-                    dst_rows[write_idx] = src_rows[i]
+        new_df.length = write_idx
+        return new_df
 
-                    # 拷贝 text_col
-                    c_start = self.text_col.offsets_c[i]
-                    c_len = self.text_col.offsets_c[i+1] - c_start
-                    if n_txt.length >= n_txt.capacity: n_txt._reserve_rows(n_txt.capacity * 2)
-                    if n_txt.char_length + c_len > n_txt.char_capacity: n_txt._reserve_chars(n_txt.char_length + c_len + 1024)
-                    if c_len > 0: memcpy(n_txt.chars_c + n_txt.char_length, self.text_col.chars_c + c_start, c_len * sizeof(Py_UCS2))
-                    n_txt.char_length += c_len
-                    n_txt.length += 1
-                    n_txt.offsets_c[n_txt.length] = n_txt.char_length
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef NDframe _df_regex_in_x0y0x1y1_pure(self, int field, object pattern, int x0, int y0, int x1, int y1):
+        cdef Py_ssize_t n = self.length
+        cdef NDframe new_df = NDframe(n if n > 0 else 1)
+        if n == 0: return new_df
 
-                    # 拷贝 text_sep_col
-                    c_start = self.text_sep_col.offsets_c[i]
-                    c_len = self.text_sep_col.offsets_c[i+1] - c_start
-                    if n_sep.length >= n_sep.capacity: n_sep._reserve_rows(n_sep.capacity * 2)
-                    if n_sep.char_length + c_len > n_sep.char_capacity: n_sep._reserve_chars(n_sep.char_length + c_len + 1024)
-                    if c_len > 0: memcpy(n_sep.chars_c + n_sep.char_length, self.text_sep_col.chars_c + c_start, c_len * sizeof(Py_UCS2))
-                    n_sep.char_length += c_len
-                    n_sep.length += 1
-                    n_sep.offsets_c[n_sep.length] = n_sep.char_length
-                    write_idx += 1
+        cdef Py_ssize_t i, start, end, str_len, write_idx = 0
+        cdef Py_ssize_t sub_len = 0
+        cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(<str>pattern, &sub_len)
+
+        cdef RowC* src_rows = self.rows_c
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+        cdef Py_UCS2* chars = src.chars_c
+
+        for i in range(n):
+            # 短路求值 1：必须先满足坐标边界条件
+            if (src_rows[i].x0 > x0 and src_rows[i].x1 < x1 and
+                src_rows[i].y0 > y0 and src_rows[i].y1 < y1):
+                start = src.offsets_c[i]
+                end = src.offsets_c[i + 1]
+                str_len = end - start
+                # 短路求值 2：再走纯 C 滑动窗口匹配
+                if str_len > 0 and _substr_contains(chars, start, end, sub_buf, sub_len):
+                    _df_copy_row(new_df, self, i, &write_idx)
 
         if sub_buf != NULL: free(sub_buf)
         new_df.length = write_idx
@@ -2802,6 +2653,14 @@ cdef class NDframe:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     cdef NDframe _df_regex_strlen_cmp(self, int field, object pattern, int target_len, int op, bint is_regex):
+        """统一入口：先 O(1) 长度预筛，再正则/纯串匹配（引擎按 is_regex 分发）"""
+        if is_regex:
+            return self._df_regex_strlen_cmp_re(field, pattern, target_len, op)
+        return self._df_regex_strlen_cmp_pure(field, pattern, target_len, op)
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef NDframe _df_regex_strlen_cmp_re(self, int field, object pattern, int target_len, int op):
         """
         组合拳王炸优化：先判断 C 数组里的字符串长度！
         如果是 O(1) 的长度校验未通过，直接跳过此行，根本不用启动耗时的字符串/正则搜寻。
@@ -2810,68 +2669,46 @@ cdef class NDframe:
         cdef NDframe new_df = NDframe(n if n > 0 else 1)
         if n == 0: return new_df
 
-        cdef Py_ssize_t i, j, k, start, end, str_len, write_idx = 0
-        cdef bint match, len_ok
+        cdef Py_ssize_t i, start, str_len, write_idx = 0
+        cdef object search_fn = pattern.search
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-
-        cdef object search_fn = pattern.search if is_regex else None
-        cdef Py_ssize_t sub_len = 0
-        cdef Py_UCS2* sub_buf = NULL
-        if not is_regex:
-            sub_len = PyUnicode_GET_LENGTH(pattern)
-            if sub_len > 0:
-                sub_buf = <Py_UCS2*>malloc(sub_len * sizeof(Py_UCS2))
-                for i in range(sub_len): sub_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(pattern, i)
 
         for i in range(n):
             start = src.offsets_c[i]
-            end = src.offsets_c[i+1]
+            str_len = src.offsets_c[i + 1] - start
+
+            # 杀手锏：第一步先在纯 C 侧判断长度，未命中直接跳过！
+            if (_int_cmp_pass(str_len, op, target_len, 0) and str_len > 0
+                    and search_fn(src._get_str(i)) is not None):
+                _df_copy_row(new_df, self, i, &write_idx)
+
+        new_df.length = write_idx
+        return new_df
+
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef NDframe _df_regex_strlen_cmp_pure(self, int field, object pattern, int target_len, int op):
+        """纯串路径：O(1) 长度预筛 → 纯 C 滑动窗口匹配，循环内 0 分支"""
+        cdef Py_ssize_t n = self.length
+        cdef NDframe new_df = NDframe(n if n > 0 else 1)
+        if n == 0: return new_df
+
+        cdef Py_ssize_t i, start, end, str_len, write_idx = 0
+        cdef Py_ssize_t sub_len = 0
+        cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(<str>pattern, &sub_len)
+
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+        cdef Py_UCS2* chars = src.chars_c
+
+        for i in range(n):
+            start = src.offsets_c[i]
+            end = src.offsets_c[i + 1]
             str_len = end - start
 
             # 杀手锏：第一步先在纯 C 侧判断长度，未命中直接跳过！
-            len_ok = False
-            if op == OP_GREATER: len_ok = (str_len > target_len)
-            elif op == OP_LESS:  len_ok = (str_len < target_len)
-            elif op == OP_EQUAL: len_ok = (str_len == target_len)
-
-            if len_ok:
-                match = False
-                if str_len > 0:
-                    if is_regex:
-                        if search_fn(src._get_str(i)) is not None: match = True
-                    else:
-                        if sub_len == 0: match = True
-                        elif str_len >= sub_len:
-                            for j in range(start, end - sub_len + 1):
-                                match = True
-                                for k in range(sub_len):
-                                    if src.chars_c[j + k] != sub_buf[k]: match = False; break
-                                if match: break
-
-                if match:
-                    # 命中！执行 100% 纯 C 内存克隆（避开所有 Python Append 开销）
-                    dst_rows[write_idx] = src_rows[i]
-
-                    # 拷贝 text_col
-                    c_start = self.text_col.offsets_c[i]
-                    c_len = self.text_col.offsets_c[i+1] - c_start
-                    if n_txt.length >= n_txt.capacity: n_txt._reserve_rows(n_txt.capacity * 2)
-                    if n_txt.char_length + c_len > n_txt.char_capacity: n_txt._reserve_chars(n_txt.char_length + c_len + 1024)
-                    if c_len > 0: memcpy(n_txt.chars_c + n_txt.char_length, self.text_col.chars_c + c_start, c_len * sizeof(Py_UCS2))
-                    n_txt.char_length += c_len
-                    n_txt.length += 1
-                    n_txt.offsets_c[n_txt.length] = n_txt.char_length
-
-                    # 拷贝 text_sep_col
-                    c_start = self.text_sep_col.offsets_c[i]
-                    c_len = self.text_sep_col.offsets_c[i+1] - c_start
-                    if n_sep.length >= n_sep.capacity: n_sep._reserve_rows(n_sep.capacity * 2)
-                    if n_sep.char_length + c_len > n_sep.char_capacity: n_sep._reserve_chars(n_sep.char_length + c_len + 1024)
-                    if c_len > 0: memcpy(n_sep.chars_c + n_sep.char_length, self.text_sep_col.chars_c + c_start, c_len * sizeof(Py_UCS2))
-                    n_sep.char_length += c_len
-                    n_sep.length += 1
-                    n_sep.offsets_c[n_sep.length] = n_sep.char_length
-                    write_idx += 1
+            if (_int_cmp_pass(str_len, op, target_len, 0) and str_len > 0
+                    and _substr_contains(chars, start, end, sub_buf, sub_len)):
+                _df_copy_row(new_df, self, i, &write_idx)
 
         if sub_buf != NULL: free(sub_buf)
         new_df.length = write_idx
@@ -3756,10 +3593,8 @@ cdef class NDframe:
 
         cdef RowC* src_rows = self.rows_c
         cdef RowC* dst_rows = new_df.rows_c
-        cdef list src_txt = self.text_list
-        cdef list src_sep = self.text_sep_list
-        cdef list dst_txt = [None] * n_idx
-        cdef list dst_sep = [None] * n_idx
+        cdef UCS2Column_SoA n_txt = new_df.text_col
+        cdef UCS2Column_SoA n_sep = new_df.text_sep_col
 
         cdef Py_ssize_t i, target
         cdef Py_ssize_t n_self = self.length
@@ -3769,12 +3604,11 @@ cdef class NDframe:
             if target < 0 or target >= n_self:
                 raise IndexError(f"Index {target} out of range [0, {n_self})")
             dst_rows[i] = src_rows[target]
-            dst_txt[i] = src_txt[target]
-            dst_sep[i] = src_sep[target]
+            # 两列字符池走纯 C memcpy 追加（0 次 Python 字符串创建）
+            _col_copy_row(n_txt, self.text_col, target)
+            _col_copy_row(n_sep, self.text_sep_col, target)
 
         new_df.length = n_idx
-        new_df.text_list = dst_txt
-        new_df.text_sep_list = dst_sep
         return new_df
 
 
@@ -3790,22 +3624,20 @@ cdef class NDframe:
         cdef Py_ssize_t write_idx = 0
         cdef Py_ssize_t n = self.length
         cdef RowC* rows = self.rows_c
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
+        cdef UCS2Column_SoA n_txt = UCS2Column_SoA(n)
+        cdef UCS2Column_SoA n_sep = UCS2Column_SoA(n)
 
         for read_idx in range(n):
             if read_idx not in idx_set:
-                if read_idx != write_idx:
-                    rows[write_idx] = rows[read_idx]
-                    txt_list[write_idx] = txt_list[read_idx]
-                    sep_list[write_idx] = sep_list[read_idx]
+                rows[write_idx] = rows[read_idx]
+                # 两列字符池重建为紧凑内存（与 _drop_in_regex 同一套路）
+                _col_copy_row(n_txt, self.text_col, read_idx)
+                _col_copy_row(n_sep, self.text_sep_col, read_idx)
                 write_idx += 1
 
-        if write_idx < n:
-            del txt_list[write_idx:]
-            del sep_list[write_idx:]
-
         self.length = write_idx
+        self.text_col = n_txt
+        self.text_sep_col = n_sep
         return self
 
 
