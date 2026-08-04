@@ -4,7 +4,7 @@
 # cython: wraparound=False
 # cython: cdivision=True
 from libc.stdlib cimport malloc, realloc, free
-from libc.string cimport memcpy, memmove, memset
+from libc.string cimport memcpy, memmove, memset, memcmp
 from libc.string cimport strstr, strlen, strncmp, memmove, memcpy, strncat, strncpy
 
 from libc.stdio cimport printf
@@ -142,18 +142,21 @@ cdef inline object _ensure_regex(object pattern):
 # 模块级极速匹配 / 比较 / 拷贝帮助函数
 # ============================================
 cdef Py_UCS2* _str_to_ucs2_buf(str s, Py_ssize_t* out_len) except NULL:
-    """将 Python str 提取为 UCS2 连续缓冲（>0xFFFF 的字符按存储引擎约定降级为 '?'）"""
+    """将 Python str 提取为 UCS2 连续缓冲（>0xFFFF 的字符按存储引擎约定降级为 '?'）
+
+    注意：即使 s 为空串也保证返回非 NULL 指针（至少分配 1 个单元）。
+    因为本函数声明了 except NULL，返回 NULL 会被 Cython 当作异常路径处理；
+    若同时没有设置 Python 异常，将直接坠入错误处理代码导致段错误。
+    """
     cdef Py_ssize_t n = PyUnicode_GET_LENGTH(s)
     cdef Py_ssize_t i
     cdef Py_UCS4 cp
-    cdef Py_UCS2* buf = NULL
-    if n > 0:
-        buf = <Py_UCS2*>malloc(n * sizeof(Py_UCS2))
-        if buf == NULL:
-            raise MemoryError()
-        for i in range(n):
-            cp = PyUnicode_READ_CHAR(s, i)
-            buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+    cdef Py_UCS2* buf = <Py_UCS2*>malloc((n + 1) * sizeof(Py_UCS2))
+    if buf == NULL:
+        raise MemoryError()
+    for i in range(n):
+        cp = PyUnicode_READ_CHAR(s, i)
+        buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
     out_len[0] = n
     return buf
 
@@ -449,7 +452,10 @@ cdef class UCS2Column_SoA:
         cdef bint match
 
         cdef Py_UCS2* p_buf = <Py_UCS2*>malloc(p_len * sizeof(Py_UCS2))
-        for i in range(p_len): p_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(prefix, i)
+        cdef Py_UCS4 cp
+        for i in range(p_len):
+            cp = PyUnicode_READ_CHAR(prefix, i)
+            p_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         for i in range(self.length):
             start = self.offsets_c[i]
@@ -473,7 +479,10 @@ cdef class UCS2Column_SoA:
         cdef bint match
 
         cdef Py_UCS2* s_buf = <Py_UCS2*>malloc(s_len * sizeof(Py_UCS2))
-        for i in range(s_len): s_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(suffix, i)
+        cdef Py_UCS4 cp
+        for i in range(s_len):
+            cp = PyUnicode_READ_CHAR(suffix, i)
+            s_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         for i in range(self.length):
             end = self.offsets_c[i+1]
@@ -497,7 +506,10 @@ cdef class UCS2Column_SoA:
         cdef bint match, found
 
         cdef Py_UCS2* sub_buf = <Py_UCS2*>malloc(sub_len * sizeof(Py_UCS2))
-        for i in range(sub_len): sub_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(substring, i)
+        cdef Py_UCS4 cp
+        for i in range(sub_len):
+            cp = PyUnicode_READ_CHAR(substring, i)
+            sub_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         for i in range(self.length):
             start = self.offsets_c[i]
@@ -526,11 +538,20 @@ cdef class UCS2Column_SoA:
         cdef Py_ssize_t old_len = PyUnicode_GET_LENGTH(old)
         cdef Py_ssize_t new_len = PyUnicode_GET_LENGTH(new)
 
+        # 空 old 视为无操作：直接返回副本，不做任何替换
+        if old_len == 0:
+            return self.copy()
+
         cdef Py_UCS2* old_buf = <Py_UCS2*>malloc(old_len * sizeof(Py_UCS2))
         cdef Py_UCS2* new_buf = <Py_UCS2*>malloc(new_len * sizeof(Py_UCS2))
         cdef Py_ssize_t i, j, k
-        for i in range(old_len): old_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(old, i)
-        for i in range(new_len): new_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(new, i)
+        cdef Py_UCS4 cp
+        for i in range(old_len):
+            cp = PyUnicode_READ_CHAR(old, i)
+            old_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+        for i in range(new_len):
+            cp = PyUnicode_READ_CHAR(new, i)
+            new_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
         cdef Py_ssize_t start, end, str_len
@@ -541,10 +562,11 @@ cdef class UCS2Column_SoA:
             end = self.offsets_c[i+1]
 
             res_col.offsets_c[i] = res_col.char_length
+
             j = start
             while j < end:
                 match = False
-                if old_len > 0 and end - j >= old_len:
+                if end - j >= old_len:
                     match = True
                     for k in range(old_len):
                         if self.chars_c[j + k] != old_buf[k]: match = False; break
@@ -769,16 +791,18 @@ cdef class StringAccessor:
         return self.df._keep_charset(self.field, False)
 
     @cython.always_allow_keywords(False)
-    def contains(self, pattern, bint regex=True):
-        """过滤包含特定模式的行。regex=False 时将触发底层 C 的极速纯字符串匹配，返回新 NDframe"""
-        if regex:
-            pattern = _ensure_regex(pattern)
-        elif not isinstance(pattern, str):
-            pattern = str(pattern)
-        return self.df._df_regex(self.field, pattern, regex)
+    def contains(self, object pattern):
+        """过滤包含特定模式的行（正则匹配），返回新 NDframe。"""
+        pattern = _ensure_regex(pattern)
+        return self.df._df_regex(self.field, pattern, True)
 
     @cython.always_allow_keywords(False)
-    def contains_in_bbox(self, object pattern, int x0, int y0, int x1, int y1, bint regex=True):
+    def contains_substr(self, str s):
+        """过滤字段值包含子串 s 的行（纯 C 滑动窗口子串匹配），返回新 NDframe"""
+        return self.df._df_regex(self.field, s, False)
+
+    @cython.always_allow_keywords(False)
+    def contains_in_bbox(self, object pattern, int x0, int y0, int x1, int y1):
         """在指定坐标框内进行正则过滤，返回新 NDframe"""
         if x0 < 0: x0 = 0
         if y0 < 0: y0 = 0
@@ -786,11 +810,8 @@ cdef class StringAccessor:
         if y1 < 0: y1 = 0
         if x0 > x1 or y0 > y1:
             raise ValueError(f"def contains_in_bbox invalid boundary: x0({x0})>x1({x1}) or y0({y0})>y1({y1})")
-        if regex:
-            pattern = _ensure_regex(pattern)
-        elif not isinstance(pattern, str):
-            pattern = str(pattern)
-        return self.df._df_regex_in_x0y0x1y1(self.field, pattern, x0, y0, x1, y1, regex)
+        pattern = _ensure_regex(pattern)
+        return self.df._df_regex_in_x0y0x1y1(self.field, pattern, x0, y0, x1, y1)
 
     def replace(self, str old_str, str new_str, str old_str2="", str new_str2=""):
         """就地替换，返回原 df 方便链式调用。支持双字符串替换（可选第二对）"""
@@ -878,26 +899,31 @@ cdef class StringAccessor:
         """检查字段值是否包含给定字符串集合中的任意一个"""
         return self.df._contains_any(self.field, texts)
 
+    @cython.always_allow_keywords(False)
+    def is_equal(self, str s):
+        """返回字段值恰好等于 s 的行构成的新 NDframe（纯 C memcmp 比较）"""
+        return self.df._df_str_equal(self.field, s)
+
     # ========================================================
     # 正则 + 字符串长度组合筛选 (C++ df_regex_strlen_xxx)
     # ========================================================
     @cython.always_allow_keywords(False)
-    def regex_strlen_greater(self, object pattern, int n, bint regex=True):
+    def regex_strlen_greater(self, object pattern, int n):
         """正则匹配 && 字符串长度 > n 的行 → 新 NDframe"""
-        if regex: pattern = _ensure_regex(pattern)
-        return self.df._df_regex_strlen_cmp(self.field, pattern, n, OP_GREATER, regex)
+        pattern = _ensure_regex(pattern)
+        return self.df._df_regex_strlen_cmp(self.field, pattern, n, OP_GREATER)
 
     @cython.always_allow_keywords(False)
-    def regex_strlen_less(self, object pattern, int n, bint regex=True):
+    def regex_strlen_less(self, object pattern, int n):
         """正则匹配 && 字符串长度 < n 的行 → 新 NDframe"""
-        if regex: pattern = _ensure_regex(pattern)
-        return self.df._df_regex_strlen_cmp(self.field, pattern, n, OP_LESS, regex)
+        pattern = _ensure_regex(pattern)
+        return self.df._df_regex_strlen_cmp(self.field, pattern, n, OP_LESS)
 
     @cython.always_allow_keywords(False)
-    def regex_strlen_equal(self, object pattern, int n, bint regex=True):
+    def regex_strlen_equal(self, object pattern, int n):
         """正则匹配 && 字符串长度 == n 的行 → 新 NDframe"""
-        if regex: pattern = _ensure_regex(pattern)
-        return self.df._df_regex_strlen_cmp(self.field, pattern, n, OP_EQUAL, regex)
+        pattern = _ensure_regex(pattern)
+        return self.df._df_regex_strlen_cmp(self.field, pattern, n, OP_EQUAL)
 
     # ========================================================
     # 跨字段字符串替换 (C++ replace<field_src, field_dst>)
@@ -1972,12 +1998,13 @@ cdef class NDframe:
 
         if mode == TRM_STRIP or mode == TRM_LSTRIP or mode == TRM_RSTRIP:
             # 统一剥离字符集：调用方传入 chars 则用其字符集，否则用默认 {空格,\t,\n,\r}。
-            # 两者收敛为同一个 _is_in_chars 谓词，字符循环内 0 分支。
-            has_chars = chars is not None and len(chars) > 0
-            strip_len = 4
+            # chars=""（空字符集）视为无操作：直接返回，不做任何剥离。
+            if chars is not None and PyUnicode_GET_LENGTH(chars) == 0:
+                return self
+            has_chars = chars is not None
+            strip_len = PyUnicode_GET_LENGTH(chars) if has_chars else 4
             strip_buf = default_strip
             if has_chars:
-                strip_len = PyUnicode_GET_LENGTH(chars)
                 strip_buf = <Py_UCS2*>malloc(strip_len * sizeof(Py_UCS2))
                 if not strip_buf: raise MemoryError()
                 for i in range(strip_len):
@@ -2287,7 +2314,10 @@ cdef class NDframe:
         cdef Py_UCS2* sep_buf = <Py_UCS2*>malloc(sep_len * sizeof(Py_UCS2))
         if not sep_buf: raise MemoryError()
         cdef Py_ssize_t i
-        for i in range(sep_len): sep_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(separator, i)
+        cdef Py_UCS4 cp
+        for i in range(sep_len):
+            cp = PyUnicode_READ_CHAR(separator, i)
+            sep_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         cdef Py_UCS2* out_buf = <Py_UCS2*>malloc(total_len * sizeof(Py_UCS2))
         if not out_buf:
@@ -2326,7 +2356,7 @@ cdef class NDframe:
         利用之前在 UCS2Column_SoA 中写好的高速 C 循环替换方法，
         生成新列后直接挂载，让 Python GC 清理旧内存。
         """
-        if not old_str or self.length == 0:
+        if self.length == 0 or not old_str:
             return
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
@@ -2346,12 +2376,7 @@ cdef class NDframe:
         在处理常见的 "\n"->"", "\r"->"" 双清除任务时，
         不用分配两遍内存，在 C 层面一套动作带走，性能直逼 C++ std::string!
         """
-        if self.length == 0: return
-        if not old0 and not old1: return
-
-        # 退化为单路替换
-        if not old1: self._replace(field, old0, new0); return
-        if not old0: self._replace(field, old1, new1); return
+        if self.length == 0 or not old0 or not old1: return
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
@@ -2361,15 +2386,24 @@ cdef class NDframe:
         cdef Py_UCS2* o0_buf = <Py_UCS2*>malloc(o0_len * sizeof(Py_UCS2)) if o0_len > 0 else NULL
         cdef Py_UCS2* n0_buf = <Py_UCS2*>malloc(n0_len * sizeof(Py_UCS2)) if n0_len > 0 else NULL
         cdef Py_ssize_t i, j, k
-        for i in range(o0_len): o0_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(old0, i)
-        for i in range(n0_len): n0_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(new0, i)
+        cdef Py_UCS4 cp
+        for i in range(o0_len):
+            cp = PyUnicode_READ_CHAR(old0, i)
+            o0_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+        for i in range(n0_len):
+            cp = PyUnicode_READ_CHAR(new0, i)
+            n0_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         cdef Py_ssize_t o1_len = PyUnicode_GET_LENGTH(old1)
         cdef Py_ssize_t n1_len = PyUnicode_GET_LENGTH(new1)
         cdef Py_UCS2* o1_buf = <Py_UCS2*>malloc(o1_len * sizeof(Py_UCS2)) if o1_len > 0 else NULL
         cdef Py_UCS2* n1_buf = <Py_UCS2*>malloc(n1_len * sizeof(Py_UCS2)) if n1_len > 0 else NULL
-        for i in range(o1_len): o1_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(old1, i)
-        for i in range(n1_len): n1_buf[i] = <Py_UCS2>PyUnicode_READ_CHAR(new1, i)
+        for i in range(o1_len):
+            cp = PyUnicode_READ_CHAR(old1, i)
+            o1_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+        for i in range(n1_len):
+            cp = PyUnicode_READ_CHAR(new1, i)
+            n1_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         # 2. 准备全新的 C 内存列接收数据
         cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
@@ -2603,15 +2637,8 @@ cdef class NDframe:
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
-    cdef NDframe _df_regex_in_x0y0x1y1(self, int field, object pattern, int x0, int y0, int x1, int y1, bint is_regex):
-        """统一入口：坐标框短路 + 正则/纯串匹配（引擎按 is_regex 分发）"""
-        if is_regex:
-            return self._df_regex_in_x0y0x1y1_re(field, pattern, x0, y0, x1, y1)
-        return self._df_regex_in_x0y0x1y1_pure(field, pattern, x0, y0, x1, y1)
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef NDframe _df_regex_in_x0y0x1y1_re(self, int field, object pattern, int x0, int y0, int x1, int y1):
+    cdef NDframe _df_regex_in_x0y0x1y1(self, int field, object pattern, int x0, int y0, int x1, int y1):
+        """坐标框短路 + 正则匹配"""
         cdef Py_ssize_t n = self.length
         cdef NDframe new_df = NDframe(n if n > 0 else 1)
         if n == 0: return new_df
@@ -2634,48 +2661,10 @@ cdef class NDframe:
         new_df.length = write_idx
         return new_df
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef NDframe _df_regex_in_x0y0x1y1_pure(self, int field, object pattern, int x0, int y0, int x1, int y1):
-        cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if n == 0: return new_df
-
-        cdef Py_ssize_t i, start, end, str_len, write_idx = 0
-        cdef Py_ssize_t sub_len = 0
-        cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(<str>pattern, &sub_len)
-
-        cdef RowC* src_rows = self.rows_c
-        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef Py_UCS2* chars = src.chars_c
-
-        for i in range(n):
-            # 短路求值 1：必须先满足坐标边界条件
-            if (src_rows[i].x0 > x0 and src_rows[i].x1 < x1 and
-                src_rows[i].y0 > y0 and src_rows[i].y1 < y1):
-                start = src.offsets_c[i]
-                end = src.offsets_c[i + 1]
-                str_len = end - start
-                # 短路求值 2：再走纯 C 滑动窗口匹配
-                if str_len > 0 and _substr_contains(chars, start, end, sub_buf, sub_len):
-                    _df_copy_row(new_df, self, i, &write_idx)
-
-        if sub_buf != NULL: free(sub_buf)
-        new_df.length = write_idx
-        return new_df
-
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
-    cdef NDframe _df_regex_strlen_cmp(self, int field, object pattern, int target_len, int op, bint is_regex):
-        """统一入口：先 O(1) 长度预筛，再正则/纯串匹配（引擎按 is_regex 分发）"""
-        if is_regex:
-            return self._df_regex_strlen_cmp_re(field, pattern, target_len, op)
-        return self._df_regex_strlen_cmp_pure(field, pattern, target_len, op)
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef NDframe _df_regex_strlen_cmp_re(self, int field, object pattern, int target_len, int op):
+    cdef NDframe _df_regex_strlen_cmp(self, int field, object pattern, int target_len, int op):
         """
         组合拳王炸优化：先判断 C 数组里的字符串长度！
         如果是 O(1) 的长度校验未通过，直接跳过此行，根本不用启动耗时的字符串/正则搜寻。
@@ -2697,35 +2686,6 @@ cdef class NDframe:
                     and search_fn(src._get_str(i)) is not None):
                 _df_copy_row(new_df, self, i, &write_idx)
 
-        new_df.length = write_idx
-        return new_df
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef NDframe _df_regex_strlen_cmp_pure(self, int field, object pattern, int target_len, int op):
-        """纯串路径：O(1) 长度预筛 → 纯 C 滑动窗口匹配，循环内 0 分支"""
-        cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if n == 0: return new_df
-
-        cdef Py_ssize_t i, start, end, str_len, write_idx = 0
-        cdef Py_ssize_t sub_len = 0
-        cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(<str>pattern, &sub_len)
-
-        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef Py_UCS2* chars = src.chars_c
-
-        for i in range(n):
-            start = src.offsets_c[i]
-            end = src.offsets_c[i + 1]
-            str_len = end - start
-
-            # 杀手锏：第一步先在纯 C 侧判断长度，未命中直接跳过！
-            if (_int_cmp_pass(str_len, op, target_len, 0) and str_len > 0
-                    and _substr_contains(chars, start, end, sub_buf, sub_len)):
-                _df_copy_row(new_df, self, i, &write_idx)
-
-        if sub_buf != NULL: free(sub_buf)
         new_df.length = write_idx
         return new_df
 
@@ -2864,6 +2824,30 @@ cdef class NDframe:
         for i in range(n):
             result[i] = PyLong_FromSsize_t(src.offsets_c[i + 1] - src.offsets_c[i])
         return result
+
+    cdef NDframe _df_str_equal(self, int field, str s):
+        """全等过滤：字段值恰好等于 s 的行 → 新 NDframe（纯 C memcmp 比较，0 次 Python 字符串创建）"""
+        cdef Py_ssize_t n = self.length
+        cdef NDframe new_df = NDframe(n if n > 0 else 1)
+        if n == 0:
+            return new_df
+
+        cdef Py_ssize_t s_len = 0
+        cdef Py_UCS2* s_buf = _str_to_ucs2_buf(s, &s_len)
+
+        cdef Py_ssize_t i, start, str_len, write_idx = 0
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+
+        for i in range(n):
+            start = src.offsets_c[i]
+            str_len = src.offsets_c[i + 1] - start
+            if (str_len == s_len and
+                    (s_len == 0 or memcmp(src.chars_c + start, s_buf, s_len * sizeof(Py_UCS2)) == 0)):
+                _df_copy_row(new_df, self, i, &write_idx)
+
+        free(s_buf)
+        new_df.length = write_idx
+        return new_df
 
     cdef NDframe _df_is_in(self, int field, object texts):
         cdef Py_ssize_t n = self.length

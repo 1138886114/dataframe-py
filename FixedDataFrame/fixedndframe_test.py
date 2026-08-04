@@ -510,46 +510,45 @@ def test_string_regex(df: NDframe, rows: List[ParsedRow]):
 
 
 def test_string_contains_pure(df: NDframe, rows: List[ParsedRow]):
-    section("13. 纯 C 字符串匹配 (regex=False)")
+    section("13. 纯 C 字符串匹配 (contains_substr)")
     texts = [r["text"] for r in rows]
 
-    # contains 纯路径：非空子串
+    # contains_substr 纯路径：非空子串
     for sub in ["收", "Macau", "123", "nonexistent"]:
         expect = sum(1 for t in texts if sub in t)
-        got = len(df.text.contains(sub, regex=False))
-        check(f"contains({sub!r}, regex=False)", got, expect)
+        got = len(df.text.contains_substr(sub))
+        check(f"contains_substr({sub!r})", got, expect)
 
     # 与正则路径结果一致性
     for sub in ["收", "Macau", "2"]:
-        pure = set(df.text.contains(sub, regex=False).idx.values())
+        pure = set(df.text.contains_substr(sub).idx.values())
         reg = set(df.text.contains(sub).idx.values())
-        check(f"pure==regex idx set for {sub!r}", pure, reg)
+        check(f"contains_substr==contains idx set for {sub!r}", pure, reg)
 
-    # contains_in_bbox 纯路径
+    # contains_in_bbox（正则引擎）
     sub = "收"
     expect = sum(1 for i, r in enumerate(rows) if sub in r["text"] and r["x0"] > 100 and r["y0"] > 0 and r["x1"] < 1500 and r["y1"] < 800)
-    got = len(df.text.contains_in_bbox(sub, 100, 0, 1500, 800, regex=False))
-    check("contains_in_bbox(收, 100,0,1500,800, regex=False)", got, expect)
+    got = len(df.text.contains_in_bbox(sub, 100, 0, 1500, 800))
+    check("contains_in_bbox(收, 100,0,1500,800)", got, expect)
 
-    # regex_strlen_* 纯路径
+    # regex_strlen_*（正则引擎）
     lengths = [len(t) for t in texts]
     for n in (5, 10, 15):
-        check(f"regex_strlen_greater('e', {n}, regex=False)",
-              len(df.text.regex_strlen_greater("e", n, regex=False)),
-              sum(1 for l in lengths if l > n and "e" in texts[lengths.index(l)]) if False else sum(
-                  1 for i, l in enumerate(lengths) if l > n and "e" in texts[i]))
-        check(f"regex_strlen_less('a', {n}, regex=False)",
-              len(df.text.regex_strlen_less("a", n, regex=False)),
+        check(f"regex_strlen_greater('e', {n})",
+              len(df.text.regex_strlen_greater("e", n)),
+              sum(1 for i, l in enumerate(lengths) if l > n and "e" in texts[i]))
+        check(f"regex_strlen_less('a', {n})",
+              len(df.text.regex_strlen_less("a", n)),
               sum(1 for i, l in enumerate(lengths) if l < n and "a" in texts[i]))
-        check(f"regex_strlen_equal('2', {n}, regex=False)",
-              len(df.text.regex_strlen_equal("2", n, regex=False)),
+        check(f"regex_strlen_equal('2', {n})",
+              len(df.text.regex_strlen_equal("2", n)),
               sum(1 for i, l in enumerate(lengths) if l == n and "2" in texts[i]))
 
-    # idx_* 纯路径（idx_regex_strlen_* 走同一纯引擎）
-    check("idx_regex_strlen_greater('e', 5, regex=False)",
+    # idx_* 索引路径
+    check("idx_regex_strlen_greater('e', 5)",
           df.text.idx_regex_strlen_greater("e", 5),
           [i for i, l in enumerate(lengths) if l > 5 and "e" in texts[i]])
-    check("idx_regex_strlen_equal('2', 15, regex=False)",
+    check("idx_regex_strlen_equal('2', 15)",
           df.text.idx_regex_strlen_equal("2", 15),
           [i for i, l in enumerate(lengths) if l == 15 and "2" in texts[i]])
 
@@ -583,6 +582,59 @@ def test_string_set_ops(df: NDframe, rows: List[ParsedRow]):
 
     check("contains_any True", df.text.contains_any(["收据", "nope"]), any(any(sub in t for sub in ["收据", "nope"]) for t in texts))
     check("contains_any False", df.text.contains_any(["ZZZZNONEXIST"]), False)
+
+
+def test_string_equal_substr(df: NDframe, rows: List[ParsedRow]):
+    section("16b. StringAccessor is_equal / contains_substr")
+    texts = [r["text"] for r in rows]
+    t0 = texts[0]
+    last = texts[-1]
+
+    # ── is_equal: 全等过滤 ──
+    check("text.is_equal(first) len",
+          len(df.text.is_equal(t0)), sum(1 for t in texts if t == t0))
+    check("text.is_equal(last) len",
+          len(df.text.is_equal(last)), sum(1 for t in texts if t == last))
+    check("text.is_equal(nonexistent)", len(df.text.is_equal("ZZZZ_不存在_ZZZZ")), 0)
+    check("text.is_equal('')", len(df.text.is_equal("")), sum(1 for t in texts if t == ""))
+    check("text.is_equal('') idx",
+          sorted(df.text.is_equal("").idx.values()),
+          sorted(i for i, t in enumerate(texts) if t == ""))
+
+    # 与 is_in 单元素语义一致
+    check("is_equal idx == is_in 单元素 idx",
+          set(df.text.is_equal(t0).idx.values()),
+          set(df.text.is_in([t0]).idx.values()))
+
+    # 空字段 text_sep 全为 ""
+    check("text_sep.is_equal('') len", len(df.text_sep.is_equal("")), len(rows))
+    check("text_sep.is_equal('x')", len(df.text_sep.is_equal("x")), 0)
+
+    # 空 DF
+    empty_df = NDframe()
+    check("empty is_equal", len(empty_df.text.is_equal("a")), 0)
+
+    # ── contains_substr: 子串包含过滤（纯 C 引擎）──
+    for sub in ["收", "Macau", "123", "nonexistent"]:
+        expect = sum(1 for t in texts if sub in t)
+        check(f"contains_substr({sub!r})", len(df.text.contains_substr(sub)), expect)
+        check(f"contains_substr==contains {sub!r}",
+              set(df.text.contains_substr(sub).idx.values()),
+              set(df.text.contains(sub).idx.values()))
+
+    # 空子串：非空行全部匹配
+    non_empty = sum(1 for t in texts if t)
+    check("contains_substr('')", len(df.text.contains_substr("")), non_empty)
+
+    # 多行命中时保持原行序
+    r_m = re.compile(r"Macau")
+    macau_idx = [i for i, t in enumerate(texts) if r_m.search(t)]
+    if macau_idx:
+        check("contains_substr keeps order",
+              df.text.contains_substr("Macau").idx.values(), macau_idx)
+
+    # 空 DF
+    check("empty contains_substr", len(empty_df.text.contains_substr("a")), 0)
 
 
 def test_string_idx_ops(df: NDframe, rows: List[ParsedRow]):
@@ -942,6 +994,14 @@ def test_small_df_suite():
     df_r.text.replace(" ", "_")
     check("text.replace", df_r.text.join("|"), "|".join(t.replace(" ", "_") for t in texts))
 
+    # is_equal / contains_substr 精确值
+    check("is_equal exact", df.text.is_equal("foo bar baz ").idx.values(), [1])
+    check("is_equal miss", len(df.text.is_equal("foo")), 0)
+    check("is_equal empty", len(df.text.is_equal("")), 0)
+    check("contains_substr 123", df.text.contains_substr("123").idx.values(), [2])
+    check("contains_substr 你好", df.text.contains_substr("你好").idx.values(), [0])
+    check("contains_substr miss", len(df.text.contains_substr("none")), 0)
+
     df_st = df.copy()
     df_st.text.strip()
     check("text.strip[1] endswith space", df_st.to_list()[1]["text"].endswith(" "), False)
@@ -989,9 +1049,9 @@ def test_small_df_suite():
     df_rr.text.regex_replace(re.compile(r"\d+"), "X")
     check("regex_replace d+ -> X", df_rr.to_list()[2]["text"], "test X regex 正则测试")
 
-    check("contains('world', pure)", len(df.text.contains("world", regex=False)), 1)
-    check("contains('123', pure)", len(df.text.contains("123", regex=False)), 1)
-    check("contains('none', pure)", len(df.text.contains("none", regex=False)), 0)
+    check("contains_substr('world')", len(df.text.contains_substr("world")), 1)
+    check("contains_substr('123')", len(df.text.contains_substr("123")), 1)
+    check("contains_substr('none')", len(df.text.contains_substr("none")), 0)
     check("contains('world')", len(df.text.contains(re.compile(r"world"))), 1)
 
     subsection("字符串长度过滤")
@@ -1168,9 +1228,9 @@ def test_performance_small():
     print(f"   text.contains(数字) 正则: {dt*1000:.2f} ms")
 
     t0 = time.perf_counter()
-    _ = df.text.contains("a", regex=False)
+    _ = df.text.contains_substr("a")
     dt = time.perf_counter() - t0
-    print(f"   text.contains('a') 纯C: {dt*1000:.2f} ms")
+    print(f"   text.contains_substr('a') 纯C: {dt*1000:.2f} ms")
 
     subsection("排序")
     t0 = time.perf_counter()
@@ -1239,9 +1299,9 @@ def test_performance_medium():
     print(f"   text.contains(数字) 正则: {dt*1000:.2f} ms")
 
     t0 = time.perf_counter()
-    _ = df.text.contains("a", regex=False)
+    _ = df.text.contains_substr("a")
     dt = time.perf_counter() - t0
-    print(f"   text.contains('a') 纯C: {dt*1000:.2f} ms")
+    print(f"   text.contains_substr('a') 纯C: {dt*1000:.2f} ms")
 
     subsection("排序")
     t0 = time.perf_counter()
@@ -1340,9 +1400,9 @@ def test_performance_large():
     print(f"   text.contains(数字) 正则: {dt*1000:.2f} ms")
 
     t0 = time.perf_counter()
-    _ = df.text.contains("a", regex=False)
+    _ = df.text.contains_substr("a")
     dt = time.perf_counter() - t0
-    print(f"   text.contains('a') 纯C: {dt*1000:.2f} ms")
+    print(f"   text.contains_substr('a') 纯C: {dt*1000:.2f} ms")
 
     subsection("字符串替换 100k")
     t0 = time.perf_counter()
@@ -1397,6 +1457,7 @@ def main():
     test_string_contains_pure(df, rows)
     test_string_len_filter(df, rows)
     test_string_set_ops(df, rows)
+    test_string_equal_substr(df, rows)
     test_string_idx_ops(df, rows)
     test_string_drop_regex(df, rows)
     test_cross_replace(df, rows)
