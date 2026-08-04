@@ -15,7 +15,7 @@ if os.path.isdir(build_dir):
     sys.path.insert(0, build_dir)
 
 try:
-    from fixedndframe import NDframe
+    from fixedndframe import NDframe, UCS2Column_SoA
 except ImportError:
     print("找不到 fixedndframe 模块，请先编译:")
     print("  cd FixedDataFrame && python3 -c \"from setuptools import setup; from Cython.Build import cythonize; setup(ext_modules=cythonize('fixedndframe.pyx', language_level=3))\" build_ext --build-lib=build")
@@ -336,6 +336,126 @@ def test_numeric_sort(df: NDframe, rows: List[ParsedRow]):
     df_m = df.copy()
     df_m.x0.sort().y0.sort()
     check("chained sort len", len(df_m), len(rows))
+
+
+def test_text_sort(df: NDframe, rows: List[ParsedRow]):
+    section("6b. 字符串就地排序 (text/text_sep)")
+    texts = [r["text"] for r in rows]
+
+    df_a = df.copy()
+    df_a.sort_by_text()
+    check("sort_by_text asc", df_a.text.values(), sorted(texts))
+
+    df_b = df.copy()
+    df_b.sort_by_text(descending=True)
+    check("sort_by_text desc", df_b.text.values(), sorted(texts, reverse=True))
+
+    df_c = df.copy()
+    df_c.sort_by("text")
+    check("sort_by('text') 与 sort_by_text 等价",
+          df_c.text.values(), sorted(texts))
+
+    df_d = df.copy()
+    df_d.sort_by("text_sep")
+    check("sort_by('text_sep') 行数不变", len(df_d), len(rows))
+
+    # 排序后行级联动：text 与 x0 必须保持同一行
+    sorted_pairs = sorted(zip(texts, [r["x0"] for r in rows]))
+    df_e = df.copy()
+    df_e.sort_by_text()
+    check("排序后 text/x0 联动一致",
+          list(zip(df_e.text.values(), df_e.x0.values())), sorted_pairs)
+
+    # 字典序前缀规则: 短串为前缀时排前面 (与 Python str 一致)
+    df_p = NDframe()
+    for i, s in enumerate(["ab", "a", "abc", "你好", "hello", "hello!"]):
+        df_p.append(i, 0, 0, 1, 1, 1, 1, 1, 0, s, "")
+    df_p.sort_by_text()
+    check("UCS2 字典序 + 前缀规则", df_p.text.values(), sorted(["ab", "a", "abc", "你好", "hello", "hello!"]))
+
+    # 稳定性: 相同文本保持原始相对顺序 (升序与降序均稳定)
+    df_s = NDframe()
+    for i, s in enumerate(["b", "a", "b", "a", "a"]):
+        df_s.append(i, 0, 0, 1, 1, 1, 1, 1, 0, s, "")
+    df_s.sort_by_text()
+    check("text sort 稳定性 asc", df_s.text.values(), ["a", "a", "a", "b", "b"])
+    check("text sort 稳定性 asc 索引", df_s.idx.values(), [1, 3, 4, 0, 2])
+    df_s.sort_by_text(descending=True)
+    check("text sort 稳定性 desc", df_s.text.values(), ["b", "b", "a", "a", "a"])
+    check("text sort 稳定性 desc 索引", df_s.idx.values(), [0, 2, 1, 3, 4])
+
+    # text_sep 字典序
+    df_t = NDframe()
+    for i, s in enumerate(["sep_b", "sep_a", "sep_c", "sep_b"]):
+        df_t.append(i, 0, 0, 1, 1, 1, 1, 1, 0, "x", s)
+    df_t.sort_by_text_sep()
+    check("sort_by_text_sep asc", df_t.text_sep.values(), ["sep_a", "sep_b", "sep_b", "sep_c"])
+    check("sort_by_text_sep 稳定性", df_t.idx.values(), [1, 0, 3, 2])
+
+    # 无效字段名必须抛 ValueError (回归: _str_to_field_id except? -1 曾导致 SIGSEGV)
+    try:
+        df.sort_by("bogus")
+        check("sort_by('bogus') 抛 ValueError", True, False)
+    except ValueError:
+        check("sort_by('bogus') 抛 ValueError", True, True)
+    try:
+        df.apply_if_greater_add("bogus", "x0", 1, 1)
+        check("apply_if_greater_add('bogus') 抛 ValueError", True, False)
+    except ValueError:
+        check("apply_if_greater_add('bogus') 抛 ValueError", True, True)
+
+
+def test_ucs2_column_is():
+    section("6c. UCS2Column_SoA is_* 系列")
+    samples = ["abc", "ABC", "aBc", "123", "12a", "", "  ", "你好", "hello", "12.3", "1,2"]
+    col = UCS2Column_SoA()
+    for s in samples:
+        col.append(s)
+
+    check("isalnum", col.isalnum(), [t.isalnum() for t in samples])
+    check("isalpha", col.isalpha(), [t.isalpha() for t in samples])
+    check("isdigit", col.isdigit(), [t.isdigit() for t in samples])
+    check("isspace", col.isspace(), [t.isspace() for t in samples])
+    # islower/isupper 为逐字符判定: 未区分大小写的字符(数字)视为不满足 (与 Python 的 "12a".islower()=True 不同)
+    check("islower", col.islower(), [True, False, False, False, False, False, False, False, True, False, False])
+    check("isupper", col.isupper(), [False, True, False, False, False, False, False, False, False, False, False])
+    check("isnumeric", col.isnumeric(), [t.isnumeric() for t in samples])
+    check("isdecimal", col.isdecimal(), [t.isdecimal() for t in samples])
+
+    # 罗马数字 Ⅻ (Nl 类别): isnumeric=True / isdecimal=False
+    col_n = UCS2Column_SoA()
+    for s in ["12", "Ⅻ", "1.5"]:
+        col_n.append(s)
+    check("isnumeric 含罗马数字", col_n.isnumeric(), [True, True, False])
+    check("isdecimal 罗马数字为 False", col_n.isdecimal(), [True, False, False])
+    check("isdigit 罗马数字为 False", col_n.isdigit(), [True, False, False])
+
+    # istitle 与 C 层谓词一致: 逐字符 ISTITLE(Lt 类别) 或 ISLOWER (语义同 _df_str_is)
+    # 'A' 是 Lu 大写字母非 Lt，故 "Abc" 为 False
+    col2 = UCS2Column_SoA()
+    for s in ["Abc", "abc", "ABC"]:
+        col2.append(s)
+    check("istitle 逐字符 C 谓词语义", col2.istitle(), [False, True, False])
+
+    # 中文字符集判定
+    col3 = UCS2Column_SoA()
+    for s in ["你好世界", "hello你好", "价格", "12.3", "1,2", "abc", ""]:
+        col3.append(s)
+    check("is_chinese", col3.is_chinese(), [True, False, True, False, False, False, False])
+    check("is_numeric_punct", col3.is_numeric_punct(), [False, False, False, True, True, False, False])
+
+    # 与 StringAccessor 层结果一致 (同一谓词表)
+    df = NDframe()
+    for i, s in enumerate(["abc", "123", "你好", "12.3", ""]):
+        df.append(i, 0, 0, 1, 1, 1, 1, 1, 0, s, "")
+    check("is_* 与 _df_str_is 一致 isalpha",
+          df.text.isalpha().text.values(), ["abc", "你好"])
+    check("is_* 与 _df_str_is 一致 isdigit",
+          df.text.isdigit().text.values(), ["123"])
+    check("is_* 与 _df_str_is 一致 is_chinese",
+          df.text.is_chinese().text.values(), ["你好"])
+    check("is_* 与 _df_str_is 一致 is_numeric_punct",
+          df.text.is_numeric_punct().text.values(), ["123", "12.3"])
 
 
 def test_numeric_idx(df: NDframe, rows: List[ParsedRow]):
@@ -1448,6 +1568,8 @@ def main():
     test_numeric_filter(df, rows)
     test_numeric_arithmetic(df, rows)
     test_numeric_sort(df, rows)
+    test_text_sort(df, rows)
+    test_ucs2_column_is()
     test_numeric_idx(df, rows)
     test_string_basic(df, rows)
     test_string_transform(df, rows)

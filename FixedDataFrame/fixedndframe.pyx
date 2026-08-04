@@ -89,6 +89,8 @@ cdef enum StrCheckMode:
     CHK_ISTITLE = 6
     CHK_ISNUMERIC = 7
     CHK_ISDECIMAL = 8
+    CHK_ISCHINESE = 9
+    CHK_IS_NUMERIC_PUNCT = 10
 
 cdef enum StrTransformMode:
     TRM_STRIP = 0
@@ -600,19 +602,76 @@ cdef class UCS2Column_SoA:
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
-    def isdigit(self):
+    cdef list _is_mode(self, int mode):
+        """按谓词表逐字符判定每一行是否全部命中，返回 bool 列表"""
         cdef list res = PyList_New(self.length)
         cdef Py_ssize_t i, j, start, end
         cdef bint match
+        cdef bint (*pred)(Py_UCS2) noexcept
+        if mode == CHK_ISALNUM: pred = _pred_isalnum
+        elif mode == CHK_ISALPHA: pred = _pred_isalpha
+        elif mode == CHK_ISDIGIT: pred = _pred_isdigit
+        elif mode == CHK_ISSPACE: pred = _pred_isspace
+        elif mode == CHK_ISLOWER: pred = _pred_islower
+        elif mode == CHK_ISUPPER: pred = _pred_isupper
+        elif mode == CHK_ISTITLE: pred = _pred_istitle
+        elif mode == CHK_ISNUMERIC: pred = _pred_isnumeric
+        elif mode == CHK_ISDECIMAL: pred = _pred_isdecimal
+        elif mode == CHK_ISCHINESE: pred = _pred_is_chinese
+        else: pred = _pred_is_numeric_punct
         for i in range(self.length):
             start = self.offsets_c[i]; end = self.offsets_c[i+1]
             if start == end: match = False
             else:
                 match = True
                 for j in range(start, end):
-                    if not Py_UNICODE_ISDIGIT(self.chars_c[j]): match = False; break
+                    if not pred(self.chars_c[j]): match = False; break
             PyList_SetItem(res, i, match)
         return res
+
+    def isalnum(self):
+        """每行是否全为字母/数字 (逐字符 Py_UNICODE_ISALNUM)"""
+        return self._is_mode(CHK_ISALNUM)
+
+    def isalpha(self):
+        """每行是否全为字母"""
+        return self._is_mode(CHK_ISALPHA)
+
+    def isdigit(self):
+        """每行是否全为数字"""
+        return self._is_mode(CHK_ISDIGIT)
+
+    def isspace(self):
+        """每行是否全为空白"""
+        return self._is_mode(CHK_ISSPACE)
+
+    def islower(self):
+        """每行是否全为小写字母"""
+        return self._is_mode(CHK_ISLOWER)
+
+    def isupper(self):
+        """每行是否全为大写字母"""
+        return self._is_mode(CHK_ISUPPER)
+
+    def istitle(self):
+        """每行是否全为标题化/小写字符 (与 _df_str_is 语义一致)"""
+        return self._is_mode(CHK_ISTITLE)
+
+    def isnumeric(self):
+        """每行是否全为数字字符 (含上下标/罗马数字等)"""
+        return self._is_mode(CHK_ISNUMERIC)
+
+    def isdecimal(self):
+        """每行是否全为十进制数字"""
+        return self._is_mode(CHK_ISDECIMAL)
+
+    def is_chinese(self):
+        """每行是否全为中文字符 (基本/扩展A/扩展B/兼容汉字区)"""
+        return self._is_mode(CHK_ISCHINESE)
+
+    def is_numeric_punct(self):
+        """每行是否全为数字或 [.,] 标点"""
+        return self._is_mode(CHK_IS_NUMERIC_PUNCT)
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
@@ -1201,6 +1260,52 @@ cdef str _truncate_str(str s, int max_chars=90, int head=79, int tail=8):
     if len(s) <= max_chars:
         return s
     return s[:head] + "..." + s[-tail:]
+
+
+# ==========================================
+# UCS2 字典序比较 + 归并排序 (供 text/text_sep 就地排序使用)
+# ==========================================
+cdef inline int _ucs2_cmp(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t a, Py_ssize_t b) noexcept:
+    """比较第 a 行与第 b 行的字符串：-1/0/1。短串在相同时为前缀时排前面 (同 Python str 比较)"""
+    cdef Py_ssize_t a_start = offsets[a]
+    cdef Py_ssize_t b_start = offsets[b]
+    cdef Py_ssize_t a_len = offsets[a + 1] - a_start
+    cdef Py_ssize_t b_len = offsets[b + 1] - b_start
+    cdef Py_ssize_t min_len = a_len if a_len < b_len else b_len
+    cdef Py_ssize_t k
+    for k in range(min_len):
+        if chars[a_start + k] < chars[b_start + k]: return -1
+        if chars[a_start + k] > chars[b_start + k]: return 1
+    if a_len < b_len: return -1
+    if a_len > b_len: return 1
+    return 0
+
+cdef void _mergesort_str(Py_ssize_t* order, Py_ssize_t* tmp, Py_ssize_t lo, Py_ssize_t hi,
+                         Py_UCS2* chars, Py_ssize_t* offsets, bint descending) noexcept:
+    """迭代归并排序 [lo, hi)：对 order 数组按 (chars, offsets) 指向的字符串排序。
+    等值字符串保持原始相对顺序 (稳定)，降序仅翻转比较方向。"""
+    if hi - lo < 2:
+        return
+    cdef Py_ssize_t mid = (lo + hi) // 2
+    _mergesort_str(order, tmp, lo, mid, chars, offsets, descending)
+    _mergesort_str(order, tmp, mid, hi, chars, offsets, descending)
+
+    cdef Py_ssize_t i = lo, j = mid, k = lo
+    cdef int c
+    while i < mid and j < hi:
+        c = _ucs2_cmp(chars, offsets, order[i], order[j])
+        if descending: c = -c
+        if c <= 0:
+            tmp[k] = order[i]; i += 1
+        else:
+            tmp[k] = order[j]; j += 1
+        k += 1
+    while i < mid:
+        tmp[k] = order[i]; i += 1; k += 1
+    while j < hi:
+        tmp[k] = order[j]; j += 1; k += 1
+    for k in range(lo, hi):
+        order[k] = tmp[k]
 
 
 # ==========================================
@@ -2656,8 +2761,15 @@ cdef class NDframe:
     # ========================================================
     cdef void _sort_col(self, int field_id, bint descending) except *:
         cdef Py_ssize_t n = self.length
-        if n < 2 or field_id < FIELD_idx or field_id > FIELD_flags:
+        if n < 2:
             return
+
+        if field_id == FIELD_txt or field_id == FIELD_sep:
+            self._sort_col_str(field_id, descending)
+            return
+
+        if field_id < FIELD_idx or field_id > FIELD_flags:
+            raise ValueError(f"Unsupported sort field id: {field_id}")
 
         cdef Py_ssize_t i
         cdef RowC* rows = self.rows_c
@@ -2668,6 +2780,36 @@ cdef class NDframe:
 
         pairs.sort(reverse=descending)
         cdef list indices = [idx for _, idx in pairs]
+
+        self._reorder_rows(indices)
+
+    cdef void _sort_col_str(self, int field_id, bint descending) except *:
+        """按 UCS2 码元字典序就地排序 text / text_sep 字段 (迭代归并排序，0 Python 对象比较)"""
+        cdef Py_ssize_t n = self.length
+        cdef UCS2Column_SoA col = self.text_col if field_id == FIELD_txt else self.text_sep_col
+
+        cdef Py_ssize_t* order = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* tmp = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        cdef list indices
+        if not order or not tmp:
+            if order: free(order)
+            if tmp: free(tmp)
+            raise MemoryError()
+
+        try:
+            for i in range(n):
+                order[i] = i
+            _mergesort_str(order, tmp, 0, n, col.chars_c, col.offsets_c, descending)
+            indices = [<Py_ssize_t>order[i] for i in range(n)]
+            self._reorder_rows(indices)
+        finally:
+            free(order)
+            free(tmp)
+
+    cdef void _reorder_rows(self, list indices) except *:
+        """按索引列表就地重排行数组与 text/text_sep 两列，返回后行序与 indices 完全一致"""
+        cdef Py_ssize_t n = self.length
+        cdef RowC* rows = self.rows_c
 
         cdef RowC* temp_rows = <RowC*>malloc(<size_t>n * sizeof(RowC))
         if not temp_rows:
@@ -3369,7 +3511,18 @@ cdef class NDframe:
         self._sort_col(FIELD_flags, descending)
         return self
 
-    cdef int _str_to_field_id(self, str field) except -1:
+    def sort_by_text(self, bint descending=False):
+        """按 text 字段 UCS2 码元字典序就地排序（稳定），返回原 df。
+        示例: df.sort_by_text().text.values()"""
+        self._sort_col(FIELD_txt, descending)
+        return self
+
+    def sort_by_text_sep(self, bint descending=False):
+        """按 text_sep 字段 UCS2 码元字典序就地排序（稳定），返回原 df"""
+        self._sort_col(FIELD_sep, descending)
+        return self
+
+    cdef int _str_to_field_id(self, str field) except? -1:
         fname = field.lower()
         if fname == "x0": return FIELD_x0
         if fname == "y0": return FIELD_y0

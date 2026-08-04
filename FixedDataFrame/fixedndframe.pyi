@@ -196,8 +196,14 @@ class NDframe:
     def sort_by_idx(self, descending: bool = False) -> "NDframe": ...
     def sort_by_page(self, descending: bool = False) -> "NDframe": ...
     def sort_by_flags(self, descending: bool = False) -> "NDframe": ...
+    def sort_by_text(self, descending: bool = False) -> "NDframe":
+        """按 text 字段 UCS2 码元字典序就地排序（稳定）。
+        示例: df.sort_by_text().text.values()"""
+    def sort_by_text_sep(self, descending: bool = False) -> "NDframe":
+        """按 text_sep 字段 UCS2 码元字典序就地排序（稳定）"""
     def sort_by(self, field: str = "x0", descending: bool = False) -> "NDframe":
-        """按字段名字符串就地排序。示例: df.sort_by('height', True)"""
+        """按字段名字符串就地排序（支持 text/text_sep 字典序）。
+        示例: df.sort_by('height', True)"""
 
     # ----- 就地整列运算 -----
     def reset_index(self) -> "NDframe":
@@ -488,4 +494,25 @@ class UCS2Column_SoA:
     def lower(self) -> "UCS2Column_SoA": ...
     def upper(self) -> "UCS2Column_SoA": ...
     def unique(self) -> List[str]: ...
-    def isdigit(self) -> List[bool]: ...
+    def isalnum(self) -> List[bool]:
+        """每行是否全为字母/数字"""
+    def isalpha(self) -> List[bool]:
+        """每行是否全为字母"""
+    def isdigit(self) -> List[bool]:
+        """每行是否全为数字"""
+    def isspace(self) -> List[bool]:
+        """每行是否全为空白"""
+    def islower(self) -> List[bool]:
+        """每行是否全为小写字母"""
+    def isupper(self) -> List[bool]:
+        """每行是否全为大写字母"""
+    def istitle(self) -> List[bool]:
+        """每行是否全为标题化/小写字符 (与 _df_str_is 语义一致)"""
+    def isnumeric(self) -> List[bool]:
+        """每行是否全为数字字符"""
+    def isdecimal(self) -> List[bool]:
+        """每行是否全为十进制数字"""
+    def is_chinese(self) -> List[bool]:
+        """每行是否全为中文字符"""
+    def is_numeric_punct(self) -> List[bool]:
+        """每行是否全为数字或 [.,] 标点"""
