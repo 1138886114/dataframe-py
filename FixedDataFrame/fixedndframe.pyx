@@ -5,27 +5,12 @@
 # cython: cdivision=True
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove, memset, memcmp
-from libc.string cimport strstr, strlen, strncmp, strncat, strncpy
-
-from libc.stdio cimport printf
 from libc.math cimport sqrt
-import unicodedata
 import cython
-from cpython.unicode cimport PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR
 from cpython.long cimport PyLong_FromSsize_t
-from cpython.list cimport PyList_Append, PyList_GetItem, PyList_GET_ITEM, PyList_Size, PyList_New, PyList_SetItem, PyList_GET_SIZE
+from cpython.list cimport PyList_New, PyList_SetItem
 import inspect
 import re
-
-cdef extern from "<ctype.h>" nogil:
-    int tolower(int)
-    int toupper(int)
-    int isdigit(int)
-    int isspace(int)
-    int isalpha(int)
-    int isalnum(int)
-    int islower(int)
-    int isupper(int)
 
 
 cdef extern from "Python.h":
@@ -42,10 +27,9 @@ cdef extern from "Python.h":
     Py_UCS4 Py_UNICODE_TOUPPER(Py_UCS4 ch)
 
 from cpython.unicode cimport (
-    PyUnicode_4BYTE_KIND, PyUnicode_FromKindAndData,
-    PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR, PyUnicode_AsUCS4,
-    PyUnicode_KIND, PyUnicode_2BYTE_KIND, PyUnicode_DATA,
-    Py_UCS2
+    PyUnicode_FromKindAndData, PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR,
+    PyUnicode_KIND, PyUnicode_1BYTE_KIND, PyUnicode_2BYTE_KIND,
+    PyUnicode_DATA, Py_UCS2
 )
 
 # ============================================
@@ -220,10 +204,6 @@ cdef inline bint _int_cmp_pass(Py_ssize_t val, int op, Py_ssize_t arg1, Py_ssize
     return False
 
 
-cdef inline bint _is_strip_default_char(Py_UCS2 c) noexcept:
-    return c == 32 or c == 9 or c == 10 or c == 13
-
-
 cdef inline bint _is_in_chars(Py_UCS2 c, Py_UCS2* chars_buf, Py_ssize_t chars_len) noexcept:
     cdef Py_ssize_t k
     for k in range(chars_len):
@@ -361,18 +341,6 @@ cdef class UCS2Column_SoA:
         self.length += 1
         self.offsets_c[self.length] = self.char_length
 
-    cdef inline void _fallback_copy_chars(self, str val, Py_ssize_t str_len):
-        """处理非 UCS2 编码字符串的后备方法"""
-        cdef Py_ssize_t i
-        cdef Py_UCS4 char_code
-        for i in range(str_len):
-            char_code = PyUnicode_READ_CHAR(val, i)
-            if char_code > 0xFFFF:
-                self.chars_c[self.char_length + i] = 0x003F # '?'
-            else:
-                self.chars_c[self.char_length + i] = <Py_UCS2>char_code
-
-
     @cython.always_allow_keywords(False)
     def copy(self):
         cdef UCS2Column_SoA new_col = UCS2Column_SoA(self.capacity)
@@ -497,7 +465,6 @@ cdef class UCS2Column_SoA:
         cdef bint match
 
         cdef Py_UCS2* p_buf = _str_to_ucs2_buf(prefix, &p_len)
-        if not p_buf: raise MemoryError()
 
         for i in range(self.length):
             start = self.offsets_c[i]
@@ -516,16 +483,10 @@ cdef class UCS2Column_SoA:
     @cython.wraparound(False)
     def endswith(self, str suffix):
         cdef list res = PyList_New(self.length)
-        cdef Py_ssize_t s_len = PyUnicode_GET_LENGTH(suffix) if suffix is not None else 0
+        cdef Py_ssize_t s_len = 0
+        cdef Py_UCS2* s_buf = _str_to_ucs2_buf(suffix, &s_len)
         cdef Py_ssize_t i, j, end, str_len
         cdef bint match
-
-        cdef Py_UCS2* s_buf = <Py_UCS2*>malloc((s_len + 1) * sizeof(Py_UCS2))
-        if not s_buf: raise MemoryError()
-        cdef Py_UCS4 cp
-        for i in range(s_len):
-            cp = PyUnicode_READ_CHAR(suffix, i)
-            s_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         for i in range(self.length):
             end = self.offsets_c[i+1]
@@ -545,11 +506,10 @@ cdef class UCS2Column_SoA:
     def contains(self, str substring):
         cdef list res = PyList_New(self.length)
         cdef Py_ssize_t sub_len = 0
-        cdef Py_ssize_t i, start, end, str_len
-        cdef bint match, found
+        cdef Py_ssize_t i, start, end
+        cdef bint found
 
         cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(substring, &sub_len)
-        if sub_buf is NULL: raise MemoryError()
 
         for i in range(self.length):
             start = self.offsets_c[i]
@@ -563,28 +523,17 @@ cdef class UCS2Column_SoA:
     @cython.wraparound(False)
     def replace(self, str old, str new):
         """返回全新列，在底层处理定长/变长内存重分配"""
-        cdef Py_ssize_t old_len = PyUnicode_GET_LENGTH(old) if old is not None else 0
-        cdef Py_ssize_t new_len = PyUnicode_GET_LENGTH(new) if new is not None else 0
+        cdef Py_ssize_t old_len = 0
+        cdef Py_ssize_t new_len = 0
+        cdef Py_UCS2* old_buf = _str_to_ucs2_buf(old, &old_len)
 
         # 空 old 视为无操作：直接返回副本，不做任何替换
         if old_len == 0:
+            free(old_buf)
             return self.copy()
 
-        cdef Py_UCS2* old_buf = <Py_UCS2*>malloc((old_len + 1) * sizeof(Py_UCS2))
-        cdef Py_UCS2* new_buf = <Py_UCS2*>malloc((new_len + 1) * sizeof(Py_UCS2))
-        if not old_buf or not new_buf:
-            if old_buf: free(old_buf)
-            if new_buf: free(new_buf)
-            raise MemoryError()
-
+        cdef Py_UCS2* new_buf = _str_to_ucs2_buf(new, &new_len)
         cdef Py_ssize_t i, j, k
-        cdef Py_UCS4 cp
-        for i in range(old_len):
-            cp = PyUnicode_READ_CHAR(old, i)
-            old_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
-        for i in range(new_len):
-            cp = PyUnicode_READ_CHAR(new, i)
-            new_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
         cdef Py_ssize_t start, end, str_len
@@ -1218,81 +1167,6 @@ cdef inline bint _pred_is_chinese(Py_UCS2 c) noexcept: return _is_chinese_char(c
 cdef inline bint _pred_is_numeric_punct(Py_UCS2 c) noexcept: return _is_numeric_punct_char(c)
 
 
-cdef str _extract_chinese_chunks(str s):
-    if s is None: return ""
-    cdef Py_ssize_t i, n = PyUnicode_GET_LENGTH(s)
-    cdef Py_ssize_t start = -1
-    cdef Py_UCS4 cp
-    cdef list chunks = []
-
-    for i in range(n):
-        cp = PyUnicode_READ_CHAR(s, i)
-        if _is_chinese_char(cp):
-            if start == -1:
-                start = i
-        else:
-            if start != -1:
-                chunks.append(s[start:i])
-                start = -1
-
-    if start != -1:
-        chunks.append(s[start:n])
-
-    cdef Py_ssize_t num_chunks = len(chunks)
-    if num_chunks == 0:
-        return ""
-    if num_chunks == 1 and PyUnicode_GET_LENGTH(chunks[0]) == n:
-        return s
-    return "".join(chunks)
-
-cdef str _extract_numeric_punct_chunks(str s):
-    if s is None: return ""
-    cdef Py_ssize_t i, n = PyUnicode_GET_LENGTH(s)
-    cdef Py_ssize_t start = -1
-    cdef Py_UCS4 cp
-    cdef list chunks = []
-
-    for i in range(n):
-        cp = PyUnicode_READ_CHAR(s, i)
-        if _is_numeric_punct_char(cp):
-            if start == -1:
-                start = i
-        else:
-            if start != -1:
-                chunks.append(s[start:i])
-                start = -1
-
-    if start != -1:
-        chunks.append(s[start:n])
-
-    cdef Py_ssize_t num_chunks = len(chunks)
-    if num_chunks == 0:
-        return ""
-    if num_chunks == 1 and PyUnicode_GET_LENGTH(chunks[0]) == n:
-        return s
-    return "".join(chunks)
-
-
-cdef bint _is_all_chinese(str s):
-    if not s: return False
-    cdef Py_ssize_t i, n = PyUnicode_GET_LENGTH(s)
-    cdef Py_UCS4 cp
-    for i in range(n):
-        cp = PyUnicode_READ_CHAR(s, i)
-        if not _is_chinese_char(cp):
-            return False
-    return True
-
-cdef bint _is_all_numeric_punct(str s):
-    if not s: return False
-    cdef Py_ssize_t i, n = PyUnicode_GET_LENGTH(s)
-    cdef Py_UCS4 cp
-    for i in range(n):
-        cp = PyUnicode_READ_CHAR(s, i)
-        if not _is_numeric_punct_char(cp):
-            return False
-    return True
-
 cdef int _get_visual_width(str s):
     if not s:
         return 0
@@ -1901,20 +1775,15 @@ cdef class NDframe:
             return 0
 
         cdef Py_ssize_t i, j, k
-        cdef Py_UCS4 cp
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
-        cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(sub) if sub is not None else 0
+        cdef Py_ssize_t sub_len = 0
+        cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(sub, &sub_len)
         if sub_len == 0:
+            free(sub_buf)
             for i in range(n):
                 total += (src.offsets_c[i + 1] - src.offsets_c[i]) + 1
             return total
-
-        cdef Py_UCS2* sub_buf = <Py_UCS2*>malloc((sub_len + 1) * sizeof(Py_UCS2))
-        if not sub_buf: raise MemoryError()
-        for i in range(sub_len):
-            cp = PyUnicode_READ_CHAR(sub, i)
-            sub_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         cdef Py_ssize_t start, end, str_len
         cdef bint match
@@ -1953,7 +1822,6 @@ cdef class NDframe:
         cdef Py_ssize_t start, end
         cdef Py_ssize_t read_start, read_end
         cdef Py_ssize_t write_idx = 0
-        cdef Py_UCS4 cp
         cdef Py_UCS2 c
         cdef bint has_chars
         cdef Py_ssize_t strip_len
@@ -1964,15 +1832,12 @@ cdef class NDframe:
             if chars is not None and PyUnicode_GET_LENGTH(chars) == 0:
                 return self
             has_chars = chars is not None
-            strip_len = PyUnicode_GET_LENGTH(chars) if has_chars else 4
-            strip_buf = default_strip
             if has_chars:
-                strip_buf = <Py_UCS2*>malloc((strip_len + 1) * sizeof(Py_UCS2))
-                if not strip_buf: raise MemoryError()
-                for i in range(strip_len):
-                    cp = PyUnicode_READ_CHAR(chars, i)
-                    strip_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+                strip_len = 0
+                strip_buf = _str_to_ucs2_buf(chars, &strip_len)
             else:
+                strip_len = 4
+                strip_buf = default_strip
                 default_strip[0] = 32
                 default_strip[1] = 9
                 default_strip[2] = 10
@@ -2031,16 +1896,13 @@ cdef class NDframe:
         cdef NDframe new_df = NDframe(n if n > 0 else 1)
         if n == 0: return new_df
 
-        cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(sub) if sub is not None else 0
-        if sub_len == 0: return self.copy()
+        cdef Py_ssize_t sub_len = 0
+        cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(sub, &sub_len)
+        if sub_len == 0:
+            free(sub_buf)
+            return self.copy()
 
-        cdef Py_UCS2* sub_buf = <Py_UCS2*>malloc((sub_len + 1) * sizeof(Py_UCS2))
-        if not sub_buf: raise MemoryError()
         cdef Py_ssize_t i, j
-        cdef Py_UCS4 cp
-        for i in range(sub_len):
-            cp = PyUnicode_READ_CHAR(sub, i)
-            sub_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
         cdef Py_ssize_t str_start, str_end, str_len, cmp_start
@@ -2233,19 +2095,15 @@ cdef class NDframe:
         if src.char_length == 0:
             return ""
 
-        cdef Py_ssize_t sep_len = PyUnicode_GET_LENGTH(separator) if separator else 0
+        cdef Py_ssize_t sep_len = 0
+        cdef Py_UCS2* sep_buf = _str_to_ucs2_buf(separator, &sep_len)
 
         if sep_len == 0:
+            free(sep_buf)
             return PyUnicode_FromKindAndData(2, src.chars_c, src.char_length)
 
         cdef Py_ssize_t total_len = src.char_length + (n - 1) * sep_len
-        cdef Py_UCS2* sep_buf = <Py_UCS2*>malloc((sep_len + 1) * sizeof(Py_UCS2))
-        if not sep_buf: raise MemoryError()
         cdef Py_ssize_t i
-        cdef Py_UCS4 cp
-        for i in range(sep_len):
-            cp = PyUnicode_READ_CHAR(separator, i)
-            sep_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         cdef Py_UCS2* out_buf = <Py_UCS2*>malloc((total_len + 1) * sizeof(Py_UCS2))
         if not out_buf:
@@ -2295,38 +2153,15 @@ cdef class NDframe:
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
 
-        cdef Py_ssize_t o0_len = PyUnicode_GET_LENGTH(old0)
-        cdef Py_ssize_t n0_len = PyUnicode_GET_LENGTH(new0) if new0 is not None else 0
-        cdef Py_ssize_t o1_len = PyUnicode_GET_LENGTH(old1)
-        cdef Py_ssize_t n1_len = PyUnicode_GET_LENGTH(new1) if new1 is not None else 0
-
-        cdef Py_UCS2* o0_buf = <Py_UCS2*>malloc((o0_len + 1) * sizeof(Py_UCS2)) if o0_len > 0 else NULL
-        cdef Py_UCS2* n0_buf = <Py_UCS2*>malloc((n0_len + 1) * sizeof(Py_UCS2)) if n0_len > 0 else NULL
-        cdef Py_UCS2* o1_buf = <Py_UCS2*>malloc((o1_len + 1) * sizeof(Py_UCS2)) if o1_len > 0 else NULL
-        cdef Py_UCS2* n1_buf = <Py_UCS2*>malloc((n1_len + 1) * sizeof(Py_UCS2)) if n1_len > 0 else NULL
-
-        if (o0_len > 0 and not o0_buf) or (n0_len > 0 and not n0_buf) or \
-           (o1_len > 0 and not o1_buf) or (n1_len > 0 and not n1_buf):
-            if o0_buf: free(o0_buf)
-            if n0_buf: free(n0_buf)
-            if o1_buf: free(o1_buf)
-            if n1_buf: free(n1_buf)
-            raise MemoryError()
-
+        cdef Py_ssize_t o0_len = 0
+        cdef Py_ssize_t n0_len = 0
+        cdef Py_ssize_t o1_len = 0
+        cdef Py_ssize_t n1_len = 0
+        cdef Py_UCS2* o0_buf = _str_to_ucs2_buf(old0, &o0_len)
+        cdef Py_UCS2* n0_buf = _str_to_ucs2_buf(new0, &n0_len)
+        cdef Py_UCS2* o1_buf = _str_to_ucs2_buf(old1, &o1_len)
+        cdef Py_UCS2* n1_buf = _str_to_ucs2_buf(new1, &n1_len)
         cdef Py_ssize_t i, j, k
-        cdef Py_UCS4 cp
-        for i in range(o0_len):
-            cp = PyUnicode_READ_CHAR(old0, i)
-            o0_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
-        for i in range(n0_len):
-            cp = PyUnicode_READ_CHAR(new0, i)
-            n0_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
-        for i in range(o1_len):
-            cp = PyUnicode_READ_CHAR(old1, i)
-            o1_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
-        for i in range(n1_len):
-            cp = PyUnicode_READ_CHAR(new1, i)
-            n1_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
         cdef Py_ssize_t start, end
@@ -2377,10 +2212,10 @@ cdef class NDframe:
 
         res_col.offsets_c[res_col.length] = res_col.char_length
 
-        if o0_buf: free(o0_buf)
-        if n0_buf: free(n0_buf)
-        if o1_buf: free(o1_buf)
-        if n1_buf: free(n1_buf)
+        free(o0_buf)
+        free(n0_buf)
+        free(o1_buf)
+        free(n1_buf)
 
         if field == FIELD_txt:
             self.text_col = res_col
@@ -2878,10 +2713,6 @@ cdef class NDframe:
         cdef RowC* rows = self.rows_c
         for i in range(n):
             _add_field_value(&rows[i], field, value)
-
-
-    cdef void _add_col_at(self, int field, Py_ssize_t i, int value) except *:
-        _add_field_value(&self.rows_c[i], field, value)
 
 
     cdef void _sub_col(self, int field, int value) except *:
