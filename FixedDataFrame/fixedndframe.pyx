@@ -140,20 +140,47 @@ cdef inline object _ensure_regex(object pattern):
 
 # ============================================
 # 模块级极速匹配 / 比较 / 拷贝帮助函数
+# 入口净化（Invariant）：只要保证 UCS2Column_SoA 内部存储的数据 100% 已经是规范的 UCS2 数组。
 # ============================================
-cdef Py_UCS2* _str_to_ucs2_buf(str s, Py_ssize_t* out_len) except NULL:
-    """将 Python str 提取为 UCS2 连续缓冲（>0xFFFF 的字符按存储引擎约定降级为 '?'）"""
+cdef inline Py_UCS2* _str_to_ucs2_buf(str s, Py_ssize_t* out_len) except NULL:
+    """
+    利用 PEP 393 内存布局实现 C 级别极速转换：
+    1. 2-byte 格式 (中文/BMP)：直接 memcpy，CPU 指令级拷贝！
+    2. 1-byte 格式 (ASCII/Latin1)：纯 uint8 -> uint16 指针拓宽，0 宏开销！
+    3. 4-byte 格式 (Emoji/生僻字)：降级清洗为 '?'
+    """
     cdef Py_ssize_t n = PyUnicode_GET_LENGTH(s) if s is not None else 0
-    cdef Py_ssize_t i
-    cdef Py_UCS4 cp
+    out_len[0] = n
+
     cdef Py_UCS2* buf = <Py_UCS2*>malloc((n + 1) * sizeof(Py_UCS2))
     if buf == NULL:
         raise MemoryError()
-    for i in range(n):
-        cp = PyUnicode_READ_CHAR(s, i)
-        buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+
+    if n == 0:
+        buf[0] = 0
+        return buf
+
+    cdef int kind = PyUnicode_KIND(s)
+    cdef void* data = PyUnicode_DATA(s)
+    cdef Py_ssize_t i
+    cdef Py_UCS4 cp
+
+    # 【分支 1】：最常见的 2-byte 格式 (中文字符串) -> 内存直接 memcpy！
+    if kind == PyUnicode_2BYTE_KIND:
+        memcpy(buf, data, n * sizeof(Py_UCS2))
+
+    # 【分支 2】：1-byte 格式 (纯英文/数字) -> 无函数调用的指针快速拓宽
+    elif kind == PyUnicode_1BYTE_KIND:
+        for i in range(n):
+            buf[i] = <Py_UCS2>(<unsigned char*>data)[i]
+
+    # 【分支 3】：4-byte 格式 (含有 Emoji/生僻字) -> 降级替换
+    else:
+        for i in range(n):
+            cp = PyUnicode_READ_CHAR(s, i)
+            buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+
     buf[n] = 0
-    out_len[0] = n
     return buf
 
 
@@ -299,25 +326,37 @@ cdef class UCS2Column_SoA:
 
     @cython.always_allow_keywords(False)
     def append(self, str val):
-        """支持任意长度的字符串追加，永不截断"""
+        """支持任意长度的字符串追加，入口处完成 UCS2 规范化"""
         cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val) if val is not None else 0
 
-        # 1. 检查并扩容行数
         if self.length >= self.capacity:
             self._reserve_rows(self.capacity * 2)
 
-        # 2. 检查并扩容字符池
         if self.char_length + str_len > self.char_capacity:
             self._reserve_chars(max(self.char_capacity * 2, self.char_length + str_len + 1024))
 
-        # 3. 极速填入字符
-        if str_len > 0 and val is not None:
-            if PyUnicode_KIND(val) == PyUnicode_2BYTE_KIND:
-                memcpy(self.chars_c + self.char_length, PyUnicode_DATA(val), str_len * sizeof(Py_UCS2))
-            else:
-                self._fallback_copy_chars(val, str_len)
+        cdef int kind
+        cdef void* data
+        cdef Py_ssize_t i
+        cdef Py_UCS4 cp
 
-        # 4. 更新状态
+        if str_len > 0 and val is not None:
+            kind = PyUnicode_KIND(val)
+            data = PyUnicode_DATA(val)
+
+            if kind == PyUnicode_2BYTE_KIND:
+                # 中文字符串直接 CPU 寄存器级别 memcpy！
+                memcpy(self.chars_c + self.char_length, data, str_len * sizeof(Py_UCS2))
+            elif kind == PyUnicode_1BYTE_KIND:
+                # 英文/数字：极速指针拓宽
+                for i in range(str_len):
+                    self.chars_c[self.char_length + i] = <Py_UCS2>(<unsigned char*>data)[i]
+            else:
+                # 含有 Emoji 的 4 字节字符串：清洗降级为 '?'
+                for i in range(str_len):
+                    cp = PyUnicode_READ_CHAR(val, i)
+                    self.chars_c[self.char_length + i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+
         self.char_length += str_len
         self.length += 1
         self.offsets_c[self.length] = self.char_length
@@ -453,16 +492,12 @@ cdef class UCS2Column_SoA:
     @cython.wraparound(False)
     def startswith(self, str prefix):
         cdef list res = PyList_New(self.length)
-        cdef Py_ssize_t p_len = PyUnicode_GET_LENGTH(prefix) if prefix is not None else 0
+        cdef Py_ssize_t p_len = 0
         cdef Py_ssize_t i, j, start, str_len
         cdef bint match
 
-        cdef Py_UCS2* p_buf = <Py_UCS2*>malloc((p_len + 1) * sizeof(Py_UCS2))
+        cdef Py_UCS2* p_buf = _str_to_ucs2_buf(prefix, &p_len)
         if not p_buf: raise MemoryError()
-        cdef Py_UCS4 cp
-        for i in range(p_len):
-            cp = PyUnicode_READ_CHAR(prefix, i)
-            p_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         for i in range(self.length):
             start = self.offsets_c[i]
@@ -509,34 +544,18 @@ cdef class UCS2Column_SoA:
     @cython.wraparound(False)
     def contains(self, str substring):
         cdef list res = PyList_New(self.length)
-        cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(substring) if substring is not None else 0
-        cdef Py_ssize_t i, j, k, start, end, str_len
+        cdef Py_ssize_t sub_len = 0
+        cdef Py_ssize_t i, start, end, str_len
         cdef bint match, found
 
-        cdef Py_UCS2* sub_buf = <Py_UCS2*>malloc((sub_len + 1) * sizeof(Py_UCS2))
-        if not sub_buf: raise MemoryError()
-        cdef Py_UCS4 cp
-        for i in range(sub_len):
-            cp = PyUnicode_READ_CHAR(substring, i)
-            sub_buf[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+        cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(substring, &sub_len)
+        if sub_buf is NULL: raise MemoryError()
 
         for i in range(self.length):
             start = self.offsets_c[i]
             end = self.offsets_c[i+1]
-            str_len = end - start
-            found = False
-
-            if sub_len == 0: found = True
-            elif str_len >= sub_len:
-                for j in range(start, end - sub_len + 1):
-                    match = True
-                    for k in range(sub_len):
-                        if self.chars_c[j + k] != sub_buf[k]: match = False; break
-                    if match:
-                        found = True
-                        break
+            found = _substr_contains(self.chars_c, start, end, sub_buf, sub_len)
             PyList_SetItem(res, i, found)
-
         free(sub_buf)
         return res
 
