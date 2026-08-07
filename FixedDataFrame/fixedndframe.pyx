@@ -443,6 +443,25 @@ cdef class UCS2Column_SoA:
         return res
 
 
+cdef inline void _col_copy_row(UCS2Column_SoA dst, UCS2Column_SoA src, Py_ssize_t src_idx) except *:
+    """将 src 列的第 src_idx 行整串拷贝到 dst 列末尾（C 内存级，无 Python 字符串创建）"""
+    cdef Py_ssize_t start = src.offsets_c[src_idx]
+    cdef Py_ssize_t c_len = src.offsets_c[src_idx + 1] - start
+
+    if dst.length >= dst.capacity:
+        dst._reserve_rows(dst.capacity * 2)
+
+    if dst.char_length + c_len > dst.char_capacity:
+        dst._reserve_chars(dst.char_capacity * 2 + c_len + 1024)
+
+    if c_len > 0:
+        memcpy(dst.chars_c + dst.char_length, src.chars_c + start, c_len * sizeof(Py_UCS2))
+
+    dst.char_length += c_len
+    dst.length += 1
+    dst.offsets_c[dst.length] = dst.char_length
+
+
 # ==========================================
 # 2. 访问器 (Accessor) 定义
 # ==========================================
@@ -927,7 +946,7 @@ cdef class NumericAccessor:
         return self.df._idx_filter_by_int(self.field_id, value, 0, OP_EQUAL)
 
     def idx_between(self, int lo, int hi):
-        """返回该字段值在 [lo, hi) 之间的索引"""
+        """返回该字段值在 (lo, hi) 之间的索引"""
         return self.df._idx_filter_by_int(self.field_id, lo, hi, OP_BETWEEN)
 
 
@@ -1739,13 +1758,21 @@ cdef class NDframe:
         cdef NDframe new_df = NDframe(n if n > 0 else 1)
         if n == 0: return new_df
 
+        cdef Py_ssize_t i, j
         cdef Py_ssize_t sub_len = 0
         cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(sub, &sub_len)
+        cdef UCS2Column_SoA src0
+        cdef Py_ssize_t w_idx0
         if sub_len == 0:
+            # 空前缀/空后缀：非空行全部匹配，空行不匹配（与 contains('') 正则路径及测试语义一致）
             free(sub_buf)
-            return self.copy()
-
-        cdef Py_ssize_t i, j
+            src0 = self.text_col if field == FIELD_txt else self.text_sep_col
+            w_idx0 = 0
+            for i in range(n):
+                if src0.offsets_c[i + 1] > src0.offsets_c[i]:
+                    _df_copy_row(new_df, self, i, &w_idx0)
+            new_df.length = w_idx0
+            return new_df
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
         cdef Py_ssize_t str_start, str_end, str_len, cmp_start
@@ -1888,23 +1915,6 @@ cdef class NDframe:
             sum_val += _get_field_val(&rows[i], field)
         return sum_val / <double>n
 
-
-    cdef inline void _col_copy_row(UCS2Column_SoA dst, UCS2Column_SoA src, Py_ssize_t src_idx) except *:
-        cdef Py_ssize_t start = src.offsets_c[src_idx]
-        cdef Py_ssize_t c_len = src.offsets_c[src_idx + 1] - start
-
-        if dst.length >= dst.capacity:
-            dst._reserve_rows(dst.capacity * 2)
-
-        if dst.char_length + c_len > dst.char_capacity:
-            dst._reserve_chars(dst.char_capacity * 2 + c_len + 1024)
-
-        if c_len > 0:
-            memcpy(dst.chars_c + dst.char_length, src.chars_c + start, c_len * sizeof(Py_UCS2))
-
-        dst.char_length += c_len
-        dst.length += 1
-        dst.offsets_c[dst.length] = dst.char_length
 
     # ========================================================
     # 字符串拼接与替换
@@ -2871,9 +2881,17 @@ cdef class NDframe:
         cdef int min_x0, min_y0, max_x1, max_y1, max_height, new_height
         cdef RowC row
 
-        # 临时缓冲，避免在循环中不断去触碰 dst 的内存伸缩
+        # 临时缓冲，避免在循环中不断去触碰 dst 的内存伸缩。
+        # 大小取最坏情况上界：整列字符数 + 最多 (n-1) 个分隔符
+        # （每次合并的行文本都来自 src 列原文的并集，总长不超过该上界，text/sep 复用同一块缓冲故取最大值）
         cdef Py_ssize_t t_len, s_len, start, slen, part_idx
-        cdef Py_UCS2* tmp_buf = <Py_UCS2*>malloc(1024 * 10 * sizeof(Py_UCS2)) # 10K UCS2 缓冲
+        cdef Py_ssize_t tmp_cap = src_txt.char_length + (n - 1) * sep_len
+        cdef Py_ssize_t sep_cap = src_sep.char_length + (n - 1) * sep_len
+        if sep_cap > tmp_cap:
+            tmp_cap = sep_cap
+        if tmp_cap < 1024 * 10:
+            tmp_cap = 1024 * 10
+        cdef Py_UCS2* tmp_buf = <Py_UCS2*>malloc(tmp_cap * sizeof(Py_UCS2))
         if not tmp_buf:
             free(sep_buf)
             raise MemoryError()

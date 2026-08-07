@@ -588,11 +588,20 @@ def test_string_starts_ends(df: NDframe, rows: List[ParsedRow]):
     check("text.startswith('nonexist')", len(df.text.startswith("nonexist")), 0)
     check("text.endswith('.')", len(df.text.endswith(".")), sum(1 for t in texts if t.endswith(".")))
 
-    # 空前缀/空后缀：非空行全部匹配
+    # 空前缀/空后缀：非空行全部匹配（空串行不参与匹配，与 contains('') 等一致约定）
     non_empty = sum(1 for t in texts if t)
     check("text.startswith('')", len(df.text.startswith("")), non_empty)
     check("text.endswith('')", len(df.text.endswith("")), non_empty)
-    check("text_sep.startswith('')", len(df.text_sep.startswith("")), len(rows))
+    non_empty_sep = sum(1 for r in rows if r["text_sep"])
+    check("text_sep.startswith('')", len(df.text_sep.startswith("")), non_empty_sep)
+
+    # 回归：startswith/endswith('') 必须排除空文本行（曾因专走 copy() 误含空行）
+    df_empt = NDframe()
+    for i, s in enumerate(["a", "", "b"]):
+        df_empt.append(i, 0, 0, 1, 1, 1, 1, 1, 0, s, "")
+    check("空行排除 startswith('')", df_empt.text.startswith("").idx.values(), [0, 2])
+    check("空行排除 endswith('')", df_empt.text.endswith("").idx.values(), [0, 2])
+    check("空行排除 startswith('') len", len(df_empt.text.startswith("")), 2)
 
 
 def test_string_regex(df: NDframe, rows: List[ParsedRow]):
@@ -968,6 +977,17 @@ def test_merge_bbox(df: NDframe, rows: List[ParsedRow]):
     merged = df_ml.merge_line(10, 10, " ")
     check("merge_line len", len(merged), 2)
     check("merge_line[0] text", merged[0]["text"], "first second")
+
+    # 回归：merge_line 合并超长文本（临时缓冲曾为固定 10K UCS2，超长会堆溢出崩溃）
+    df_big = NDframe()
+    x = 0
+    for i in range(120):
+        t = "字" * 100
+        df_big.append(i, x, 0, x + 90, 50, 90, 50, 1, 0, t, "")
+        x += 92
+    mb = df_big.merge_line(10, 10, "")
+    check("merge_line 超长合并不崩溃", len(mb), 1)
+    check("merge_line 超长文本长度", len(mb[0]["text"]), 12000)
 
 
 def test_misc_operations(df: NDframe, rows: List[ParsedRow]):
