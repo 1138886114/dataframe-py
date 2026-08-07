@@ -629,50 +629,6 @@ cdef class UCS2Column_SoA:
             PyList_SetItem(res, i, match)
         return res
 
-    def isalnum(self):
-        """每行是否全为字母/数字 (逐字符 Py_UNICODE_ISALNUM)"""
-        return self._is_mode(CHK_ISALNUM)
-
-    def isalpha(self):
-        """每行是否全为字母"""
-        return self._is_mode(CHK_ISALPHA)
-
-    def isdigit(self):
-        """每行是否全为数字"""
-        return self._is_mode(CHK_ISDIGIT)
-
-    def isspace(self):
-        """每行是否全为空白"""
-        return self._is_mode(CHK_ISSPACE)
-
-    def islower(self):
-        """每行是否全为小写字母"""
-        return self._is_mode(CHK_ISLOWER)
-
-    def isupper(self):
-        """每行是否全为大写字母"""
-        return self._is_mode(CHK_ISUPPER)
-
-    def istitle(self):
-        """每行是否全为标题化/小写字符 (与 _df_str_is 语义一致)"""
-        return self._is_mode(CHK_ISTITLE)
-
-    def isnumeric(self):
-        """每行是否全为数字字符 (含上下标/罗马数字等)"""
-        return self._is_mode(CHK_ISNUMERIC)
-
-    def isdecimal(self):
-        """每行是否全为十进制数字"""
-        return self._is_mode(CHK_ISDECIMAL)
-
-    def is_chinese(self):
-        """每行是否全为中文字符 (基本/扩展A/扩展B/兼容汉字区)"""
-        return self._is_mode(CHK_ISCHINESE)
-
-    def is_numeric_punct(self):
-        """每行是否全为数字或 [.,] 标点"""
-        return self._is_mode(CHK_IS_NUMERIC_PUNCT)
-
     @cython.boundscheck(False)
     @cython.wraparound(False)
     cdef void _remove_at(self, Py_ssize_t idx) noexcept:
@@ -2037,38 +1993,17 @@ cdef class NDframe:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     cdef NDframe _df_str_is(self, int field, int mode):
+        """按 StrCheckMode 谓词过滤全命中行，复用列层 _is_mode 判定"""
         cdef Py_ssize_t n = self.length
         cdef NDframe new_df = NDframe(n if n > 0 else 1)
         if n == 0: return new_df
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef Py_ssize_t i, j, start, end, write_idx = 0
-        cdef bint match
-        cdef Py_UCS2* chars = src.chars_c
-
-        cdef bint (*pred)(Py_UCS2) noexcept
-        if mode == CHK_ISALNUM: pred = _pred_isalnum
-        elif mode == CHK_ISALPHA: pred = _pred_isalpha
-        elif mode == CHK_ISDIGIT: pred = _pred_isdigit
-        elif mode == CHK_ISSPACE: pred = _pred_isspace
-        elif mode == CHK_ISLOWER: pred = _pred_islower
-        elif mode == CHK_ISUPPER: pred = _pred_isupper
-        elif mode == CHK_ISTITLE: pred = _pred_istitle
-        elif mode == CHK_ISNUMERIC: pred = _pred_isnumeric
-        else: pred = _pred_isdecimal
+        cdef list matches = src._is_mode(mode)
+        cdef Py_ssize_t i, write_idx = 0
 
         for i in range(n):
-            start = src.offsets_c[i]
-            end = src.offsets_c[i + 1]
-
-            if start == end:
-                match = False
-            else:
-                match = True
-                for j in range(start, end):
-                    if not pred(chars[j]): match = False; break
-
-            if match:
+            if matches[i]:
                 _df_copy_row(new_df, self, i, &write_idx)
 
         new_df.length = write_idx
@@ -2078,33 +2013,18 @@ cdef class NDframe:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     cdef NDframe _df_is_charset(self, int field, bint is_chinese_mode):
+        """按字符集谓词 (中文 / 数字标点) 过滤全命中行，复用列层 _is_mode 判定"""
         cdef Py_ssize_t n = self.length
         cdef NDframe new_df = NDframe(n if n > 0 else 1)
         if n == 0: return new_df
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef Py_ssize_t i, j, start, end, write_idx = 0
-        cdef bint match
-        cdef Py_UCS2* chars = src.chars_c
-
-        cdef bint (*pred)(Py_UCS2) noexcept
-        if is_chinese_mode:
-            pred = _pred_is_chinese
-        else:
-            pred = _pred_is_numeric_punct
+        cdef list matches = src._is_mode(
+            CHK_ISCHINESE if is_chinese_mode else CHK_IS_NUMERIC_PUNCT)
+        cdef Py_ssize_t i, write_idx = 0
 
         for i in range(n):
-            start = src.offsets_c[i]
-            end = src.offsets_c[i+1]
-
-            if start == end:
-                match = False
-            else:
-                match = True
-                for j in range(start, end):
-                    if not pred(chars[j]): match = False; break
-
-            if match:
+            if matches[i]:
                 _df_copy_row(new_df, self, i, &write_idx)
 
         new_df.length = write_idx

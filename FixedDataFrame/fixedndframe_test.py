@@ -15,7 +15,7 @@ if os.path.isdir(build_dir):
     sys.path.insert(0, build_dir)
 
 try:
-    from fixedndframe import NDframe, UCS2Column_SoA
+    from fixedndframe import NDframe
 except ImportError:
     print("找不到 fixedndframe 模块，请先编译:")
     print("  cd FixedDataFrame && python3 -c \"from setuptools import setup; from Cython.Build import cythonize; setup(ext_modules=cythonize('fixedndframe.pyx', language_level=3))\" build_ext --build-lib=build")
@@ -406,48 +406,45 @@ def test_text_sort(df: NDframe, rows: List[ParsedRow]):
 
 
 def test_ucs2_column_is():
-    section("6c. UCS2Column_SoA is_* 系列")
-    samples = ["abc", "ABC", "aBc", "123", "12a", "", "  ", "你好", "hello", "12.3", "1,2"]
-    col = UCS2Column_SoA()
-    for s in samples:
-        col.append(s)
+    section("6c. is_* 系列语义 (经 df.text 访问器)")
 
-    check("isalnum", col.isalnum(), [t.isalnum() for t in samples])
-    check("isalpha", col.isalpha(), [t.isalpha() for t in samples])
-    check("isdigit", col.isdigit(), [t.isdigit() for t in samples])
-    check("isspace", col.isspace(), [t.isspace() for t in samples])
+    def is_texts(samples):
+        d = NDframe()
+        for i, s in enumerate(samples):
+            d.append(i, 0, 0, 1, 1, 1, 1, 1, 0, s, "")
+        return d
+
     # islower/isupper 为逐字符判定: 未区分大小写的字符(数字)视为不满足 (与 Python 的 "12a".islower()=True 不同)
-    check("islower", col.islower(), [True, False, False, False, False, False, False, False, True, False, False])
-    check("isupper", col.isupper(), [False, True, False, False, False, False, False, False, False, False, False])
-    check("isnumeric", col.isnumeric(), [t.isnumeric() for t in samples])
-    check("isdecimal", col.isdecimal(), [t.isdecimal() for t in samples])
+    check("isalnum", is_texts(["abc", "ABC", "aBc", "123", "12a", "", "  ", "你好", "hello", "12.3", "1,2"])
+          .text.isalnum().text.values(), ["abc", "ABC", "aBc", "123", "12a", "你好", "hello"])
+    check("isalpha", is_texts(["abc", "ABC", "aBc", "123", "12a", "", "  ", "你好", "hello", "12.3", "1,2"])
+          .text.isalpha().text.values(), ["abc", "ABC", "aBc", "你好", "hello"])
+    check("isdigit", is_texts(["abc", "ABC", "aBc", "123", "12a", "", "  ", "你好", "hello", "12.3", "1,2"])
+          .text.isdigit().text.values(), ["123"])
+    check("isspace", is_texts(["abc", "ABC", "aBc", "123", "12a", "", "  ", "你好", "hello", "12.3", "1,2"])
+          .text.isspace().text.values(), ["  "])
+    check("islower", is_texts(["abc", "ABC", "aBc", "123", "12a", "", "  ", "你好", "hello", "12.3", "1,2"])
+          .text.islower().text.values(), ["abc", "hello"])
+    check("isupper", is_texts(["abc", "ABC", "aBc", "123", "12a", "", "  ", "你好", "hello", "12.3", "1,2"])
+          .text.isupper().text.values(), ["ABC"])
 
-    # 罗马数字 Ⅻ (Nl 类别): isnumeric=True / isdecimal=False
-    col_n = UCS2Column_SoA()
-    for s in ["12", "Ⅻ", "1.5"]:
-        col_n.append(s)
-    check("isnumeric 含罗马数字", col_n.isnumeric(), [True, True, False])
-    check("isdecimal 罗马数字为 False", col_n.isdecimal(), [True, False, False])
-    check("isdigit 罗马数字为 False", col_n.isdigit(), [True, False, False])
+    # 罗马数字 Ⅻ (Nl 类别): isnumeric=True / isdecimal=False / isdigit=False
+    df_n = is_texts(["12", "Ⅻ", "1.5"])
+    check("isnumeric 含罗马数字", df_n.text.isnumeric().text.values(), ["12", "Ⅻ"])
+    check("isdecimal 罗马数字为 False", df_n.text.isdecimal().text.values(), ["12"])
+    check("isdigit 罗马数字为 False", df_n.text.isdigit().text.values(), ["12"])
 
     # istitle 与 C 层谓词一致: 逐字符 ISTITLE(Lt 类别) 或 ISLOWER (语义同 _df_str_is)
     # 'A' 是 Lu 大写字母非 Lt，故 "Abc" 为 False
-    col2 = UCS2Column_SoA()
-    for s in ["Abc", "abc", "ABC"]:
-        col2.append(s)
-    check("istitle 逐字符 C 谓词语义", col2.istitle(), [False, True, False])
+    check("istitle 逐字符 C 谓词语义", is_texts(["Abc", "abc", "ABC"]).text.istitle().text.values(), ["abc"])
 
     # 中文字符集判定
-    col3 = UCS2Column_SoA()
-    for s in ["你好世界", "hello你好", "价格", "12.3", "1,2", "abc", ""]:
-        col3.append(s)
-    check("is_chinese", col3.is_chinese(), [True, False, True, False, False, False, False])
-    check("is_numeric_punct", col3.is_numeric_punct(), [False, False, False, True, True, False, False])
+    df3 = is_texts(["你好世界", "hello你好", "价格", "12.3", "1,2", "abc", ""])
+    check("is_chinese", df3.text.is_chinese().text.values(), ["你好世界", "价格"])
+    check("is_numeric_punct", df3.text.is_numeric_punct().text.values(), ["12.3", "1,2"])
 
-    # 与 StringAccessor 层结果一致 (同一谓词表)
-    df = NDframe()
-    for i, s in enumerate(["abc", "123", "你好", "12.3", ""]):
-        df.append(i, 0, 0, 1, 1, 1, 1, 1, 0, s, "")
+    # 与 NDframe 过滤层结果一致 (同一谓词表)
+    df = is_texts(["abc", "123", "你好", "12.3", ""])
     check("is_* 与 _df_str_is 一致 isalpha",
           df.text.isalpha().text.values(), ["abc", "你好"])
     check("is_* 与 _df_str_is 一致 isdigit",
