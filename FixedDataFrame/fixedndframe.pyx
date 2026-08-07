@@ -228,18 +228,19 @@ cdef inline bint _is_in_chars(Py_UCS2 c, Py_UCS2* chars_buf, Py_ssize_t chars_le
 cdef class UCS2Column_SoA:
     cdef Py_UCS2* chars_c        # 连续字符池
     cdef Py_ssize_t* offsets_c   # 偏移量数组 (长度为 length + 1)
-    cdef public Py_ssize_t capacity     # 行容量（含已用 length 行）
-    cdef public Py_ssize_t length       # 当前行数
-    cdef public Py_ssize_t char_capacity
-    cdef public Py_ssize_t char_length
 
+    cdef Py_ssize_t capacity     # 行容量（含已用 length 行）
+    cdef Py_ssize_t length       # 当前行数
+    cdef Py_ssize_t char_capacity
+    cdef Py_ssize_t char_length
 
-    @cython.always_allow_keywords(False)
     def __cinit__(self, Py_ssize_t init_capacity=64):
-        self.capacity = max(init_capacity, 1)
+        self.capacity = init_capacity if init_capacity > 0 else 1
         self.length = 0
 
-        self.char_capacity = max(self.capacity * 16, 1024)
+        self.char_capacity = self.capacity * 16
+        if self.char_capacity < 1024:
+            self.char_capacity = 1024
         self.char_length = 0
 
         self.offsets_c = <Py_ssize_t*>malloc((self.capacity + 1) * sizeof(Py_ssize_t))
@@ -258,12 +259,78 @@ cdef class UCS2Column_SoA:
         if self.offsets_c is not NULL: free(self.offsets_c)
         if self.chars_c is not NULL: free(self.chars_c)
 
-    # 极速 C 级别切片方法，供 NDframe[1:5] 使用
+    # ==========================
+    # 内部基础内存调度宏
+    # ==========================
+    cdef inline void _reserve_rows(self, Py_ssize_t new_cap) except *:
+        cdef Py_ssize_t* new_ptr
+        if new_cap > self.capacity:
+            new_ptr = <Py_ssize_t*>realloc(self.offsets_c, (new_cap + 1) * sizeof(Py_ssize_t))
+            if not new_ptr: raise MemoryError()
+            self.offsets_c = new_ptr
+            self.capacity = new_cap
+
+    cdef inline void _reserve_chars(self, Py_ssize_t new_char_cap) except *:
+        cdef Py_UCS2* new_ptr
+        if new_char_cap > self.char_capacity:
+            new_ptr = <Py_UCS2*>realloc(self.chars_c, new_char_cap * sizeof(Py_UCS2))
+            if not new_ptr: raise MemoryError()
+            self.chars_c = new_ptr
+            self.char_capacity = new_char_cap
+
+    # ==========================
+    # 高频数据交互 API (全部改为 cdef)
+    # ==========================
+    cdef inline str _get_str(self, Py_ssize_t idx):
+        cdef Py_ssize_t start = self.offsets_c[idx]
+        cdef Py_ssize_t str_len = self.offsets_c[idx + 1] - start
+        if str_len == 0:
+            return ""
+        return PyUnicode_FromKindAndData(2, self.chars_c + start, str_len)
+
+    cdef void append(self, str val) except *:
+        """纯 C 方法，极速追加"""
+        cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val) if val is not None else 0
+
+        if self.length >= self.capacity:
+            self._reserve_rows(self.capacity * 2)
+
+        if self.char_length + str_len > self.char_capacity:
+            self._reserve_chars(max(self.char_capacity * 2, self.char_length + str_len + 1024))
+        cdef int kind
+        cdef void* data
+        if str_len > 0 and val is not None:
+            kind = PyUnicode_KIND(val)
+            data = PyUnicode_DATA(val)
+            if kind == PyUnicode_2BYTE_KIND:
+                memcpy(self.chars_c + self.char_length, data, str_len * sizeof(Py_UCS2))
+            elif kind == PyUnicode_1BYTE_KIND:
+                for i in range(str_len):
+                    self.chars_c[self.char_length + i] = <Py_UCS2>(<unsigned char*>data)[i]
+            else:
+                for i in range(str_len):
+                    cp = PyUnicode_READ_CHAR(val, i)
+                    self.chars_c[self.char_length + i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+
+        self.char_length += str_len
+        self.length += 1
+        self.offsets_c[self.length] = self.char_length
+
+    cdef UCS2Column_SoA copy(self):
+        cdef UCS2Column_SoA new_col = UCS2Column_SoA(self.capacity)
+        new_col._reserve_chars(self.char_capacity)
+        new_col.length = self.length
+        new_col.char_length = self.char_length
+        if self.length > 0:
+            memcpy(new_col.offsets_c, self.offsets_c, (self.length + 1) * sizeof(Py_ssize_t))
+        if self.char_length > 0:
+            memcpy(new_col.chars_c, self.chars_c, self.char_length * sizeof(Py_UCS2))
+        return new_col
+
     cdef UCS2Column_SoA _slice(self, Py_ssize_t start, Py_ssize_t stop):
         cdef Py_ssize_t new_len = stop - start
         if new_len <= 0:
             return UCS2Column_SoA(16)
-
         cdef UCS2Column_SoA new_col = UCS2Column_SoA(new_len)
         cdef Py_ssize_t char_start = self.offsets_c[start]
         cdef Py_ssize_t char_stop = self.offsets_c[stop]
@@ -273,7 +340,6 @@ cdef class UCS2Column_SoA:
         if char_len > 0:
             memcpy(new_col.chars_c, self.chars_c + char_start, char_len * sizeof(Py_UCS2))
 
-        cdef Py_ssize_t i
         for i in range(new_len + 1):
             new_col.offsets_c[i] = self.offsets_c[start + i] - char_start
 
@@ -281,92 +347,14 @@ cdef class UCS2Column_SoA:
         new_col.char_length = char_len
         return new_col
 
-    # 快速提取内部字符串（避免在 C 层面走 __getitem__ 的 Python 开销）
-    cdef inline str _get_str(self, Py_ssize_t idx):
-        cdef Py_ssize_t start = self.offsets_c[idx]
-        cdef Py_ssize_t str_len = self.offsets_c[idx + 1] - start
-        if str_len == 0:
-            return ""
-        return PyUnicode_FromKindAndData(2, self.chars_c + start, str_len)
-
-    cdef void _reserve_rows(self, Py_ssize_t new_cap) except *:
-        cdef Py_ssize_t* new_ptr
-        if new_cap > self.capacity:
-            new_ptr = <Py_ssize_t*>realloc(self.offsets_c, (new_cap + 1) * sizeof(Py_ssize_t))
-            if not new_ptr: raise MemoryError()
-            self.offsets_c = new_ptr
-            self.capacity = new_cap
-
-    cdef void _reserve_chars(self, Py_ssize_t new_char_cap) except *:
-        cdef Py_UCS2* new_ptr
-        if new_char_cap > self.char_capacity:
-            new_ptr = <Py_UCS2*>realloc(self.chars_c, new_char_cap * sizeof(Py_UCS2))
-            if not new_ptr: raise MemoryError()
-            self.chars_c = new_ptr
-            self.char_capacity = new_char_cap
-
-
-    @cython.always_allow_keywords(False)
-    def append(self, str val):
-        """支持任意长度的字符串追加，入口处完成 UCS2 规范化"""
-        cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val) if val is not None else 0
-
-        if self.length >= self.capacity:
-            self._reserve_rows(self.capacity * 2)
-
-        if self.char_length + str_len > self.char_capacity:
-            self._reserve_chars(max(self.char_capacity * 2, self.char_length + str_len + 1024))
-
-        cdef int kind
-        cdef void* data
-        cdef Py_ssize_t i
-        cdef Py_UCS4 cp
-
-        if str_len > 0 and val is not None:
-            kind = PyUnicode_KIND(val)
-            data = PyUnicode_DATA(val)
-
-            if kind == PyUnicode_2BYTE_KIND:
-                # 中文字符串直接 CPU 寄存器级别 memcpy！
-                memcpy(self.chars_c + self.char_length, data, str_len * sizeof(Py_UCS2))
-            elif kind == PyUnicode_1BYTE_KIND:
-                # 英文/数字：极速指针拓宽
-                for i in range(str_len):
-                    self.chars_c[self.char_length + i] = <Py_UCS2>(<unsigned char*>data)[i]
-            else:
-                # 含有 Emoji 的 4 字节字符串：清洗降级为 '?'
-                for i in range(str_len):
-                    cp = PyUnicode_READ_CHAR(val, i)
-                    self.chars_c[self.char_length + i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
-
-        self.char_length += str_len
-        self.length += 1
-        self.offsets_c[self.length] = self.char_length
-
-    @cython.always_allow_keywords(False)
-    def copy(self):
-        cdef UCS2Column_SoA new_col = UCS2Column_SoA(self.capacity)
-        new_col._reserve_chars(self.char_capacity)
-
-        new_col.length = self.length
-        new_col.char_length = self.char_length
-
-        memcpy(new_col.offsets_c, self.offsets_c, (self.length + 1) * sizeof(Py_ssize_t))
-        memcpy(new_col.chars_c, self.chars_c, self.char_length * sizeof(Py_UCS2))
-        return new_col
-
-
-    @cython.always_allow_keywords(False)
-    def concat(self, UCS2Column_SoA other):
+    cdef void concat(self, UCS2Column_SoA other) except *:
+        if other.length == 0: return
         self._reserve_rows(self.length + other.length)
         self._reserve_chars(self.char_length + other.char_length)
 
-        cdef Py_ssize_t i
-        # 复制字符数据
         if other.char_length > 0:
             memcpy(self.chars_c + self.char_length, other.chars_c, other.char_length * sizeof(Py_UCS2))
 
-        # 调整并复制偏移量
         cdef Py_ssize_t base_offset = self.char_length
         for i in range(other.length):
             self.offsets_c[self.length + 1 + i] = base_offset + other.offsets_c[i + 1]
@@ -374,13 +362,14 @@ cdef class UCS2Column_SoA:
         self.length += other.length
         self.char_length += other.char_length
 
-
-    @cython.always_allow_keywords(False)
-    def _reorder(self, list indices):
-        """通过重建连续内存块实现重排，彻底清除碎片"""
+    cdef void _reorder(self, list indices) except *:
         cdef Py_ssize_t n = self.length
+        if n == 0: return
+
         cdef Py_ssize_t* new_offsets = <Py_ssize_t*>malloc((self.capacity + 1) * sizeof(Py_ssize_t))
-        cdef Py_UCS2* new_chars = <Py_UCS2*>malloc(self.char_capacity * sizeof(Py_UCS2))
+        # 优化点: 精确分配当前所需内存，而不是整个 char_capacity
+        cdef Py_UCS2* new_chars = <Py_UCS2*>malloc(max(self.char_length, 1024) * sizeof(Py_UCS2))
+
         if not new_offsets or not new_chars:
             if new_offsets: free(new_offsets)
             if new_chars: free(new_chars)
@@ -389,13 +378,11 @@ cdef class UCS2Column_SoA:
         new_offsets[0] = 0
         cdef Py_ssize_t current_char_len = 0
         cdef Py_ssize_t idx, start, end, str_len
-        cdef Py_ssize_t i
 
         for i in range(n):
             idx = <Py_ssize_t>indices[i]
             start = self.offsets_c[idx]
-            end = self.offsets_c[idx + 1]
-            str_len = end - start
+            str_len = self.offsets_c[idx + 1] - start
 
             if str_len > 0:
                 memcpy(new_chars + current_char_len, self.chars_c + start, str_len * sizeof(Py_UCS2))
@@ -408,206 +395,32 @@ cdef class UCS2Column_SoA:
         self.offsets_c = new_offsets
         self.chars_c = new_chars
         self.char_length = current_char_len
+        self.char_capacity = max(self.char_length, 1024)
 
+    cdef inline void pop_back(self) noexcept:
+        """优化点: O(1) 操作，不创建 Python 字符串，仅回退指针"""
+        if self.length > 0:
+            self.length -= 1
+            self.char_length = self.offsets_c[self.length]
 
-    @cython.always_allow_keywords(False)
-    def __getitem__(self, Py_ssize_t idx):
-        if idx < 0 or idx >= self.length: raise IndexError()
-        return self._get_str(idx)
-
-
-    @cython.always_allow_keywords(False)
-    def pop_back(self):
-        if self.length == 0: raise IndexError("pop from empty column")
+    cdef inline void _remove_at(self, Py_ssize_t idx) noexcept:
+        cdef Py_ssize_t start = self.offsets_c[idx]
+        cdef Py_ssize_t end = self.offsets_c[idx + 1]
+        cdef Py_ssize_t c_len = end - start
+        cdef Py_ssize_t tail = self.char_length - end
+        if tail > 0:
+            memmove(self.chars_c + start, self.chars_c + end, tail * sizeof(Py_UCS2))
+        self.char_length -= c_len
+        for i in range(idx, self.length):
+            self.offsets_c[i] = self.offsets_c[i + 1] - c_len
         self.length -= 1
-        cdef Py_ssize_t start = self.offsets_c[self.length]
-        cdef Py_ssize_t str_len = self.char_length - start
-        self.char_length -= str_len
-        if str_len == 0:
-            return ""
-        return PyUnicode_FromKindAndData(2, self.chars_c + start, str_len)
 
-
-    @cython.always_allow_keywords(False)
-    def pop_front(self):
-        if self.length == 0: raise IndexError("pop from empty column")
-        cdef Py_ssize_t str_len = self.offsets_c[1] - self.offsets_c[0]
-        cdef str val
-        if str_len == 0:
-            val = ""
-        else:
-            val = PyUnicode_FromKindAndData(2, self.chars_c + self.offsets_c[0], str_len)
-        cdef Py_ssize_t rem_chars = self.char_length - self.offsets_c[1]
-        if rem_chars > 0:
-            memmove(self.chars_c, self.chars_c + self.offsets_c[1], rem_chars * sizeof(Py_UCS2))
-        self.char_length -= str_len
-        cdef Py_ssize_t i
-        for i in range(self.length):
-            self.offsets_c[i] = self.offsets_c[i + 1] - str_len
-        self.length -= 1
-        return val
-
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    def len(self):
-        """一次性返回所有行的字符长度列表"""
-        cdef list res = PyList_New(self.length)
-        cdef Py_ssize_t i
-        for i in range(self.length):
-            PyList_SetItem(res, i, self.offsets_c[i+1] - self.offsets_c[i])
-        return res
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    def startswith(self, str prefix):
-        cdef list res = PyList_New(self.length)
-        cdef Py_ssize_t p_len = 0
-        cdef Py_ssize_t i, j, start, str_len
-        cdef bint match
-
-        cdef Py_UCS2* p_buf = _str_to_ucs2_buf(prefix, &p_len)
-
-        for i in range(self.length):
-            start = self.offsets_c[i]
-            str_len = self.offsets_c[i+1] - start
-            match = False
-            if str_len >= p_len:
-                match = True
-                for j in range(p_len):
-                    if self.chars_c[start + j] != p_buf[j]: match = False; break
-            PyList_SetItem(res, i, match)
-
-        free(p_buf)
-        return res
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    def endswith(self, str suffix):
-        cdef list res = PyList_New(self.length)
-        cdef Py_ssize_t s_len = 0
-        cdef Py_UCS2* s_buf = _str_to_ucs2_buf(suffix, &s_len)
-        cdef Py_ssize_t i, j, end, str_len
-        cdef bint match
-
-        for i in range(self.length):
-            end = self.offsets_c[i+1]
-            str_len = end - self.offsets_c[i]
-            match = False
-            if str_len >= s_len:
-                match = True
-                for j in range(s_len):
-                    if self.chars_c[end - s_len + j] != s_buf[j]: match = False; break
-            PyList_SetItem(res, i, match)
-
-        free(s_buf)
-        return res
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    def contains(self, str substring):
-        cdef list res = PyList_New(self.length)
-        cdef Py_ssize_t sub_len = 0
-        cdef Py_ssize_t i, start, end
-        cdef bint found
-
-        cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(substring, &sub_len)
-
-        for i in range(self.length):
-            start = self.offsets_c[i]
-            end = self.offsets_c[i+1]
-            found = _substr_contains(self.chars_c, start, end, sub_buf, sub_len)
-            PyList_SetItem(res, i, found)
-        free(sub_buf)
-        return res
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    def replace(self, str old, str new):
-        """返回全新列，在底层处理定长/变长内存重分配"""
-        cdef Py_ssize_t old_len = 0
-        cdef Py_ssize_t new_len = 0
-        cdef Py_UCS2* old_buf = _str_to_ucs2_buf(old, &old_len)
-
-        # 空 old 视为无操作：直接返回副本，不做任何替换
-        if old_len == 0:
-            free(old_buf)
-            return self.copy()
-
-        cdef Py_UCS2* new_buf = _str_to_ucs2_buf(new, &new_len)
-        cdef Py_ssize_t i, j, k
-
-        cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
-        cdef Py_ssize_t start, end, str_len
-        cdef bint match
-
-        for i in range(self.length):
-            start = self.offsets_c[i]
-            end = self.offsets_c[i+1]
-
-            res_col.offsets_c[i] = res_col.char_length
-
-            j = start
-            while j < end:
-                match = False
-                if end - j >= old_len:
-                    match = True
-                    for k in range(old_len):
-                        if self.chars_c[j + k] != old_buf[k]: match = False; break
-
-                if match:
-                    if res_col.char_length + new_len > res_col.char_capacity:
-                        res_col._reserve_chars(res_col.char_capacity * 2 + new_len)
-                    if new_len > 0: memcpy(res_col.chars_c + res_col.char_length, new_buf, new_len * sizeof(Py_UCS2))
-                    res_col.char_length += new_len
-                    j += old_len
-                else:
-                    if res_col.char_length + 1 > res_col.char_capacity:
-                        res_col._reserve_chars(res_col.char_capacity * 2)
-                    res_col.chars_c[res_col.char_length] = self.chars_c[j]
-                    res_col.char_length += 1
-                    j += 1
-
-            res_col.length += 1
-
-        res_col.offsets_c[res_col.length] = res_col.char_length
-        free(old_buf); free(new_buf)
-        return res_col
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    def lower(self):
-        cdef UCS2Column_SoA res = self.copy()
-        cdef Py_ssize_t i
-        for i in range(res.char_length):
-            res.chars_c[i] = <Py_UCS2>Py_UNICODE_TOLOWER(res.chars_c[i])
-        return res
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    def upper(self):
-        cdef UCS2Column_SoA res = self.copy()
-        cdef Py_ssize_t i
-        for i in range(res.char_length):
-            res.chars_c[i] = <Py_UCS2>Py_UNICODE_TOUPPER(res.chars_c[i])
-        return res
-
-    def unique(self):
-        """必须回退到 Python str，因为需要进行哈希"""
-        cdef set uniq = set()
-        cdef Py_ssize_t i
-        for i in range(self.length):
-            uniq.add(self._get_str(i))
-        return list(uniq)
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
     cdef list _is_mode(self, int mode):
-        """按谓词表逐字符判定每一行是否全部命中，返回 bool 列表"""
         cdef list res = PyList_New(self.length)
         cdef Py_ssize_t i, j, start, end
         cdef bint match
         cdef bint (*pred)(Py_UCS2) noexcept
+
         if mode == CHK_ISALNUM: pred = _pred_isalnum
         elif mode == CHK_ISALPHA: pred = _pred_isalpha
         elif mode == CHK_ISDIGIT: pred = _pred_isdigit
@@ -619,6 +432,7 @@ cdef class UCS2Column_SoA:
         elif mode == CHK_ISDECIMAL: pred = _pred_isdecimal
         elif mode == CHK_ISCHINESE: pred = _pred_is_chinese
         else: pred = _pred_is_numeric_punct
+
         for i in range(self.length):
             start = self.offsets_c[i]; end = self.offsets_c[i+1]
             if start == end: match = False
@@ -628,37 +442,6 @@ cdef class UCS2Column_SoA:
                     if not pred(self.chars_c[j]): match = False; break
             PyList_SetItem(res, i, match)
         return res
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef void _remove_at(self, Py_ssize_t idx) noexcept:
-        """就地删除第 idx 行：字符池 memmove 挤压 + 偏移量整体平移"""
-        cdef Py_ssize_t start = self.offsets_c[idx]
-        cdef Py_ssize_t end = self.offsets_c[idx + 1]
-        cdef Py_ssize_t c_len = end - start
-        cdef Py_ssize_t tail = self.char_length - end
-        if tail > 0:
-            memmove(self.chars_c + start, self.chars_c + end, tail * sizeof(Py_UCS2))
-        self.char_length -= c_len
-        cdef Py_ssize_t i
-        for i in range(idx, self.length):
-            self.offsets_c[i] = self.offsets_c[i + 1] - c_len
-        self.length -= 1
-
-
-cdef void _col_copy_row(UCS2Column_SoA dst, UCS2Column_SoA src, Py_ssize_t src_idx) except *:
-    """把 src 的第 src_idx 行以纯 C memcpy 方式追加到 dst 列尾部（0 次 Python 对象创建）"""
-    cdef Py_ssize_t start = src.offsets_c[src_idx]
-    cdef Py_ssize_t c_len = src.offsets_c[src_idx + 1] - start
-    if dst.length >= dst.capacity:
-        dst._reserve_rows(dst.capacity * 2)
-    if dst.char_length + c_len > dst.char_capacity:
-        dst._reserve_chars(dst.char_length + c_len + 1024)
-    if c_len > 0:
-        memcpy(dst.chars_c + dst.char_length, src.chars_c + start, c_len * sizeof(Py_UCS2))
-    dst.char_length += c_len
-    dst.length += 1
-    dst.offsets_c[dst.length] = dst.char_length
 
 
 # ==========================================
@@ -2159,17 +1942,64 @@ cdef class NDframe:
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
-    cdef void _replace(self, int field, str old_str, str new_str):
+    cdef void _replace(self, int field, str old_str, str new_str) except *:
+        """复用底层 C 内存分配重写 replace 逻辑"""
         if self.length == 0 or not old_str:
             return
 
+        cdef Py_ssize_t o0_len = 0
+        cdef Py_ssize_t n0_len = 0
+        cdef Py_UCS2* o0_buf = _str_to_ucs2_buf(old_str, &o0_len)
+        if o0_len == 0:
+            free(o0_buf)
+            return
+
+        cdef Py_UCS2* n0_buf = _str_to_ucs2_buf(new_str, &n0_len)
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
-        cdef UCS2Column_SoA new_col = src.replace(old_str, new_str)
+        cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
+
+        cdef Py_ssize_t i, j, k, start, end
+        cdef bint match
+
+        for i in range(self.length):
+            start = src.offsets_c[i]
+            end = src.offsets_c[i+1]
+            res_col.offsets_c[i] = res_col.char_length
+
+            j = start
+            while j < end:
+                match = False
+                if end - j >= o0_len:
+                    match = True
+                    for k in range(o0_len):
+                        if src.chars_c[j+k] != o0_buf[k]:
+                            match = False
+                            break
+
+                if match:
+                    if res_col.char_length + n0_len > res_col.char_capacity:
+                        res_col._reserve_chars(max(res_col.char_capacity * 2, res_col.char_length + n0_len + 1024))
+                    if n0_len > 0:
+                        memcpy(res_col.chars_c + res_col.char_length, n0_buf, n0_len * sizeof(Py_UCS2))
+                    res_col.char_length += n0_len
+                    j += o0_len
+                else:
+                    if res_col.char_length + 1 > res_col.char_capacity:
+                        res_col._reserve_chars(res_col.char_capacity * 2)
+                    res_col.chars_c[res_col.char_length] = src.chars_c[j]
+                    res_col.char_length += 1
+                    j += 1
+
+            res_col.length += 1
+
+        res_col.offsets_c[res_col.length] = res_col.char_length
+        free(o0_buf)
+        free(n0_buf)
 
         if field == FIELD_txt:
-            self.text_col = new_col
+            self.text_col = res_col
         else:
-            self.text_sep_col = new_col
+            self.text_sep_col = res_col
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
@@ -2646,30 +2476,81 @@ cdef class NDframe:
         if n == 0 or not old_str:
             return
 
+        cdef Py_ssize_t o0_len = 0
+        cdef Py_ssize_t n0_len = 0
+        cdef Py_UCS2* o0_buf = _str_to_ucs2_buf(old_str, &o0_len)
+
+        if o0_len == 0:
+            free(o0_buf)
+            return
+
+        cdef Py_UCS2* n0_buf = _str_to_ucs2_buf(new_str, &n0_len)
+
         cdef UCS2Column_SoA src = self.text_col if src_field == FIELD_txt else self.text_sep_col
-        cdef UCS2Column_SoA new_col = src.replace(old_str, new_str)
+        cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
+
+        cdef Py_ssize_t i, j, k, start, end
+        cdef bint match
+
+        for i in range(self.length):
+            start = src.offsets_c[i]
+            end = src.offsets_c[i+1]
+            res_col.offsets_c[i] = res_col.char_length
+
+            j = start
+            while j < end:
+                match = False
+                if end - j >= o0_len:
+                    match = True
+                    for k in range(o0_len):
+                        if src.chars_c[j+k] != o0_buf[k]:
+                            match = False
+                            break
+
+                if match:
+                    # 匹配成功，写入 new_str
+                    if res_col.char_length + n0_len > res_col.char_capacity:
+                        res_col._reserve_chars(max(res_col.char_capacity * 2, res_col.char_length + n0_len + 1024))
+                    if n0_len > 0:
+                        memcpy(res_col.chars_c + res_col.char_length, n0_buf, n0_len * sizeof(Py_UCS2))
+                    res_col.char_length += n0_len
+                    j += o0_len
+                else:
+                    # 未匹配，拷贝原字符
+                    if res_col.char_length + 1 > res_col.char_capacity:
+                        res_col._reserve_chars(res_col.char_capacity * 2)
+                    res_col.chars_c[res_col.char_length] = src.chars_c[j]
+                    res_col.char_length += 1
+                    j += 1
+
+            res_col.length += 1
+
+        res_col.offsets_c[res_col.length] = res_col.char_length
+        free(o0_buf)
+        free(n0_buf)
 
         if dst_field == FIELD_txt:
-            self.text_col = new_col
+            self.text_col = res_col
         else:
-            self.text_sep_col = new_col
+            self.text_sep_col = res_col
 
 
     cdef void _regex_replace_cross(self, int src_field, int dst_field, object pattern, str rewrite) except *:
         cdef Py_ssize_t i, n = self.length
         if n == 0:
             return
-
         cdef UCS2Column_SoA src = self.text_col if src_field == FIELD_txt else self.text_sep_col
         cdef UCS2Column_SoA new_col = UCS2Column_SoA(n)
         cdef object sub = pattern.sub
-        cdef str txt
+        cdef str txt, new_txt
 
         for i in range(n):
-            txt = src._get_str(i)
-            if txt:
-                txt = sub(rewrite, txt)
-            new_col.append(txt)
+            if src.offsets_c[i+1] > src.offsets_c[i]:
+                txt = src._get_str(i)
+                new_txt = sub(rewrite, txt)
+                new_col.append(new_txt)
+            else:
+                new_col.append("")
 
         if dst_field == FIELD_txt:
             self.text_col = new_col
