@@ -325,6 +325,19 @@ def main():
             print(f"  存在性一致性 [{lbl}] 命中 {len(f_sub_set)} 行 ✓")
         bench.add_substr(lbl, sub, solid_df, fixed_df, cls)
 
+    # ─────────── 专项：多模子串 (绕过正则状态机) ───────────
+    multi_subs = [sub for _kw, sub, _lbl, _cls in SUBSTR_CASES]
+    multi_pat = re.compile("|".join(multi_subs))
+    f_multi = set(fixed_df.text.contains_substr_list(multi_subs).idx.values())
+    s_multi = set(solid_df.text.contains(multi_pat).idx.values())
+    if f_multi != s_multi:
+        print(f"  [警告] 多模命中不一致: Fixed.list={len(f_multi)} Solid.regex={len(s_multi)}")
+    else:
+        print(f"  多模一致性 [三关键字并集] 命中 {len(f_multi)} 行 ✓")
+    bench.add("多模三串 contains_substr_list vs Solid.contains",
+              lambda: solid_df.text.contains(multi_pat),
+              lambda: fixed_df.text.contains_substr_list(multi_subs))
+
     bench.show()
 
 

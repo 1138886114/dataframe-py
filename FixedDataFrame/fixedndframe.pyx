@@ -596,6 +596,14 @@ cdef class StringAccessor:
         return self.df._df_regex(self.field, s, False)
 
     @cython.always_allow_keywords(False)
+    def contains_substr_list(self, object texts):
+        """
+        过滤字段值包含 texts (List/Tuple) 中任意子串的行（纯 C 滑动窗口）。
+        针对有限子串集合，比正则表达式更快。
+        """
+        return self.df._df_regex_pure_list(self.field, texts)
+
+    @cython.always_allow_keywords(False)
     def contains_in_bbox(self, object pattern, int x0, int y0, int x1, int y1):
         """在指定坐标框内进行正则过滤，返回新 NDframe"""
         if x0 < 0: x0 = 0
@@ -2362,6 +2370,121 @@ cdef class NDframe:
             if sub_buf != NULL: free(sub_buf)
             if match_idx != NULL: free(match_idx)
 
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef NDframe _df_regex_pure_list(self, int field, object patterns):
+        cdef Py_ssize_t n = self.length
+        if n == 0: return NDframe(1)
+
+        # 归一化输入
+        cdef tuple pat_tuple = tuple(patterns) if not isinstance(patterns, tuple) else patterns
+        cdef Py_ssize_t num_pats = len(pat_tuple)
+        if num_pats == 0: return NDframe(1)
+
+        # 动态申请三个 C 数组：存储指向各子串 UCS2 缓冲区的指针、各子串长度、以及命中行号
+        cdef Py_UCS2** sub_bufs = <Py_UCS2**>malloc(num_pats * sizeof(Py_UCS2*))
+        cdef Py_ssize_t* sub_lens = <Py_ssize_t*>malloc(num_pats * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* match_idx = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+
+        if not sub_bufs or not sub_lens or not match_idx:
+            if sub_bufs: free(sub_bufs)
+            if sub_lens: free(sub_lens)
+            if match_idx: free(match_idx)
+            raise MemoryError()
+
+        cdef Py_ssize_t p
+        for p in range(num_pats):
+            sub_bufs[p] = NULL
+
+        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+        cdef UCS2Column_SoA s_txt = self.text_col
+        cdef UCS2Column_SoA s_sep = self.text_sep_col
+        cdef Py_UCS2* chars = src.chars_c
+
+        cdef Py_ssize_t match_count = 0
+        cdef Py_ssize_t txt_char_total = 0
+        cdef Py_ssize_t sep_char_total = 0
+
+        cdef Py_ssize_t i, start, end, str_len
+        cdef bint matched
+        cdef str pat_str
+
+        cdef NDframe new_df = None
+        cdef RowC* src_rows = NULL
+        cdef RowC* dst_rows = NULL
+        cdef UCS2Column_SoA d_txt, d_sep
+        cdef Py_ssize_t src_i, t_len, s_len
+
+        try:
+            # 1. 批量将 Python 字符串转换为 C UCS2 缓冲区
+            for p in range(num_pats):
+                pat_str = <str>pat_tuple[p]
+                sub_bufs[p] = _str_to_ucs2_buf(pat_str, &sub_lens[p])
+                if not sub_bufs[p]: raise MemoryError()
+
+            # =========================================================
+            # [阶段一]：纯 C 多模探针扫描 (极限短路逻辑)
+            # =========================================================
+            for i in range(n):
+                start = src.offsets_c[i]
+                end = src.offsets_c[i + 1]
+                str_len = end - start
+                matched = False
+
+                if str_len > 0:
+                    for p in range(num_pats):
+                        if sub_lens[p] > 0 and str_len >= sub_lens[p]:
+                            if _substr_contains(chars, start, end, sub_bufs[p], sub_lens[p]):
+                                matched = True
+                                break  # 命中任何一个模式，立刻短路跳出 (Short-circuit)
+
+                if matched:
+                    match_idx[match_count] = i
+                    match_count += 1
+                    txt_char_total += s_txt.offsets_c[i+1] - s_txt.offsets_c[i]
+                    sep_char_total += s_sep.offsets_c[i+1] - s_sep.offsets_c[i]
+
+            if match_count == 0:
+                return NDframe(1)
+
+            # =========================================================
+            # [阶段二]：一次性物理内存组装
+            # =========================================================
+            new_df = NDframe(match_count)
+            new_df.text_col._reserve_chars(max(txt_char_total, 1024))
+            new_df.text_sep_col._reserve_chars(max(sep_char_total, 1024))
+
+            src_rows = self.rows_c
+            dst_rows = new_df.rows_c
+            d_txt = new_df.text_col
+            d_sep = new_df.text_sep_col
+
+            for i in range(match_count):
+                src_i = match_idx[i]
+                dst_rows[i] = src_rows[src_i]
+
+                t_len = s_txt.offsets_c[src_i+1] - s_txt.offsets_c[src_i]
+                if t_len > 0: memcpy(d_txt.chars_c + d_txt.char_length, s_txt.chars_c + s_txt.offsets_c[src_i], t_len * sizeof(Py_UCS2))
+                d_txt.char_length += t_len
+                d_txt.length += 1
+                d_txt.offsets_c[d_txt.length] = d_txt.char_length
+
+                s_len = s_sep.offsets_c[src_i+1] - s_sep.offsets_c[src_i]
+                if s_len > 0: memcpy(d_sep.chars_c + d_sep.char_length, s_sep.chars_c + s_sep.offsets_c[src_i], s_len * sizeof(Py_UCS2))
+                d_sep.char_length += s_len
+                d_sep.length += 1
+                d_sep.offsets_c[d_sep.length] = d_sep.char_length
+
+            new_df.length = match_count
+            return new_df
+
+        finally:
+            # 防泄漏：依次释放子串缓冲区，再释放数组
+            for p in range(num_pats):
+                if sub_bufs[p] != NULL: free(sub_bufs[p])
+            free(sub_bufs)
+            free(sub_lens)
+            free(match_idx)
 
     @cython.boundscheck(False)
     @cython.wraparound(False)

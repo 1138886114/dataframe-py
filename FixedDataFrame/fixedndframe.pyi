@@ -293,6 +293,8 @@ class StringAccessor:
         """正则过滤（自动编译），返回新 NDframe。示例: df.text.contains(r'\\d{2,}')"""
     def contains_substr(self, s: str) -> "NDframe":
         """纯 C 子串匹配过滤，返回新 NDframe（无正则开销）"""
+    def contains_substr_list(self, texts: Iterable[str]) -> "NDframe":
+        """纯 C 多模子串匹配过滤：包含 texts 中任意子串的行（无正则开销，快于正则交替式）"""
     def contains_in_bbox(
         self, pattern: Union[str, Any], x0: int, y0: int, x1: int, y1: int
     ) -> "NDframe":
