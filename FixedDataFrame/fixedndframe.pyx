@@ -2275,27 +2275,92 @@ cdef class NDframe:
     @cython.wraparound(False)
     cdef NDframe _df_regex_pure(self, int field, object pattern):
         cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if n == 0: return new_df
+        if n == 0: return NDframe(1)
 
-        cdef Py_ssize_t i, start, end, str_len, write_idx = 0
         cdef Py_ssize_t sub_len = 0
         cdef str pat_str = <str>pattern if isinstance(pattern, str) else str(pattern)
+
+        # 将匹配模式转换为 UCS2 纯 C 缓冲
         cdef Py_UCS2* sub_buf = _str_to_ucs2_buf(pat_str, &sub_len)
+        if sub_buf == NULL: raise MemoryError()
+
+        # 申请用于记录命中行号的 C 数组
+        cdef Py_ssize_t* match_idx = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        if not match_idx:
+            free(sub_buf)
+            raise MemoryError()
 
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+        cdef UCS2Column_SoA s_txt = self.text_col
+        cdef UCS2Column_SoA s_sep = self.text_sep_col
         cdef Py_UCS2* chars = src.chars_c
 
-        for i in range(n):
-            start = src.offsets_c[i]
-            end = src.offsets_c[i + 1]
-            str_len = end - start
-            if str_len > 0 and _substr_contains(chars, start, end, sub_buf, sub_len):
-                _df_copy_row(new_df, self, i, &write_idx)
+        cdef Py_ssize_t match_count = 0
+        cdef Py_ssize_t txt_char_total = 0
+        cdef Py_ssize_t sep_char_total = 0
+        cdef Py_ssize_t i, start, end, str_len
 
-        if sub_buf != NULL: free(sub_buf)
-        new_df.length = write_idx
-        return new_df
+        cdef NDframe new_df = None
+        cdef RowC* src_rows = NULL
+        cdef RowC* dst_rows = NULL
+        cdef UCS2Column_SoA d_txt, d_sep
+        cdef Py_ssize_t src_i, t_len, s_len
+
+        try:
+            # =========================================================
+            # [阶段一]：纯 C 内存探针扫描 (极限指令局部性) 彻底榨干 L1 Cache 带宽
+            # =========================================================
+            for i in range(n):
+                start = src.offsets_c[i]
+                end = src.offsets_c[i + 1]
+                str_len = end - start
+
+                if str_len > 0 and _substr_contains(chars, start, end, sub_buf, sub_len):
+                    match_idx[match_count] = i
+                    match_count += 1
+
+                    txt_char_total += self.text_col.offsets_c[i+1] - self.text_col.offsets_c[i]
+                    sep_char_total += s_sep.offsets_c[i+1] - s_sep.offsets_c[i]
+
+            if match_count == 0:
+                return NDframe(1)
+
+            # =========================================================
+            # [阶段二]：一次性物理内存分配 + 无脑内存拷贝
+            # =========================================================
+            new_df = NDframe(match_count)
+            new_df.text_col._reserve_chars(max(txt_char_total, 1024))
+            new_df.text_sep_col._reserve_chars(max(sep_char_total, 1024))
+
+            src_rows = self.rows_c
+            dst_rows = new_df.rows_c
+            d_txt = new_df.text_col
+            d_sep = new_df.text_sep_col
+
+            for i in range(match_count):
+                src_i = match_idx[i]
+
+                dst_rows[i] = src_rows[src_i]
+                t_len = s_txt.offsets_c[src_i+1] - s_txt.offsets_c[src_i]
+                if t_len > 0:
+                    memcpy(d_txt.chars_c + d_txt.char_length, s_txt.chars_c + s_txt.offsets_c[src_i], t_len * sizeof(Py_UCS2))
+                d_txt.char_length += t_len
+                d_txt.length += 1
+                d_txt.offsets_c[d_txt.length] = d_txt.char_length
+
+                s_len = s_sep.offsets_c[src_i+1] - s_sep.offsets_c[src_i]
+                if s_len > 0:
+                    memcpy(d_sep.chars_c + d_sep.char_length, s_sep.chars_c + s_sep.offsets_c[src_i], s_len * sizeof(Py_UCS2))
+                d_sep.char_length += s_len
+                d_sep.length += 1
+                d_sep.offsets_c[d_sep.length] = d_sep.char_length
+
+            new_df.length = match_count
+            return new_df
+
+        finally:
+            if sub_buf != NULL: free(sub_buf)
+            if match_idx != NULL: free(match_idx)
 
 
     @cython.boundscheck(False)
