@@ -1888,6 +1888,24 @@ cdef class NDframe:
             sum_val += _get_field_val(&rows[i], field)
         return sum_val / <double>n
 
+
+    cdef inline void _col_copy_row(UCS2Column_SoA dst, UCS2Column_SoA src, Py_ssize_t src_idx) except *:
+        cdef Py_ssize_t start = src.offsets_c[src_idx]
+        cdef Py_ssize_t c_len = src.offsets_c[src_idx + 1] - start
+
+        if dst.length >= dst.capacity:
+            dst._reserve_rows(dst.capacity * 2)
+
+        if dst.char_length + c_len > dst.char_capacity:
+            dst._reserve_chars(dst.char_capacity * 2 + c_len + 1024)
+
+        if c_len > 0:
+            memcpy(dst.chars_c + dst.char_length, src.chars_c + start, c_len * sizeof(Py_UCS2))
+
+        dst.char_length += c_len
+        dst.length += 1
+        dst.offsets_c[dst.length] = dst.char_length
+
     # ========================================================
     # 字符串拼接与替换
     # ========================================================
@@ -1941,140 +1959,130 @@ cdef class NDframe:
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
-    cdef void _replace(self, int field, str old_str, str new_str) except *:
-        """复用底层 C 内存分配重写 replace 逻辑"""
-        if self.length == 0 or not old_str:
+    cdef void _c_replace_engine(self, int src_field, int dst_field,
+                                str old0, str new0, str old1, str new1) except *:
+        """
+        大一统的字符串替换引擎：
+        支持单/双重替换，支持同/跨字段写入。具备首字符极速拦截与防内存泄漏机制。
+        """
+        if self.length == 0 or not old0:
             return
 
-        cdef Py_ssize_t o0_len = 0
-        cdef Py_ssize_t n0_len = 0
-        cdef Py_UCS2* o0_buf = _str_to_ucs2_buf(old_str, &o0_len)
+        cdef Py_ssize_t o0_len = 0, n0_len = 0, o1_len = 0, n1_len = 0
+        cdef Py_UCS2* o0_buf = _str_to_ucs2_buf(old0, &o0_len)
         if o0_len == 0:
             free(o0_buf)
             return
 
-        cdef Py_UCS2* n0_buf = _str_to_ucs2_buf(new_str, &n0_len)
-        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+        cdef Py_UCS2* n0_buf = _str_to_ucs2_buf(new0, &n0_len)
+
+        cdef Py_UCS2* o1_buf = NULL
+        cdef Py_UCS2* n1_buf = NULL
+        cdef bint is_dual = (old1 is not None and len(old1) > 0)
+
+        if is_dual:
+            o1_buf = _str_to_ucs2_buf(old1, &o1_len)
+            n1_buf = _str_to_ucs2_buf(new1, &n1_len)
+
+        cdef UCS2Column_SoA src = self.text_col if src_field == FIELD_txt else self.text_sep_col
         cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
 
         cdef Py_ssize_t i, j, k, start, end
         cdef bint match
 
-        for i in range(self.length):
-            start = src.offsets_c[i]
-            end = src.offsets_c[i+1]
-            res_col.offsets_c[i] = res_col.char_length
+        # 优化：提取首字符，用于滑动窗口的 O(1) 快速探针拦截
+        cdef Py_UCS2 first_c0 = o0_buf[0]
+        cdef Py_UCS2 first_c1 = o1_buf[0] if is_dual else 0
+        cdef Py_UCS2 current_c
 
-            j = start
-            while j < end:
-                match = False
-                if end - j >= o0_len:
-                    match = True
-                    for k in range(o0_len):
-                        if src.chars_c[j+k] != o0_buf[k]:
-                            match = False
-                            break
+        try:
+            for i in range(self.length):
+                start = src.offsets_c[i]
+                end = src.offsets_c[i+1]
+                res_col.offsets_c[i] = res_col.char_length
 
-                if match:
-                    if res_col.char_length + n0_len > res_col.char_capacity:
-                        res_col._reserve_chars(max(res_col.char_capacity * 2, res_col.char_length + n0_len + 1024))
-                    if n0_len > 0:
-                        memcpy(res_col.chars_c + res_col.char_length, n0_buf, n0_len * sizeof(Py_UCS2))
-                    res_col.char_length += n0_len
-                    j += o0_len
-                else:
+                j = start
+                while j < end:
+                    current_c = src.chars_c[j]
+                    match = False
+
+                    # --- 模式 1 匹配 ---
+                    # 极速探测：首字符相等 且 剩余长度足够
+                    if current_c == first_c0 and end - j >= o0_len:
+                        match = True
+                        for k in range(1, o0_len):  # 从 1 开始，首字符已验证
+                            if src.chars_c[j+k] != o0_buf[k]:
+                                match = False
+                                break
+
+                    if match:
+                        if res_col.char_length + n0_len > res_col.char_capacity:
+                            res_col._reserve_chars(max(res_col.char_capacity * 2, res_col.char_length + n0_len + 1024))
+                        if n0_len > 0:
+                            memcpy(res_col.chars_c + res_col.char_length, n0_buf, n0_len * sizeof(Py_UCS2))
+                        res_col.char_length += n0_len
+                        j += o0_len
+                        continue  # 匹配成功，跳过模式2与单字符拷贝
+
+                    # --- 模式 2 匹配 (仅在开启双重替换时执行) ---
+                    if is_dual:
+                        match = False
+                        if current_c == first_c1 and end - j >= o1_len:
+                            match = True
+                            for k in range(1, o1_len):
+                                if src.chars_c[j+k] != o1_buf[k]:
+                                    match = False
+                                    break
+
+                        if match:
+                            if res_col.char_length + n1_len > res_col.char_capacity:
+                                res_col._reserve_chars(max(res_col.char_capacity * 2, res_col.char_length + n1_len + 1024))
+                            if n1_len > 0:
+                                memcpy(res_col.chars_c + res_col.char_length, n1_buf, n1_len * sizeof(Py_UCS2))
+                            res_col.char_length += n1_len
+                            j += o1_len
+                            continue
+
+                    # --- 均未匹配，直接拷贝 1 个字符 ---
                     if res_col.char_length + 1 > res_col.char_capacity:
                         res_col._reserve_chars(res_col.char_capacity * 2)
-                    res_col.chars_c[res_col.char_length] = src.chars_c[j]
+                    res_col.chars_c[res_col.char_length] = current_c
                     res_col.char_length += 1
                     j += 1
 
-            res_col.length += 1
+                res_col.length += 1
 
-        res_col.offsets_c[res_col.length] = res_col.char_length
-        free(o0_buf)
-        free(n0_buf)
+            res_col.offsets_c[res_col.length] = res_col.char_length
 
-        if field == FIELD_txt:
-            self.text_col = res_col
-        else:
-            self.text_sep_col = res_col
+            if dst_field == FIELD_txt:
+                self.text_col = res_col
+            else:
+                self.text_sep_col = res_col
+
+        finally:
+            # 安全：无论是否发生内存溢出异常，都确保 C 堆内存被干净释放
+            if o0_buf != NULL: free(o0_buf)
+            if n0_buf != NULL: free(n0_buf)
+            if o1_buf != NULL: free(o1_buf)
+            if n1_buf != NULL: free(n1_buf)
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
-    cdef void _replace_dual(self, int field, str old0, str new0, str old1, str new1):
-        if self.length == 0 or not old0 or not old1: return
+    cdef void _replace(self, int field, str old_str, str new_str) except *:
+        self._c_replace_engine(field, field, old_str, new_str, "", "")
 
-        cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef void _replace_cross(self, int src_field, int dst_field, str old_str, str new_str) except *:
+        self._c_replace_engine(src_field, dst_field, old_str, new_str, "", "")
 
-        cdef Py_ssize_t o0_len = 0
-        cdef Py_ssize_t n0_len = 0
-        cdef Py_ssize_t o1_len = 0
-        cdef Py_ssize_t n1_len = 0
-        cdef Py_UCS2* o0_buf = _str_to_ucs2_buf(old0, &o0_len)
-        cdef Py_UCS2* n0_buf = _str_to_ucs2_buf(new0, &n0_len)
-        cdef Py_UCS2* o1_buf = _str_to_ucs2_buf(old1, &o1_len)
-        cdef Py_UCS2* n1_buf = _str_to_ucs2_buf(new1, &n1_len)
-        cdef Py_ssize_t i, j, k
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    cdef void _replace_dual(self, int field, str old0, str new0, str old1, str new1) except *:
+        self._c_replace_engine(field, field, old0, new0, old1, new1)
 
-        cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
-        cdef Py_ssize_t start, end
-        cdef bint match
 
-        for i in range(self.length):
-            start = src.offsets_c[i]
-            end = src.offsets_c[i+1]
-            res_col.offsets_c[i] = res_col.char_length
 
-            j = start
-            while j < end:
-                match = False
-                if o0_len > 0 and end - j >= o0_len:
-                    match = True
-                    for k in range(o0_len):
-                        if src.chars_c[j+k] != o0_buf[k]: match = False; break
-
-                if match:
-                    if res_col.char_length + n0_len > res_col.char_capacity:
-                        res_col._reserve_chars(max(res_col.char_capacity * 2, res_col.char_length + n0_len + 1024))
-                    if n0_len > 0: memcpy(res_col.chars_c + res_col.char_length, n0_buf, n0_len * sizeof(Py_UCS2))
-                    res_col.char_length += n0_len
-                    j += o0_len
-                    continue
-
-                match = False
-                if o1_len > 0 and end - j >= o1_len:
-                    match = True
-                    for k in range(o1_len):
-                        if src.chars_c[j+k] != o1_buf[k]: match = False; break
-
-                if match:
-                    if res_col.char_length + n1_len > res_col.char_capacity:
-                        res_col._reserve_chars(max(res_col.char_capacity * 2, res_col.char_length + n1_len + 1024))
-                    if n1_len > 0: memcpy(res_col.chars_c + res_col.char_length, n1_buf, n1_len * sizeof(Py_UCS2))
-                    res_col.char_length += n1_len
-                    j += o1_len
-                    continue
-
-                if res_col.char_length + 1 > res_col.char_capacity:
-                    res_col._reserve_chars(res_col.char_capacity * 2)
-                res_col.chars_c[res_col.char_length] = src.chars_c[j]
-                res_col.char_length += 1
-                j += 1
-
-            res_col.length += 1
-
-        res_col.offsets_c[res_col.length] = res_col.char_length
-
-        free(o0_buf)
-        free(n0_buf)
-        free(o1_buf)
-        free(n1_buf)
-
-        if field == FIELD_txt:
-            self.text_col = res_col
-        else:
-            self.text_sep_col = res_col
 
     # ========================================================
     # 正则表达式支持
@@ -2469,69 +2477,6 @@ cdef class NDframe:
                 if t in txt:
                     return True
         return False
-
-    cdef void _replace_cross(self, int src_field, int dst_field, str old_str, str new_str) except *:
-        cdef Py_ssize_t n = self.length
-        if n == 0 or not old_str:
-            return
-
-        cdef Py_ssize_t o0_len = 0
-        cdef Py_ssize_t n0_len = 0
-        cdef Py_UCS2* o0_buf = _str_to_ucs2_buf(old_str, &o0_len)
-
-        if o0_len == 0:
-            free(o0_buf)
-            return
-
-        cdef Py_UCS2* n0_buf = _str_to_ucs2_buf(new_str, &n0_len)
-
-        cdef UCS2Column_SoA src = self.text_col if src_field == FIELD_txt else self.text_sep_col
-        cdef UCS2Column_SoA res_col = UCS2Column_SoA(self.length)
-
-        cdef Py_ssize_t i, j, k, start, end
-        cdef bint match
-
-        for i in range(self.length):
-            start = src.offsets_c[i]
-            end = src.offsets_c[i+1]
-            res_col.offsets_c[i] = res_col.char_length
-
-            j = start
-            while j < end:
-                match = False
-                if end - j >= o0_len:
-                    match = True
-                    for k in range(o0_len):
-                        if src.chars_c[j+k] != o0_buf[k]:
-                            match = False
-                            break
-
-                if match:
-                    # 匹配成功，写入 new_str
-                    if res_col.char_length + n0_len > res_col.char_capacity:
-                        res_col._reserve_chars(max(res_col.char_capacity * 2, res_col.char_length + n0_len + 1024))
-                    if n0_len > 0:
-                        memcpy(res_col.chars_c + res_col.char_length, n0_buf, n0_len * sizeof(Py_UCS2))
-                    res_col.char_length += n0_len
-                    j += o0_len
-                else:
-                    # 未匹配，拷贝原字符
-                    if res_col.char_length + 1 > res_col.char_capacity:
-                        res_col._reserve_chars(res_col.char_capacity * 2)
-                    res_col.chars_c[res_col.char_length] = src.chars_c[j]
-                    res_col.char_length += 1
-                    j += 1
-
-            res_col.length += 1
-
-        res_col.offsets_c[res_col.length] = res_col.char_length
-        free(o0_buf)
-        free(n0_buf)
-
-        if dst_field == FIELD_txt:
-            self.text_col = res_col
-        else:
-            self.text_sep_col = res_col
 
 
     cdef void _regex_replace_cross(self, int src_field, int dst_field, object pattern, str rewrite) except *:
