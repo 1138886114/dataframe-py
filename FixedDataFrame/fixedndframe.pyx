@@ -362,12 +362,11 @@ cdef class UCS2Column_SoA:
         self.length += other.length
         self.char_length += other.char_length
 
-    cdef void _reorder(self, list indices) except *:
+    cdef void _reorder(self, Py_ssize_t* indices) except *:
         cdef Py_ssize_t n = self.length
         if n == 0: return
 
         cdef Py_ssize_t* new_offsets = <Py_ssize_t*>malloc((self.capacity + 1) * sizeof(Py_ssize_t))
-        # 优化点: 精确分配当前所需内存，而不是整个 char_capacity
         cdef Py_UCS2* new_chars = <Py_UCS2*>malloc(max(self.char_length, 1024) * sizeof(Py_UCS2))
 
         if not new_offsets or not new_chars:
@@ -380,7 +379,7 @@ cdef class UCS2Column_SoA:
         cdef Py_ssize_t idx, start, end, str_len
 
         for i in range(n):
-            idx = <Py_ssize_t>indices[i]
+            idx = indices[i]
             start = self.offsets_c[idx]
             str_len = self.offsets_c[idx + 1] - start
 
@@ -2562,8 +2561,7 @@ cdef class NDframe:
     # ========================================================
     cdef void _sort_col(self, int field_id, bint descending) except *:
         cdef Py_ssize_t n = self.length
-        if n < 2:
-            return
+        if n < 2: return
 
         if field_id == FIELD_txt or field_id == FIELD_sep:
             self._sort_col_str(field_id, descending)
@@ -2580,45 +2578,47 @@ cdef class NDframe:
             pairs[i] = (_get_field_val(&rows[i], field_id), i)
 
         pairs.sort(reverse=descending)
-        cdef list indices = [idx for _, idx in pairs]
 
-        self._reorder_rows(indices)
+        cdef Py_ssize_t* order = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        if not order: raise MemoryError()
+        try:
+            for i in range(n):
+                order[i] = pairs[i][1]
+            self._reorder_rows(order)
+        finally:
+            free(order)
 
     cdef void _sort_col_str(self, int field_id, bint descending) except *:
-        """按 UCS2 码元字典序就地排序 text / text_sep 字段 (迭代归并排序，0 Python 对象比较)"""
         cdef Py_ssize_t n = self.length
         cdef UCS2Column_SoA col = self.text_col if field_id == FIELD_txt else self.text_sep_col
 
         cdef Py_ssize_t* order = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
         cdef Py_ssize_t* tmp = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
-        cdef list indices
+
         if not order or not tmp:
             if order: free(order)
             if tmp: free(tmp)
             raise MemoryError()
 
         try:
-            for i in range(n):
-                order[i] = i
+            for i in range(n): order[i] = i
             _mergesort_str(order, tmp, 0, n, col.chars_c, col.offsets_c, descending)
-            indices = [<Py_ssize_t>order[i] for i in range(n)]
-            self._reorder_rows(indices)
+            self._reorder_rows(order)
         finally:
             free(order)
             free(tmp)
 
-    cdef void _reorder_rows(self, list indices) except *:
-        """按索引列表就地重排行数组与 text/text_sep 两列，返回后行序与 indices 完全一致"""
+    cdef void _reorder_rows(self, Py_ssize_t* indices) except *:
+        """纯 C 指针重排，0 Python 对象开销"""
         cdef Py_ssize_t n = self.length
         cdef RowC* rows = self.rows_c
 
         cdef RowC* temp_rows = <RowC*>malloc(<size_t>n * sizeof(RowC))
-        if not temp_rows:
-            raise MemoryError()
+        if not temp_rows: raise MemoryError()
 
         try:
             for i in range(n):
-                temp_rows[i] = rows[<Py_ssize_t>indices[i]]
+                temp_rows[i] = rows[indices[i]]
             memcpy(rows, temp_rows, <size_t>n * sizeof(RowC))
             self.text_col._reorder(indices)
             self.text_sep_col._reorder(indices)
@@ -2909,83 +2909,112 @@ cdef class NDframe:
 
     cdef NDframe _merge_line(self, int width_threshold, int height_threshold, str sep=""):
         cdef Py_ssize_t n = self.length
-        if n == 0:
-            return NDframe(1)
+        if n == 0: return NDframe(1)
 
         cdef NDframe result = NDframe(n)
         cdef RowC* src_rows = self.rows_c
         cdef RowC* dst_rows = result.rows_c
-        cdef UCS2Column_SoA dst_txt_col = result.text_col
-        cdef UCS2Column_SoA dst_sep_col = result.text_sep_col
+        cdef UCS2Column_SoA dst_txt = result.text_col
+        cdef UCS2Column_SoA dst_sep = result.text_sep_col
+        cdef UCS2Column_SoA src_txt = self.text_col
+        cdef UCS2Column_SoA src_sep = self.text_sep_col
 
-        cdef Py_ssize_t i = 0
-        cdef Py_ssize_t write_idx = 0
-        cdef Py_ssize_t curr
-        cdef int min_x0, min_y0, max_x1, max_y1, max_height
-        cdef int new_width, new_height
-        cdef list merged_text_parts
-        cdef list merged_sep_parts
+        cdef Py_ssize_t sep_len = 0
+        cdef Py_UCS2* sep_buf = _str_to_ucs2_buf(sep, &sep_len)
+
+        cdef Py_ssize_t i = 0, curr, write_idx = 0
+        cdef int min_x0, min_y0, max_x1, max_y1, max_height, new_height
         cdef RowC row
 
-        while i < n:
-            min_x0 = src_rows[i].x0
-            min_y0 = src_rows[i].y0
-            max_x1 = src_rows[i].x1
-            max_y1 = src_rows[i].y1
-            max_height = src_rows[i].height
+        # 临时缓冲，避免在循环中不断去触碰 dst 的内存伸缩
+        cdef Py_ssize_t t_len, s_len, start, slen, part_idx
+        cdef Py_UCS2* tmp_buf = <Py_UCS2*>malloc(1024 * 10 * sizeof(Py_UCS2)) # 10K UCS2 缓冲
+        if not tmp_buf:
+            free(sep_buf)
+            raise MemoryError()
 
-            merged_text_parts = [self.text_col._get_str(i)]
-            merged_sep_parts = [self.text_sep_col._get_str(i)]
-            curr = i
+        try:
+            while i < n:
+                min_x0 = src_rows[i].x0; min_y0 = src_rows[i].y0
+                max_x1 = src_rows[i].x1; max_y1 = src_rows[i].y1
+                max_height = src_rows[i].height
+                curr = i
 
-            while curr + 1 < n:
-                if (src_rows[curr + 1].x0 - src_rows[curr].x1 < width_threshold and
-                    src_rows[curr + 1].y0 - src_rows[curr].y0 < height_threshold and
-                    src_rows[curr + 1].x0 - src_rows[curr].x1 > -width_threshold and
-                    src_rows[curr + 1].y0 - src_rows[curr].y0 > -height_threshold):
-                    if src_rows[curr + 1].x0 < min_x0:
-                        min_x0 = src_rows[curr + 1].x0
-                    if src_rows[curr + 1].y0 < min_y0:
-                        min_y0 = src_rows[curr + 1].y0
-                    if src_rows[curr + 1].x1 > max_x1:
-                        max_x1 = src_rows[curr + 1].x1
-                    if src_rows[curr + 1].y1 > max_y1:
-                        max_y1 = src_rows[curr + 1].y1
-                    if src_rows[curr + 1].height > max_height:
-                        max_height = src_rows[curr + 1].height
+                while curr + 1 < n:
+                    if (src_rows[curr + 1].x0 - src_rows[curr].x1 < width_threshold and
+                        src_rows[curr + 1].y0 - src_rows[curr].y0 < height_threshold and
+                        src_rows[curr + 1].x0 - src_rows[curr].x1 > -width_threshold and
+                        src_rows[curr + 1].y0 - src_rows[curr].y0 > -height_threshold):
 
-                    merged_text_parts.append(self.text_col._get_str(curr + 1))
-                    merged_sep_parts.append(self.text_sep_col._get_str(curr + 1))
-                    curr += 1
-                else:
-                    break
+                        if src_rows[curr + 1].x0 < min_x0: min_x0 = src_rows[curr + 1].x0
+                        if src_rows[curr + 1].y0 < min_y0: min_y0 = src_rows[curr + 1].y0
+                        if src_rows[curr + 1].x1 > max_x1: max_x1 = src_rows[curr + 1].x1
+                        if src_rows[curr + 1].y1 > max_y1: max_y1 = src_rows[curr + 1].y1
+                        if src_rows[curr + 1].height > max_height: max_height = src_rows[curr + 1].height
+                        curr += 1
+                    else:
+                        break
 
-            merged_text = sep.join(merged_text_parts)
-            merged_sep = sep.join(merged_sep_parts)
+                new_height = max_y1 - min_y0
+                if new_height < max_height: new_height = max_height
 
-            new_width = max_x1 - min_x0
-            new_height = max_y1 - min_y0
-            if new_height < max_height:
-                new_height = max_height
+                row.idx = <int>write_idx
+                row.x0 = min_x0; row.y0 = min_y0; row.x1 = max_x1; row.y1 = max_y1
+                row.width = max_x1 - min_x0
+                row.height = new_height
+                row.page = src_rows[i].page
+                row.flags = src_rows[i].flags
 
-            row.idx = <int>write_idx
-            row.x0 = min_x0
-            row.y0 = min_y0
-            row.x1 = max_x1
-            row.y1 = max_y1
-            row.width = new_width
-            row.height = new_height
-            row.page = src_rows[i].page
-            row.flags = src_rows[i].flags
+                # --- 纯 C 内存级别组装 text ---
+                t_len = 0
+                for part_idx in range(i, curr + 1):
+                    start = src_txt.offsets_c[part_idx]
+                    slen = src_txt.offsets_c[part_idx + 1] - start
+                    if slen > 0:
+                        memcpy(tmp_buf + t_len, src_txt.chars_c + start, slen * sizeof(Py_UCS2))
+                        t_len += slen
+                    if part_idx < curr and sep_len > 0:
+                        memcpy(tmp_buf + t_len, sep_buf, sep_len * sizeof(Py_UCS2))
+                        t_len += sep_len
 
-            dst_rows[write_idx] = row
-            dst_txt_col.append(merged_text)
-            dst_sep_col.append(merged_sep)
-            write_idx += 1
+                # 绕过 append 直接写入 dst_txt，避免构造 Python 字符串
+                if dst_txt.length >= dst_txt.capacity: dst_txt._reserve_rows(dst_txt.capacity * 2)
+                if dst_txt.char_length + t_len > dst_txt.char_capacity:
+                    dst_txt._reserve_chars(dst_txt.char_length + t_len + 1024)
+                if t_len > 0: memcpy(dst_txt.chars_c + dst_txt.char_length, tmp_buf, t_len * sizeof(Py_UCS2))
+                dst_txt.char_length += t_len
+                dst_txt.length += 1
+                dst_txt.offsets_c[dst_txt.length] = dst_txt.char_length
 
-            i = curr + 1
+                # --- 纯 C 内存级别组装 sep ---
+                s_len = 0
+                for part_idx in range(i, curr + 1):
+                    start = src_sep.offsets_c[part_idx]
+                    slen = src_sep.offsets_c[part_idx + 1] - start
+                    if slen > 0:
+                        memcpy(tmp_buf + s_len, src_sep.chars_c + start, slen * sizeof(Py_UCS2))
+                        s_len += slen
+                    if part_idx < curr and sep_len > 0:
+                        memcpy(tmp_buf + s_len, sep_buf, sep_len * sizeof(Py_UCS2))
+                        s_len += sep_len
 
-        result.length = write_idx
+                if dst_sep.length >= dst_sep.capacity: dst_sep._reserve_rows(dst_sep.capacity * 2)
+                if dst_sep.char_length + s_len > dst_sep.char_capacity:
+                    dst_sep._reserve_chars(dst_sep.char_length + s_len + 1024)
+                if s_len > 0: memcpy(dst_sep.chars_c + dst_sep.char_length, tmp_buf, s_len * sizeof(Py_UCS2))
+                dst_sep.char_length += s_len
+                dst_sep.length += 1
+                dst_sep.offsets_c[dst_sep.length] = dst_sep.char_length
+
+                dst_rows[write_idx] = row
+                write_idx += 1
+                i = curr + 1
+
+            result.length = write_idx
+        finally:
+            if tmp_buf != NULL: free(tmp_buf)
+            if sep_buf != NULL: free(sep_buf)
+
         return result
 
     cdef list _diff_col(self, int field):
