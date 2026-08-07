@@ -2191,21 +2191,85 @@ cdef class NDframe:
     @cython.wraparound(False)
     cdef NDframe _df_regex_re(self, int field, object pattern):
         cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if n == 0: return new_df
+        if n == 0: return NDframe(1)
 
-        cdef Py_ssize_t i, start, end, write_idx = 0
-        cdef object search_fn = pattern.search
         cdef UCS2Column_SoA src = self.text_col if field == FIELD_txt else self.text_sep_col
+        cdef object search_fn = pattern.search
 
-        for i in range(n):
-            start = src.offsets_c[i]
-            end = src.offsets_c[i + 1]
-            if end > start and search_fn(src._get_str(i)) is not None:
-                _df_copy_row(new_df, self, i, &write_idx)
+        cdef Py_ssize_t i, start, end
+        cdef str txt
+        cdef Py_ssize_t src_i, t_len, s_len
 
-        new_df.length = write_idx
-        return new_df
+        # 存放命中行号的 C 数组
+        cdef Py_ssize_t* match_idx
+        cdef Py_ssize_t match_count = 0
+        cdef Py_ssize_t txt_char_total = 0
+        cdef Py_ssize_t sep_char_total = 0
+
+        cdef NDframe new_df
+        cdef RowC* src_rows
+        cdef RowC* dst_rows
+        cdef UCS2Column_SoA d_txt, d_sep, s_txt, s_sep
+
+        match_idx = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        if not match_idx:
+            raise MemoryError()
+
+        try:
+            # =========================================================
+            # [阶段一]：极速流水线 (Pipelining) - 纯净的 即造 -> 即查 -> 即毁 全在 L1 Cache 兜转
+            # =========================================================
+            for i in range(n):
+                start = src.offsets_c[i]
+                end = src.offsets_c[i + 1]
+                if end > start:
+                    txt = PyUnicode_FromKindAndData(2, src.chars_c + start, end - start)
+                    if search_fn(txt) is not None:
+                        match_idx[match_count] = i
+                        match_count += 1
+
+                        txt_char_total += self.text_col.offsets_c[i+1] - self.text_col.offsets_c[i]
+                        sep_char_total += self.text_sep_col.offsets_c[i+1] - self.text_sep_col.offsets_c[i]
+
+            if match_count == 0:
+                return NDframe(1)
+
+            # =========================================================
+            # [阶段二]：一次性精准内存组装 (Zero-Overhead Rebuild) 纯 C 指针平推
+            # =========================================================
+            new_df = NDframe(match_count)
+            new_df.text_col._reserve_chars(max(txt_char_total, 1024))
+            new_df.text_sep_col._reserve_chars(max(sep_char_total, 1024))
+
+            src_rows = self.rows_c
+            dst_rows = new_df.rows_c
+            d_txt = new_df.text_col
+            d_sep = new_df.text_sep_col
+            s_txt = self.text_col
+            s_sep = self.text_sep_col
+
+            for i in range(match_count):
+                src_i = match_idx[i]
+                dst_rows[i] = src_rows[src_i]
+
+                t_len = s_txt.offsets_c[src_i+1] - s_txt.offsets_c[src_i]
+                if t_len > 0:
+                    memcpy(d_txt.chars_c + d_txt.char_length, s_txt.chars_c + s_txt.offsets_c[src_i], t_len * sizeof(Py_UCS2))
+                d_txt.char_length += t_len
+                d_txt.length += 1
+                d_txt.offsets_c[d_txt.length] = d_txt.char_length
+
+                s_len = s_sep.offsets_c[src_i+1] - s_sep.offsets_c[src_i]
+                if s_len > 0:
+                    memcpy(d_sep.chars_c + d_sep.char_length, s_sep.chars_c + s_sep.offsets_c[src_i], s_len * sizeof(Py_UCS2))
+                d_sep.char_length += s_len
+                d_sep.length += 1
+                d_sep.offsets_c[d_sep.length] = d_sep.char_length
+
+            new_df.length = match_count
+            return new_df
+        finally:
+            free(match_idx)
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
