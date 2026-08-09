@@ -300,19 +300,23 @@ cdef class UCS2Column_SoA:
         if self.char_length + str_len > self.char_capacity:
             self._reserve_chars(max(self.char_capacity * 2, self.char_length + str_len + 1024))
 
+        # 1. 严格的静态类型声明，杜绝任何隐式 Python 对象转换
+        cdef int kind
+        cdef void* data
+        cdef Py_ssize_t i
+        cdef Py_UCS4 cp
+
+        # 2. 提前计算目标地址指针，省去循环内部的寻址加法
+        cdef Py_UCS2* dst = NULL
+
+        # 用于快速内存映射的 C 指针
+        cdef unsigned char* src_1byte
+        cdef Py_UCS4* src_4byte
+
         if str_len > 0:
-            # 1. 严格的静态类型声明，杜绝任何隐式 Python 对象转换
-            cdef int kind = PyUnicode_KIND(val)
-            cdef void* data = PyUnicode_DATA(val)
-            cdef Py_ssize_t i
-            cdef Py_UCS4 cp
-
-            # 2. 提前计算目标地址指针，省去循环内部的寻址加法
-            cdef Py_UCS2* dst = self.chars_c + self.char_length
-
-            # 用于快速内存映射的 C 指针
-            cdef unsigned char* src_1byte
-            cdef Py_UCS4* src_4byte
+            kind = PyUnicode_KIND(val)
+            data = PyUnicode_DATA(val)
+            dst = self.chars_c + self.char_length
 
             if kind == PyUnicode_2BYTE_KIND:
                 # 2-byte: 完美对齐，直接 CPU 寄存器级别 memcpy
@@ -3754,6 +3758,15 @@ cdef class NDframe:
         cdef Py_ssize_t sep_char_total = 0
         cdef Py_ssize_t i
 
+        cdef UCS2Column_SoA s_txt = self.text_col
+        cdef UCS2Column_SoA s_sep = self.text_sep_col
+        cdef NDframe new_df = None
+        cdef RowC* src_rows = NULL
+        cdef RowC* dst_rows = NULL
+        cdef UCS2Column_SoA d_txt, d_sep
+        cdef Py_ssize_t write_idx = 0
+        cdef Py_ssize_t t_len, s_len
+
         try:
             # 默认全部标记为 1 (保留)
             memset(keep_mask, 1, n)
@@ -3769,9 +3782,6 @@ cdef class NDframe:
             # =========================================================
             # [阶段一]：扫描掩码，精确统计需要的保留行数与物理内存
             # =========================================================
-            cdef UCS2Column_SoA s_txt = self.text_col
-            cdef UCS2Column_SoA s_sep = self.text_sep_col
-
             for i in range(n):
                 if keep_mask[i] == 1:
                     keep_count += 1
@@ -3787,17 +3797,14 @@ cdef class NDframe:
             # =========================================================
             # [阶段二]：一次性精准内存分配 + 剥离边界判定的极速复制
             # =========================================================
-            cdef NDframe new_df = NDframe(keep_count)
+            new_df = NDframe(keep_count)
             new_df.text_col._reserve_chars(max(txt_char_total, 1024))
             new_df.text_sep_col._reserve_chars(max(sep_char_total, 1024))
 
-            cdef RowC* src_rows = self.rows_c
-            cdef RowC* dst_rows = new_df.rows_c
-            cdef UCS2Column_SoA d_txt = new_df.text_col
-            cdef UCS2Column_SoA d_sep = new_df.text_sep_col
-
-            cdef Py_ssize_t write_idx = 0
-            cdef Py_ssize_t t_len, s_len
+            src_rows = self.rows_c
+            dst_rows = new_df.rows_c
+            d_txt = new_df.text_col
+            d_sep = new_df.text_sep_col
 
             for i in range(n):
                 if keep_mask[i] == 1:
