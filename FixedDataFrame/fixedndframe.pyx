@@ -377,21 +377,6 @@ cdef class UCS2Column_SoA:
         new_col.char_length = char_len
         return new_col
 
-    cdef void concat(self, UCS2Column_SoA other) except *:
-        if other.length == 0: return
-        self._reserve_rows(self.length + other.length)
-        self._reserve_chars(self.char_length + other.char_length)
-
-        if other.char_length > 0:
-            memcpy(self.chars_c + self.char_length, other.chars_c, other.char_length * sizeof(Py_UCS2))
-
-        cdef Py_ssize_t base_offset = self.char_length
-        for i in range(other.length):
-            self.offsets_c[self.length + 1 + i] = base_offset + other.offsets_c[i + 1]
-
-        self.length += other.length
-        self.char_length += other.char_length
-
     cdef void _reorder(self, Py_ssize_t* indices) except *:
         cdef Py_ssize_t n = self.length
         if n == 0: return
@@ -431,18 +416,6 @@ cdef class UCS2Column_SoA:
         if self.length > 0:
             self.length -= 1
             self.char_length = self.offsets_c[self.length]
-
-    cdef inline void _remove_at(self, Py_ssize_t idx) noexcept:
-        cdef Py_ssize_t start = self.offsets_c[idx]
-        cdef Py_ssize_t end = self.offsets_c[idx + 1]
-        cdef Py_ssize_t c_len = end - start
-        cdef Py_ssize_t tail = self.char_length - end
-        if tail > 0:
-            memmove(self.chars_c + start, self.chars_c + end, tail * sizeof(Py_UCS2))
-        self.char_length -= c_len
-        for i in range(idx, self.length):
-            self.offsets_c[i] = self.offsets_c[i + 1] - c_len
-        self.length -= 1
 
     cdef list _is_mode(self, int mode):
         cdef list res = PyList_New(self.length)
@@ -2872,13 +2845,71 @@ cdef class NDframe:
         if total == 0:
             return result
 
-        memcpy(result.rows_c, df1.rows_c, len1 * sizeof(RowC))
-        memcpy(result.rows_c + len1, df2.rows_c, len2 * sizeof(RowC))
+        # 1. 结构体数组极速拼接
+        cdef RowC* dst_rows = result.rows_c
+        if len1 > 0:
+            memcpy(dst_rows, df1.rows_c, len1 * sizeof(RowC))
+        if len2 > 0:
+            memcpy(dst_rows + len1, df2.rows_c, len2 * sizeof(RowC))
 
-        result.text_col = df1.text_col.copy()
-        result.text_col.concat(df2.text_col)
-        result.text_sep_col = df1.text_sep_col.copy()
-        result.text_sep_col.concat(df2.text_sep_col)
+        # 2. 一次性分配好 text_col 的物理内存
+        cdef UCS2Column_SoA t_res = result.text_col
+        cdef UCS2Column_SoA t1 = df1.text_col
+        cdef UCS2Column_SoA t2 = df2.text_col
+        cdef Py_ssize_t t_char_total = t1.char_length + t2.char_length
+        if t_char_total > t_res.char_capacity:
+            t_res._reserve_chars(max(t_char_total, 1024))
+
+        # 3. 极速拼接 text_col
+        cdef Py_ssize_t i
+        cdef Py_ssize_t* t_res_offsets = t_res.offsets_c
+        cdef Py_ssize_t* t1_offsets = t1.offsets_c
+        cdef Py_ssize_t* t2_offsets = t2.offsets_c
+
+        # 拷贝 df1 的内容
+        if t1.char_length > 0:
+            memcpy(t_res.chars_c, t1.chars_c, t1.char_length * sizeof(Py_UCS2))
+        for i in range(len1 + 1):
+            t_res_offsets[i] = t1_offsets[i]
+
+        # 拷贝 df2 的内容
+        if t2.char_length > 0:
+            memcpy(t_res.chars_c + t1.char_length, t2.chars_c, t2.char_length * sizeof(Py_UCS2))
+        cdef Py_ssize_t t_base_offset = t1.char_length
+        for i in range(len2):
+            t_res_offsets[len1 + 1 + i] = t_base_offset + t2_offsets[i + 1]
+
+        t_res.length = total
+        t_res.char_length = t_char_total
+
+        # 4. 一次性分配好 text_sep_col 的物理内存
+        cdef UCS2Column_SoA s_res = result.text_sep_col
+        cdef UCS2Column_SoA s1 = df1.text_sep_col
+        cdef UCS2Column_SoA s2 = df2.text_sep_col
+        cdef Py_ssize_t s_char_total = s1.char_length + s2.char_length
+        if s_char_total > s_res.char_capacity:
+            s_res._reserve_chars(max(s_char_total, 1024))
+
+        # 5. 极速拼接 text_sep_col
+        cdef Py_ssize_t* s_res_offsets = s_res.offsets_c
+        cdef Py_ssize_t* s1_offsets = s1.offsets_c
+        cdef Py_ssize_t* s2_offsets = s2.offsets_c
+
+        # 拷贝 df1 的内容
+        if s1.char_length > 0:
+            memcpy(s_res.chars_c, s1.chars_c, s1.char_length * sizeof(Py_UCS2))
+        for i in range(len1 + 1):
+            s_res_offsets[i] = s1_offsets[i]
+
+        # 拷贝 df2 的内容
+        if s2.char_length > 0:
+            memcpy(s_res.chars_c + s1.char_length, s2.chars_c, s2.char_length * sizeof(Py_UCS2))
+        cdef Py_ssize_t s_base_offset = s1.char_length
+        for i in range(len2):
+            s_res_offsets[len1 + 1 + i] = s_base_offset + s2_offsets[i + 1]
+
+        s_res.length = total
+        s_res.char_length = s_char_total
 
         result.length = total
         return result
@@ -2916,22 +2947,6 @@ cdef class NDframe:
         cdef Py_ssize_t i, write_idx = 0
         for i in range(n):
             if i != index:
-                _df_copy_row(new_df, self, i, &write_idx)
-
-        new_df.length = write_idx
-        return new_df
-
-    cdef NDframe _df_drops(self, object idx_set):
-        cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if n == 0:
-            return new_df
-
-        cdef set idx_set_c = set(idx_set)
-        cdef Py_ssize_t i, write_idx = 0
-
-        for i in range(n):
-            if i not in idx_set_c:
                 _df_copy_row(new_df, self, i, &write_idx)
 
         new_df.length = write_idx
@@ -3110,13 +3125,64 @@ cdef class NDframe:
         if n == 0 or index < 0 or index >= n:
             return self
 
+        # 行结构体平移数量
         cdef Py_ssize_t move_count = n - index - 1
-        cdef RowC* rows = self.rows_c
-        if move_count > 0:
-            memmove(&rows[index], &rows[index + 1], move_count * sizeof(RowC))
+        # 偏移量数组平移数量 (偏移量数组长度恒为 n + 1，因此多移一位)
+        cdef Py_ssize_t offset_move_count = n - index
 
-        self.text_col._remove_at(index)
-        self.text_sep_col._remove_at(index)
+        # 1. Row 结构体数组剔除 (直接物理平移)
+        if move_count > 0:
+            memmove(self.rows_c + index, self.rows_c + index + 1, move_count * sizeof(RowC))
+
+        cdef Py_ssize_t i
+
+        # ==========================================
+        # 2. Text 列内存剔除
+        # ==========================================
+        cdef UCS2Column_SoA t_col = self.text_col
+        cdef Py_ssize_t t_start = t_col.offsets_c[index]
+        cdef Py_ssize_t t_len = t_col.offsets_c[index + 1] - t_start
+        cdef Py_ssize_t t_tail = t_col.char_length - (t_start + t_len)
+
+        # 2.1 挤压字符池
+        if t_tail > 0 and t_len > 0:
+            memmove(t_col.chars_c + t_start, t_col.chars_c + t_start + t_len, t_tail * sizeof(Py_UCS2))
+        t_col.char_length -= t_len
+
+        # 2.2 偏移量修复 (核心优化点)
+        cdef Py_ssize_t* t_offsets = t_col.offsets_c
+        if t_len == 0:
+            if offset_move_count > 0:
+                memmove(t_offsets + index, t_offsets + index + 1, offset_move_count * sizeof(Py_ssize_t))
+        else:
+            # 正常路径：纯 C 指针提权，方便 C 编译器触发 SIMD 自动向量化
+            for i in range(offset_move_count):
+                t_offsets[index + i] = t_offsets[index + i + 1] - t_len
+        t_col.length -= 1
+
+        # ==========================================
+        # 3. Sep 列内存剔除
+        # ==========================================
+        cdef UCS2Column_SoA s_col = self.text_sep_col
+        cdef Py_ssize_t s_start = s_col.offsets_c[index]
+        cdef Py_ssize_t s_len = s_col.offsets_c[index + 1] - s_start
+        cdef Py_ssize_t s_tail = s_col.char_length - (s_start + s_len)
+
+        # 3.1 挤压字符池
+        if s_tail > 0 and s_len > 0:
+            memmove(s_col.chars_c + s_start, s_col.chars_c + s_start + s_len, s_tail * sizeof(Py_UCS2))
+        s_col.char_length -= s_len
+
+        # 3.2 偏移量修复
+        cdef Py_ssize_t* s_offsets = s_col.offsets_c
+        if s_len == 0:
+            if offset_move_count > 0:
+                memmove(s_offsets + index, s_offsets + index + 1, offset_move_count * sizeof(Py_ssize_t))
+        else:
+            for i in range(offset_move_count):
+                s_offsets[index + i] = s_offsets[index + i + 1] - s_len
+        s_col.length -= 1
+
         self.length = n - 1
         return self
 
@@ -3666,9 +3732,101 @@ cdef class NDframe:
         self._apply_if_less_add_y(cond_id, threshold, offset)
         return self
 
-    def df_drops(self, indices):
-        cdef set idx_set = set(indices)
-        return self._df_drops(idx_set)
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    def df_drops(self, object indices):
+        """
+        通过 C 级别掩码 (Mask) 批量删除指定索引的多行，返回全新的 NDframe。
+        采用 Two-Pass 极速重建架构，免疫索引坍塌问题，0 Python 对象查询开销。
+        """
+        cdef Py_ssize_t n = self.length
+        if n == 0:
+            return NDframe(1)
+
+        # 1. 申请纯 C 的布尔掩码数组 (1 表示保留，0 表示删除)
+        cdef char* keep_mask = <char*>malloc(n * sizeof(char))
+        if not keep_mask:
+            raise MemoryError()
+
+        cdef Py_ssize_t idx
+        cdef Py_ssize_t keep_count = 0
+        cdef Py_ssize_t txt_char_total = 0
+        cdef Py_ssize_t sep_char_total = 0
+        cdef Py_ssize_t i
+
+        try:
+            # 默认全部标记为 1 (保留)
+            memset(keep_mask, 1, n)
+
+            # 解析传入的 indices 并标记为 0 (剔除)
+            for item in indices:
+                idx = <Py_ssize_t>int(item)
+                if idx < 0:
+                    idx += n
+                if 0 <= idx < n:
+                    keep_mask[idx] = 0
+
+            # =========================================================
+            # [阶段一]：扫描掩码，精确统计需要的保留行数与物理内存
+            # =========================================================
+            cdef UCS2Column_SoA s_txt = self.text_col
+            cdef UCS2Column_SoA s_sep = self.text_sep_col
+
+            for i in range(n):
+                if keep_mask[i] == 1:
+                    keep_count += 1
+                    txt_char_total += s_txt.offsets_c[i+1] - s_txt.offsets_c[i]
+                    sep_char_total += s_sep.offsets_c[i+1] - s_sep.offsets_c[i]
+
+            # 极端情况判定
+            if keep_count == 0:
+                return NDframe(1)
+            if keep_count == n:
+                return self.copy()
+
+            # =========================================================
+            # [阶段二]：一次性精准内存分配 + 剥离边界判定的极速复制
+            # =========================================================
+            cdef NDframe new_df = NDframe(keep_count)
+            new_df.text_col._reserve_chars(max(txt_char_total, 1024))
+            new_df.text_sep_col._reserve_chars(max(sep_char_total, 1024))
+
+            cdef RowC* src_rows = self.rows_c
+            cdef RowC* dst_rows = new_df.rows_c
+            cdef UCS2Column_SoA d_txt = new_df.text_col
+            cdef UCS2Column_SoA d_sep = new_df.text_sep_col
+
+            cdef Py_ssize_t write_idx = 0
+            cdef Py_ssize_t t_len, s_len
+
+            for i in range(n):
+                if keep_mask[i] == 1:
+                    # 1. 拷贝 Row 结构体
+                    dst_rows[write_idx] = src_rows[i]
+
+                    # 2. 拷贝 Text 列
+                    t_len = s_txt.offsets_c[i+1] - s_txt.offsets_c[i]
+                    if t_len > 0:
+                        memcpy(d_txt.chars_c + d_txt.char_length, s_txt.chars_c + s_txt.offsets_c[i], t_len * sizeof(Py_UCS2))
+                    d_txt.char_length += t_len
+                    d_txt.length += 1
+                    d_txt.offsets_c[d_txt.length] = d_txt.char_length
+
+                    # 3. 拷贝 Sep 列
+                    s_len = s_sep.offsets_c[i+1] - s_sep.offsets_c[i]
+                    if s_len > 0:
+                        memcpy(d_sep.chars_c + d_sep.char_length, s_sep.chars_c + s_sep.offsets_c[i], s_len * sizeof(Py_UCS2))
+                    d_sep.char_length += s_len
+                    d_sep.length += 1
+                    d_sep.offsets_c[d_sep.length] = d_sep.char_length
+
+                    write_idx += 1
+
+            new_df.length = keep_count
+            return new_df
+
+        finally:
+            free(keep_mask)
 
     def df_drop(self, index):
         cdef int c_idx = int(index)
