@@ -289,28 +289,47 @@ cdef class UCS2Column_SoA:
         return PyUnicode_FromKindAndData(2, self.chars_c + start, str_len)
 
     cdef void append(self, str val) except *:
-        """纯 C 方法，极速追加"""
-        cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val) if val is not None else 0
+        """纯 C 方法，极速追加 (Zero Python Overhead)"""
+        cdef Py_ssize_t str_len = 0
+        if val is not None:
+            str_len = PyUnicode_GET_LENGTH(val)
 
         if self.length >= self.capacity:
             self._reserve_rows(self.capacity * 2)
 
         if self.char_length + str_len > self.char_capacity:
             self._reserve_chars(max(self.char_capacity * 2, self.char_length + str_len + 1024))
-        cdef int kind
-        cdef void* data
-        if str_len > 0 and val is not None:
-            kind = PyUnicode_KIND(val)
-            data = PyUnicode_DATA(val)
+
+        if str_len > 0:
+            # 1. 严格的静态类型声明，杜绝任何隐式 Python 对象转换
+            cdef int kind = PyUnicode_KIND(val)
+            cdef void* data = PyUnicode_DATA(val)
+            cdef Py_ssize_t i
+            cdef Py_UCS4 cp
+
+            # 2. 提前计算目标地址指针，省去循环内部的寻址加法
+            cdef Py_UCS2* dst = self.chars_c + self.char_length
+
+            # 用于快速内存映射的 C 指针
+            cdef unsigned char* src_1byte
+            cdef Py_UCS4* src_4byte
+
             if kind == PyUnicode_2BYTE_KIND:
-                memcpy(self.chars_c + self.char_length, data, str_len * sizeof(Py_UCS2))
+                # 2-byte: 完美对齐，直接 CPU 寄存器级别 memcpy
+                memcpy(dst, data, str_len * sizeof(Py_UCS2))
+
             elif kind == PyUnicode_1BYTE_KIND:
+                # 1-byte: 纯 C 数组拓宽，C 编译器极易在此处触发 SIMD 自动向量化
+                src_1byte = <unsigned char*>data
                 for i in range(str_len):
-                    self.chars_c[self.char_length + i] = <Py_UCS2>(<unsigned char*>data)[i]
+                    dst[i] = <Py_UCS2>src_1byte[i]
+
             else:
+                # 4-byte: 直接把数据当做 uint32_t 数组遍历
+                src_4byte = <Py_UCS4*>data
                 for i in range(str_len):
-                    cp = PyUnicode_READ_CHAR(val, i)
-                    self.chars_c[self.char_length + i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
+                    cp = src_4byte[i]
+                    dst[i] = <Py_UCS2>cp if cp <= 0xFFFF else 0x003F
 
         self.char_length += str_len
         self.length += 1
@@ -331,17 +350,28 @@ cdef class UCS2Column_SoA:
         cdef Py_ssize_t new_len = stop - start
         if new_len <= 0:
             return UCS2Column_SoA(16)
-        cdef UCS2Column_SoA new_col = UCS2Column_SoA(new_len)
-        cdef Py_ssize_t char_start = self.offsets_c[start]
-        cdef Py_ssize_t char_stop = self.offsets_c[stop]
-        cdef Py_ssize_t char_len = char_stop - char_start
 
-        new_col._reserve_chars(char_len + 1)
+        cdef UCS2Column_SoA new_col = UCS2Column_SoA(new_len)
+
+        cdef Py_ssize_t* src_offsets = self.offsets_c
+        cdef Py_ssize_t char_start = src_offsets[start]
+        cdef Py_ssize_t char_len = src_offsets[stop] - char_start
+
+        if char_len > new_col.char_capacity:
+            new_col._reserve_chars(char_len + 1024)
+
+        # 1. 连续字符池：极速物理对拷
         if char_len > 0:
             memcpy(new_col.chars_c, self.chars_c + char_start, char_len * sizeof(Py_UCS2))
 
+        # 2. 偏移量重写：指针提权 + 严格类型化
+        cdef Py_ssize_t i
+        cdef Py_ssize_t* dst_offsets = new_col.offsets_c
+
+        cdef Py_ssize_t* src_slice_offsets = src_offsets + start
+
         for i in range(new_len + 1):
-            new_col.offsets_c[i] = self.offsets_c[start + i] - char_start
+            dst_offsets[i] = src_slice_offsets[i] - char_start
 
         new_col.length = new_len
         new_col.char_length = char_len
