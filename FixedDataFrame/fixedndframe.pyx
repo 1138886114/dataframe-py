@@ -673,19 +673,35 @@ cdef class StringAccessor:
         return self.df._df_strlen_cmp(self.field, n, OP_EQUAL)
 
     @cython.always_allow_keywords(False)
-    def values(self, index=None):
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
+    def values(self, object index=None):
         cdef NDframe df = self.df
         cdef UCS2Column_SoA src = df.text_col if self.field == FIELD_txt else df.text_sep_col
-        if index is None:
-            return [src._get_str(i) for i in range(src.length)]
+        cdef Py_ssize_t n = df.length
 
-        cdef Py_ssize_t idx = int(index)
-        if df.length == 0:
+        cdef list res
+        cdef Py_ssize_t i
+        cdef Py_ssize_t idx
+
+        if index is None:
+            if n == 0:
+                return []
+
+            res = [None] * n
+            for i in range(n):
+                res[i] = src._get_str(i)
+            return res
+
+        if n == 0:
             raise IndexError("Cannot get value from an empty NDframe")
+        idx = <Py_ssize_t>index
+
         if idx < 0:
-            idx += df.length
-        if idx < 0 or idx >= df.length:
+            idx += n
+        if idx < 0 or idx >= n:
             raise IndexError("Index out of range")
+
         return src._get_str(idx)
 
     @cython.always_allow_keywords(False)
@@ -3373,7 +3389,7 @@ cdef class NDframe:
         cdef double variance = self._var_col(field, ddof)
         return sqrt(variance)
 
-
+    @cython.always_allow_keywords(False)
     def centroid(self):
         cdef Py_ssize_t n = self.length
         if n == 0:
@@ -3391,7 +3407,7 @@ cdef class NDframe:
         cdef double inv_n = 1.0 / <double>n
         return (sum_x * inv_n, sum_y * inv_n)
 
-
+    @cython.always_allow_keywords(False)
     def centroid_line(self, n):
         """
         返回第 n 行矩形的中心点坐标 (x_center, y_center)。
@@ -3465,6 +3481,7 @@ cdef class NDframe:
     # ========================================================
     # 全局坐标 IDX 提取系列
     # ========================================================
+    @cython.always_allow_keywords(False)
     def idx_in_bbox(self, int x0, int y0, int x1, int y1):
         if x0 > x1 or y0 > y1:
             raise ValueError("Invalid x0 y0 x1 y1 values")
@@ -3487,6 +3504,7 @@ cdef class NDframe:
         return res
 
 
+    @cython.always_allow_keywords(False)
     def idx_in_x0x1(self, int x0, int x1):
         if x0 > x1:
             raise ValueError("Invalid x0 and x1 values")
@@ -3505,7 +3523,7 @@ cdef class NDframe:
                 res.append(i)
         return res
 
-
+    @cython.always_allow_keywords(False)
     def idx_in_y0y1(self, int y0, int y1):
         if y0 > y1:
             raise ValueError("Invalid y0 or y1")
@@ -3527,6 +3545,7 @@ cdef class NDframe:
     # ========================================================
     # 基于 IDX 的重建与批量删除
     # ========================================================
+    @cython.always_allow_keywords(False)
     def df_from_idx(self, indices):
         if len(indices) == 0:
             return NDframe(1)
@@ -3554,7 +3573,7 @@ cdef class NDframe:
         new_df.length = n_idx
         return new_df
 
-
+    @cython.always_allow_keywords(False)
     def drop_by_idx(self, indices):
         if not indices:
             return self
@@ -3583,6 +3602,7 @@ cdef class NDframe:
     # ========================================================
     # 纯坐标过滤 — 带参数校验的 def 包装
     # ========================================================
+    @cython.always_allow_keywords(False)
     def filter_in_bbox(self, int x0, int y0, int x1, int y1):
         if x0 < 0: x0 = 0
         if x1 < 0: x1 = 0
@@ -3593,6 +3613,7 @@ cdef class NDframe:
             raise ValueError(f"def filter_in_bbox invalid boundary: x0({x0})>x1({x1}) or y0({y0})>y1({y1})")
         return self._in_bbox(x0, y0, x1, y1)
 
+    @cython.always_allow_keywords(False)
     def filter_in_x0x1(self, int x0, int x1):
         if x0 < 0: x0 = 0
         if x1 < 0: x1 = 0
@@ -3600,6 +3621,7 @@ cdef class NDframe:
             raise ValueError(f"x0({x0}) > x1({x1})")
         return self._in_x_range(x0, x1)
 
+    @cython.always_allow_keywords(False)
     def filter_in_y0y1(self, int y0, int y1):
         if y0 < 0: y0 = 0
         if y1 < 0: y1 = 0
@@ -3607,11 +3629,13 @@ cdef class NDframe:
             raise ValueError(f"y0({y0}) > y1({y1})")
         return self._in_y_range(y0, y1)
 
+    @cython.always_allow_keywords(False)
     def filter_greater_point(self, int x0, int y0):
         if x0 < 0: x0 = 0
         if y0 < 0: y0 = 0
         return self._greater_point(x0, y0)
 
+    @cython.always_allow_keywords(False)
     def filter_less_point(self, int x1, int y1):
         if x1 < 0: x1 = 0
         if y1 < 0: y1 = 0
