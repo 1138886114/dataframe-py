@@ -635,8 +635,10 @@ cdef class StringAccessor:
         if y0 < 0: y0 = 0
         if x1 < 0: x1 = 0
         if y1 < 0: y1 = 0
+        cdef char err_buf[128]
         if x0 > x1 or y0 > y1:
-            raise ValueError(f"def contains_in_bbox invalid boundary: x0({x0})>x1({x1}) or y0({y0})>y1({y1})")
+            snprintf(err_buf, sizeof(err_buf), "contains_in_bbox invalid boundary: x0(%d)>x1(%d) or y0(%d)>y1(%d)", x0, x1, y0, y1)
+            raise ValueError(err_buf.decode('ascii'))
         pattern = _ensure_regex(pattern)
         return self.df._df_regex_in_x0y0x1y1(self.field, pattern, x0, y0, x1, y1)
 
@@ -805,8 +807,7 @@ cdef class StringAccessor:
 
         cdef char err_buf[128]
         if x0 > x1 or y0 > y1:
-            snprintf(err_buf, sizeof(err_buf), "idx_contains_in_bbox invalid boundary: x0(%d)>x1(%d) or y0(%d)>y1(%d)",
-                     x0, x1, y0, y1)
+            snprintf(err_buf, sizeof(err_buf), "idx_contains_in_bbox invalid boundary: x0(%d)>x1(%d) or y0(%d)>y1(%d)", x0, x1, y0, y1)
             raise ValueError(err_buf.decode('ascii'))
         return self.df._idx_regex_in_bbox(self.field, pattern, x0, y0, x1, y1)
 
@@ -3633,8 +3634,10 @@ cdef class NDframe:
         if y0 < 0: y0 = 0
         if y1 < 0: y1 = 0
 
+        cdef char err_buf[128]
         if x0 > x1 or y0 > y1:
-            raise ValueError(f"def filter_in_bbox invalid boundary: x0({x0})>x1({x1}) or y0({y0})>y1({y1})")
+            snprintf(err_buf, sizeof(err_buf), "filter_in_bbox invalid boundary: x0(%d)>x1(%d) or y0(%d)>y1(%d)", x0, x1, y0, y1)
+            raise ValueError(err_buf.decode('ascii'))
         return self._in_bbox(x0, y0, x1, y1)
 
     @cython.always_allow_keywords(False)
@@ -3904,8 +3907,10 @@ cdef class NDframe:
         if y0 < 0: y0 = 0
         if y1 < 0: y1 = 0
 
+        cdef char err_buf[128]
         if x0 > x1 or y0 > y1:
-            raise ValueError(f"def drop_in_bbox invalid boundary: x0({x0})>x1({x1}) or y0({y0})>y1({y1})")
+            snprintf(err_buf, sizeof(err_buf), "drop_in_bbox invalid boundary: x0(%d)>x1(%d) or y0(%d)>y1(%d)", x0, x1, y0, y1)
+            raise ValueError(err_buf.decode('ascii'))
         return self._drop_in_bbox(x0, y0, x1, y1)
 
     @cython.always_allow_keywords(False)
