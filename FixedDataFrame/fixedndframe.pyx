@@ -9,6 +9,7 @@ from libc.math cimport sqrt
 import cython
 from cpython.long cimport PyLong_FromSsize_t
 from cpython.list cimport PyList_New, PyList_SetItem
+from libc.stdio cimport snprintf
 import inspect
 import re
 
@@ -431,8 +432,9 @@ cdef class UCS2Column_SoA:
             self.length -= 1
             self.char_length = self.offsets_c[self.length]
 
+    @cython.boundscheck(False)
+    @cython.wraparound(False)
     cdef list _is_mode(self, int mode):
-        cdef list res = PyList_New(self.length)
         cdef Py_ssize_t i, j, start, end
         cdef bint match
         cdef bint (*pred)(Py_UCS2) noexcept
@@ -449,14 +451,20 @@ cdef class UCS2Column_SoA:
         elif mode == CHK_ISCHINESE: pred = _pred_is_chinese
         else: pred = _pred_is_numeric_punct
 
+        cdef list res = [False] * self.length
         for i in range(self.length):
-            start = self.offsets_c[i]; end = self.offsets_c[i+1]
-            if start == end: match = False
-            else:
+            start = self.offsets_c[i]
+            end = self.offsets_c[i+1]
+
+            if start < end:
                 match = True
                 for j in range(start, end):
-                    if not pred(self.chars_c[j]): match = False; break
-            PyList_SetItem(res, i, match)
+                    if not pred(self.chars_c[j]):
+                        match = False
+                        break
+
+                if match:
+                    res[i] = True
         return res
 
 
@@ -787,6 +795,7 @@ cdef class StringAccessor:
         pattern = _ensure_regex(pattern)
         return self.df._idx_regex(self.field, pattern)
 
+    @cython.always_allow_keywords(False)
     def idx_contains_in_bbox(self, object pattern, int x0, int y0, int x1, int y1):
         pattern = _ensure_regex(pattern)
         if x0 < 0: x0 = 0
@@ -794,8 +803,11 @@ cdef class StringAccessor:
         if y0 < 0: y0 = 0
         if y1 < 0: y1 = 0
 
+        cdef char err_buf[128]
         if x0 > x1 or y0 > y1:
-            raise ValueError(f"def idx_contains_in_bbox invalid boundary: x0({x0})>x1({x1}) or y0({y0})>y1({y1})")
+            snprintf(err_buf, sizeof(err_buf), "idx_contains_in_bbox invalid boundary: x0(%d)>x1(%d) or y0(%d)>y1(%d)",
+                     x0, x1, y0, y1)
+            raise ValueError(err_buf.decode('ascii'))
         return self.df._idx_regex_in_bbox(self.field, pattern, x0, y0, x1, y1)
 
     @cython.always_allow_keywords(False)
@@ -1354,10 +1366,12 @@ cdef class NDframe:
         """
         cdef Py_ssize_t length = self.length
         cdef Py_ssize_t idx = n
+        cdef char err_buf[128]
         if idx < 0:
             idx += length
         if idx < 0 or idx >= length:
-            raise IndexError(f"Index {n} out of range for NDframe with {length} rows")
+            snprintf(err_buf, sizeof(err_buf), "Index %zd out of range for NDframe with %zd rows", n, length)
+            raise IndexError(err_buf.decode('ascii'))
         cdef RowC* row = &self.rows_c[idx]
         return (row.x0, row.y0, row.x1, row.y1)
 
