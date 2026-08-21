@@ -3806,23 +3806,27 @@ cdef class NDframe:
         self._apply_if_less_add_y(cond_id, threshold, offset)
         return self
 
-    def df_drops(self, indices):
+    @cython.always_allow_keywords(False)
+    def df_drops(self, list indices):
         """删除指定索引列表的行，返回新 NDframe（保留不在这些索引的行）"""
         cdef set idx_set = set(indices)
         return self._df_drops(idx_set)
 
-    def df_drop(self, index):
+    @cython.always_allow_keywords(False)
+    def df_drop(self, int index):
         cdef int c_idx = int(index)
         if c_idx < 0 or c_idx >= self.length:
             raise IndexError(f"Index {c_idx} out of range [0, {self.length})")
         return self._df_drop(c_idx)
 
-    def drop(self, index):
+    @cython.always_allow_keywords(False)
+    def drop(self, int index):
         cdef int c_idx = int(index)
         if c_idx < 0 or c_idx >= self.length:
             raise IndexError(f"Index {c_idx} out of range [0, {self.length})")
         return self._drop(c_idx)
 
+    @cython.always_allow_keywords(False)
     def drop_in_bbox(self, int x0, int y0, int x1, int y1):
         if x0 < 0: x0 = 0
         if x1 < 0: x1 = 0
@@ -3833,6 +3837,7 @@ cdef class NDframe:
             raise ValueError(f"def drop_in_bbox invalid boundary: x0({x0})>x1({x1}) or y0({y0})>y1({y1})")
         return self._drop_in_bbox(x0, y0, x1, y1)
 
+    @cython.always_allow_keywords(False)
     def merge_line(self, int width_threshold, int height_threshold, str sep=""):
         if width_threshold < 0: width_threshold = 0
         if height_threshold < 0: height_threshold = 0
