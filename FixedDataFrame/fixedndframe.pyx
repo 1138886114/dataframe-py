@@ -13,6 +13,7 @@ import inspect
 import re
 
 
+
 cdef extern from "Python.h":
     bint Py_UNICODE_ISALNUM(Py_UCS4 ch)
     bint Py_UNICODE_ISALPHA(Py_UCS4 ch)
@@ -385,8 +386,17 @@ cdef class UCS2Column_SoA:
         cdef Py_ssize_t n = self.length
         if n == 0: return
 
+        cdef Py_ssize_t i, idx, start, str_len
+        cdef Py_ssize_t required_char_len = 0
+
+        for i in range(n):
+            idx = indices[i]
+            required_char_len += self.offsets_c[idx + 1] - self.offsets_c[idx]
+
+        cdef Py_ssize_t new_char_capacity = required_char_len if required_char_len > 1024 else 1024
+
         cdef Py_ssize_t* new_offsets = <Py_ssize_t*>malloc((self.capacity + 1) * sizeof(Py_ssize_t))
-        cdef Py_UCS2* new_chars = <Py_UCS2*>malloc(max(self.char_length, 1024) * sizeof(Py_UCS2))
+        cdef Py_UCS2* new_chars = <Py_UCS2*>malloc(new_char_capacity * sizeof(Py_UCS2))
 
         if not new_offsets or not new_chars:
             if new_offsets: free(new_offsets)
@@ -395,7 +405,6 @@ cdef class UCS2Column_SoA:
 
         new_offsets[0] = 0
         cdef Py_ssize_t current_char_len = 0
-        cdef Py_ssize_t idx, start, end, str_len
 
         for i in range(n):
             idx = indices[i]
@@ -410,10 +419,11 @@ cdef class UCS2Column_SoA:
 
         free(self.offsets_c)
         free(self.chars_c)
+
         self.offsets_c = new_offsets
         self.chars_c = new_chars
         self.char_length = current_char_len
-        self.char_capacity = max(self.char_length, 1024)
+        self.char_capacity = new_char_capacity
 
     cdef inline void pop_back(self) noexcept:
         """优化点: O(1) 操作，不创建 Python 字符串，仅回退指针"""
