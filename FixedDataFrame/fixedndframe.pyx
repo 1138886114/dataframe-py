@@ -120,9 +120,10 @@ cdef inline object _ensure_regex(object pattern):
         return re.compile(pattern)
 
     # Python 鸭子类型检测：只要有 search 方法即可（兼容 re, regex, re2 等不同引擎）
+    cdef char err_buf[128]
     if not hasattr(pattern, 'search'):
-        raise TypeError(f"Expected string or compiled regex pattern, got {type(pattern).__name__}")
-
+        snprintf(err_buf, sizeof(err_buf), "Expected string or compiled regex pattern, got %s", type(pattern).__name__)
+        ValueError(err_buf.decode('ascii'))
     return pattern
 
 
@@ -1283,17 +1284,24 @@ cdef class NDframe:
     # ----------------------------------------------------
     # pandas-friendly 便捷方法
     # ----------------------------------------------------
-    def __getitem__(self, key):
+    def __getitem__(self, object key):
         """严格受限的索引：仅支持 df[3] 或 df[1:5]"""
         cdef Py_ssize_t start, stop, new_len, int_key
         cdef NDframe new_df
+        cdef object start_obj, stop_obj, step_obj
+        cdef RowC* row
+        cdef char err_buf[128]
 
-        if isinstance(key, slice):
-            if key.step not in (None, 1):
+        if PySlice_Check(key):
+            step_obj = key.step
+            if step_obj is not None and step_obj != 1:
                 raise ValueError("Only contiguous slices are supported.")
 
-            start = key.start if key.start is not None else 0
-            stop = key.stop if key.stop is not None else self.length
+            start_obj = key.start
+            stop_obj = key.stop
+
+            start = 0 if start_obj is None else <Py_ssize_t>start_obj
+            stop = self.length if stop_obj is None else <Py_ssize_t>stop_obj
 
             if start < 0: start += self.length
             if stop < 0: stop += self.length
@@ -1309,23 +1317,33 @@ cdef class NDframe:
                 new_df.text_col = self.text_col._slice(start, stop)
                 new_df.text_sep_col = self.text_sep_col._slice(start, stop)
                 new_df.length = new_len
+            else:
+                new_df.text_col = self.text_col._slice(0, 0)
+                new_df.text_sep_col = self.text_sep_col._slice(0, 0)
+                new_df.length = 0
+
             return new_df
 
-        elif isinstance(key, int):
-            int_key = <int>key
-            if int_key < 0: int_key += <int>self.length
-            if int_key < 0 or int_key >= <int>self.length:
-                raise IndexError(f"Index {int_key} out of range [0, {self.length})")
+        elif PyLong_Check(key):
+            int_key = <Py_ssize_t>key
+            if int_key < 0:
+                int_key += self.length
+
+            if int_key < 0 or int_key >= self.length:
+                snprintf(err_buf, sizeof(err_buf), "Index %zd out of range [0, %zd)", key, length)
+                raise IndexError(err_buf.decode('ascii'))
+            row = &self.rows_c[int_key]
+
             return {
-                "idx": self.rows_c[int_key].idx,
-                "x0": self.rows_c[int_key].x0,
-                "y0": self.rows_c[int_key].y0,
-                "x1": self.rows_c[int_key].x1,
-                "y1": self.rows_c[int_key].y1,
-                "width": self.rows_c[int_key].width,
-                "height": self.rows_c[int_key].height,
-                "page": self.rows_c[int_key].page,
-                "flags": self.rows_c[int_key].flags,
+                "idx": row.idx,
+                "x0": row.x0,
+                "y0": row.y0,
+                "x1": row.x1,
+                "y1": row.y1,
+                "width": row.width,
+                "height": row.height,
+                "page": row.page,
+                "flags": row.flags,
                 "text": self.text_col._get_str(int_key),
                 "text_sep": self.text_sep_col._get_str(int_key)
             }
