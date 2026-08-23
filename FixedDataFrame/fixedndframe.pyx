@@ -6,10 +6,13 @@
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove, memset, memcmp
 from libc.math cimport sqrt
+from libc.stdio cimport snprintf
+
 import cython
 from cpython.long cimport PyLong_FromSsize_t
 from cpython.list cimport PyList_New, PyList_SetItem
-from libc.stdio cimport snprintf
+from cpython.slice cimport PySlice_Check
+from cpython.long cimport PyLong_Check
 import inspect
 import re
 
@@ -120,10 +123,8 @@ cdef inline object _ensure_regex(object pattern):
         return re.compile(pattern)
 
     # Python 鸭子类型检测：只要有 search 方法即可（兼容 re, regex, re2 等不同引擎）
-    cdef char err_buf[128]
     if not hasattr(pattern, 'search'):
-        snprintf(err_buf, sizeof(err_buf), "Expected string or compiled regex pattern, got %s", type(pattern).__name__)
-        ValueError(err_buf.decode('ascii'))
+        raise TypeError(f"Expected string or compiled regex pattern, got {type(pattern).__name__}")
     return pattern
 
 
@@ -1330,7 +1331,7 @@ cdef class NDframe:
                 int_key += self.length
 
             if int_key < 0 or int_key >= self.length:
-                snprintf(err_buf, sizeof(err_buf), "Index %zd out of range [0, %zd)", key, length)
+                snprintf(err_buf, sizeof(err_buf), "Index %zd out of range [0, %zd)", int_key, self.length)
                 raise IndexError(err_buf.decode('ascii'))
             row = &self.rows_c[int_key]
 
@@ -1351,14 +1352,14 @@ cdef class NDframe:
             raise TypeError("Indices must be integers or slices (e.g. df[0], df[1:3])")
 
     @cython.always_allow_keywords(False)
-    def head(self, int n=5):
-        """返回前 n 行的新 NDframe"""
-        return self[0:n]
+    def head(self):
+        """返回前 10 行的新 NDframe"""
+        return self[0:10]
 
     @cython.always_allow_keywords(False)
-    def tail(self, int n=5):
+    def tail(self):
         """返回后 n 行的新 NDframe"""
-        cdef Py_ssize_t start = self.length - n
+        cdef Py_ssize_t start = self.length - 10
         if start < 0: start = 0
         return self[start:]
 
@@ -1427,7 +1428,7 @@ cdef class NDframe:
     @cython.always_allow_keywords(False)
     def append(self, int idx, int x0, int y0, int x1, int y1,
                int width, int height, int page, int flags,
-               str text, str text_sep=""):
+               str text not None, str text_sep="" not None):
         cdef Py_ssize_t n = self.length
         if n >= self._capacity:
             self._reserve(self._capacity * 2)
