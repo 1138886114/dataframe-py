@@ -1428,7 +1428,7 @@ cdef class NDframe:
     @cython.always_allow_keywords(False)
     def append(self, int idx, int x0, int y0, int x1, int y1,
                int width, int height, int page, int flags,
-               str text not None, str text_sep="" not None):
+               str text not None, str text_sep="", /):
         cdef Py_ssize_t n = self.length
         if n >= self._capacity:
             self._reserve(self._capacity * 2)
@@ -1559,11 +1559,9 @@ cdef class NDframe:
         df.length = length
         return df
 
-    def to_string(self, int max_rows=50, str name=None):
-        cdef str dataframe_name = name if name else "NDframe"
-
-        if self.length == 0:
-            return f"{dataframe_name} is Empty!\n"
+    @cython.always_allow_keywords(False)
+    def to_string(self):
+        cdef Py_ssize_t max_rows = 50
 
         cdef list display_indices = []
         cdef Py_ssize_t i
@@ -1631,7 +1629,6 @@ cdef class NDframe:
             if iw > widths[10]: widths[10] = iw
 
         cdef list lines = []
-        lines.append(f"[{dataframe_name}] ({self.length} rows):")
 
         cdef list sep_parts = ["+"]
         for j in range(11): sep_parts.extend(["-" * (widths[j] + 2), "+"])
@@ -1687,8 +1684,11 @@ cdef class NDframe:
         lines.append(thin_sep)
         return "\n".join(lines)
 
-    def print(self, int max_rows=50, str name=None):
-        print(self.to_string(max_rows=max_rows, name=name))
+    def print(self, str name=None):
+        cdef str dataframe_name = name if name else "NDframe"
+        if self.length == 0:
+            return f"{dataframe_name} is Empty!\n"
+        print(f"[{dataframe_name}] ({self.length} rows):")
 
 
     @cython.boundscheck(False)
