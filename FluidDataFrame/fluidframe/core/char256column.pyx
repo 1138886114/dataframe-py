@@ -19,7 +19,7 @@ cdef extern from "<ctype.h>" nogil:
 
 import re
 
-from fluidframe.core._base cimport BaseColumn
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
 from fluidframe.core.intcolumn cimport IntColumn
 
 cdef inline bint _c_str_contains(char* source, const char* target) noexcept nogil:
@@ -61,7 +61,7 @@ cdef class Char256Column_SoA(BaseColumn):
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
-            self.data_c = <char*>aligned_realloc(self.data_c, new_cap * 256)
+            self.data_c = <char*>aligned_realloc(self.data_c, self.capacity * 256, new_cap * 256)
             if not self.data_c: raise MemoryError()
             self.capacity = new_cap
 
@@ -343,11 +343,9 @@ cdef class Char256Column_SoA(BaseColumn):
             for i in range(self.length):
                 ptr = res.data_c + i * 256
                 right = strlen(ptr) - 1
-                while right >= left and isspace(ptr[right]):
+                while right >= 0 and isspace(ptr[right]):
                     right -= 1
-                if left > 0:
-                    memmove(ptr, ptr + left, right - left + 1)
-                ptr[right - left + 1] = b'\0'
+                ptr[right + 1] = b'\0'
         return res
 
     @cython.binding(False)

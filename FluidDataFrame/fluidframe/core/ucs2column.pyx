@@ -7,7 +7,7 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdlib cimport free
 
-from fluidframe.core._base cimport BaseColumn
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
 from fluidframe.core.intcolumn cimport IntColumn
 
 from cpython.unicode cimport (
@@ -65,19 +65,19 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     cdef void _reserve_rows(self, Py_ssize_t new_cap) except *:
         if new_cap > self.capacity:
-            self.offsets_c = <Py_ssize_t*>aligned_realloc(self.offsets_c, (new_cap + 1) * sizeof(Py_ssize_t))
+            self.offsets_c = <Py_ssize_t*>aligned_realloc(self.offsets_c, (self.capacity + 1) * sizeof(Py_ssize_t), (new_cap + 1) * sizeof(Py_ssize_t))
             if not self.offsets_c: raise MemoryError()
             self.capacity = new_cap
 
     cdef void _reserve_chars(self, Py_ssize_t new_char_cap) except *:
         if new_char_cap > self.char_capacity:
-            self.chars_c = <Py_UCS2*>aligned_realloc(self.chars_c, new_char_cap * sizeof(Py_UCS2))
+            self.chars_c = <Py_UCS2*>aligned_realloc(self.chars_c, self.char_capacity * sizeof(Py_UCS2), new_char_cap * sizeof(Py_UCS2))
             if not self.chars_c: raise MemoryError()
             self.char_capacity = new_char_cap
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def append(self, str val):
+    def append(self, str val not None):
         cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val) if val else 0
 
         if self.length >= self.capacity:

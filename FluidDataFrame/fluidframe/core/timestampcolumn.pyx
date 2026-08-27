@@ -5,9 +5,9 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove
-from libc.stdlib cimport malloc, realloc, free
+from libc.stdlib cimport free
 
-from fluidframe.core._base cimport BaseColumn
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 
@@ -21,7 +21,7 @@ cdef class TimestampColumn(BaseColumn):
     def __cinit__(self, Py_ssize_t init_capacity=16):
         self.capacity = max(init_capacity, 1)
         self.length = 0
-        self.data_c = <long long*>malloc(self.capacity * sizeof(long long))
+        self.data_c = <long long*>aligned_malloc(self.capacity * sizeof(long long))
         if not self.data_c: raise MemoryError()
 
     def __dealloc__(self):
@@ -29,7 +29,7 @@ cdef class TimestampColumn(BaseColumn):
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
-            self.data_c = <long long*>realloc(self.data_c, new_cap * sizeof(long long))
+            self.data_c = <long long*>aligned_realloc(self.data_c, self.capacity * sizeof(long long), new_cap * sizeof(long long))
             if not self.data_c: raise MemoryError()
             self.capacity = new_cap
 
@@ -108,7 +108,7 @@ cdef class TimestampColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
-        cdef long long* new_data = <long long*>malloc(self.capacity * sizeof(long long))
+        cdef long long* new_data = <long long*>aligned_malloc(self.capacity * sizeof(long long))
         if not new_data: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(self.length):

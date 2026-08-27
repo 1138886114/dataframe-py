@@ -7,7 +7,7 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdlib cimport free
 from libc.math cimport sqrt, fabs, NAN
-from fluidframe.core._base cimport BaseColumn
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
 from fluidframe.core.doublecolumn cimport DoubleColumn
 
 @cython.final
@@ -29,7 +29,7 @@ cdef class IntColumn(BaseColumn):
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
-            self.data_c = <int*>aligned_realloc(self.data_c, new_cap * sizeof(int))
+            self.data_c = <int*>aligned_realloc(self.data_c, self.capacity * sizeof(int), new_cap * sizeof(int))
             if not self.data_c: raise MemoryError()
             self.capacity = new_cap
 

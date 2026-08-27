@@ -1,5 +1,8 @@
 # cython: language_level=3
 
+cdef void* aligned_malloc(size_t size, size_t alignment=*) nogil
+cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t alignment=*) nogil
+
 cdef class BaseColumn:
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
