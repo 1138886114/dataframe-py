@@ -11,6 +11,58 @@ from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 
+
+# ---------------------------------------------------------------------------
+#  C-level date helpers (all nogil)
+# ---------------------------------------------------------------------------
+
+cdef inline bint _is_leap_year(int y) noexcept nogil:
+    return (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)
+
+cdef inline int _days_in_month(int y, int m) noexcept nogil:
+    if m == 2:
+        return 29 if _is_leap_year(y) else 28
+    if m in (1, 3, 5, 7, 8, 10, 12):
+        return 31
+    return 30
+
+cdef inline long long _date_to_daynum(int y, int m, int d) noexcept nogil:
+    """Convert YYYY-MM-DD to sequential day number (days since 0001-01-01)."""
+    cdef int a, y2, m2
+    a = (14 - m) / 12
+    y2 = y + 4800 - a
+    m2 = m + 12 * a - 3
+    return d + (153 * m2 + 2) / 5 + 365 * y2 + y2 / 4 - y2 / 100 + y2 / 400 - 32045
+
+cdef inline void _daynum_to_date(long long daynum, int* y, int* m, int* d) noexcept nogil:
+    """Convert sequential day number back to YYYY-MM-DD."""
+    cdef long long a, b, c, d2, e, m2
+    a = daynum + 32044
+    b = (4 * a + 3) / 146097
+    c = a - 146097 * b / 4
+    d2 = (4 * c + 3) / 1461
+    e = c - 1461 * d2 / 4
+    m2 = (5 * e + 2) / 153
+    d[0] = <int>(e - (153 * m2 + 2) / 5 + 1)
+    m[0] = <int>(m2 + 3 - 12 * (m2 / 10))
+    y[0] = <int>(100 * b + d2 - 4800 + m2 / 10)
+
+cdef inline long long _parse_date_str(str s) noexcept:
+    """Parse 'YYYYMMDD' or 'YYYY-MM-DD' to long long YYYYMMDD."""
+    cdef bytes b = s.encode('ascii', errors='ignore')
+    cdef const unsigned char* buf = <const unsigned char*>b
+    cdef long long val = 0
+    cdef int i = 0
+    while buf[i] >= 48 and buf[i] <= 57:
+        val = val * 10 + (buf[i] - 48)
+        i += 1
+    return val
+
+
+# ---------------------------------------------------------------------------
+#  TimestampColumn
+# ---------------------------------------------------------------------------
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -234,4 +286,352 @@ cdef class TimestampColumn(BaseColumn):
 
                     f_idx += 1
                 dest[d_idx] = c_backslash0
+        return res
+
+    # -----------------------------------------------------------------
+    #  Helper: resolve date argument (str or int) to long long YYYYMMDD
+    # -----------------------------------------------------------------
+
+    cdef inline long long _resolve_date(self, date) except *:
+        if isinstance(date, str):
+            return _parse_date_str(<str>date)
+        return <long long>date
+
+    # -----------------------------------------------------------------
+    #  Filter methods (return IntColumn as boolean mask 0/1)
+    # -----------------------------------------------------------------
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def filter_greater(self, date):
+        cdef long long target = self._resolve_date(date)
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if self.data_c[i] > target else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def filter_greater_equal(self, date):
+        cdef long long target = self._resolve_date(date)
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if self.data_c[i] >= target else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def filter_less(self, date):
+        cdef long long target = self._resolve_date(date)
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if self.data_c[i] < target else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def filter_less_equal(self, date):
+        cdef long long target = self._resolve_date(date)
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if self.data_c[i] <= target else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def filter_equal(self, date):
+        cdef long long target = self._resolve_date(date)
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if self.data_c[i] == target else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def filter_not_equal(self, date):
+        cdef long long target = self._resolve_date(date)
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if self.data_c[i] != target else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def filter_between(self, start, end):
+        cdef long long lo = self._resolve_date(start)
+        cdef long long hi = self._resolve_date(end)
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if lo <= self.data_c[i] <= hi else 0
+        return res
+
+    # -----------------------------------------------------------------
+    #  Date arithmetic (return new TimestampColumn)
+    # -----------------------------------------------------------------
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def add_days(self, int n):
+        cdef Py_ssize_t length = self.length
+        cdef TimestampColumn res = TimestampColumn(self.capacity)
+        res.length = length
+        cdef Py_ssize_t i
+        cdef int y, m, d
+        cdef long long daynum
+        with nogil:
+            for i in range(length):
+                y = <int>(self.data_c[i] / 10000)
+                m = <int>((self.data_c[i] / 100) % 100)
+                d = <int>(self.data_c[i] % 100)
+                daynum = _date_to_daynum(y, m, d) + n
+                _daynum_to_date(daynum, &y, &m, &d)
+                res.data_c[i] = y * 10000 + m * 100 + d
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def sub_days(self, int n):
+        return self.add_days(-n)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def add_months(self, int n):
+        cdef Py_ssize_t length = self.length
+        cdef TimestampColumn res = TimestampColumn(self.capacity)
+        res.length = length
+        cdef Py_ssize_t i
+        cdef int y, m, d, total, new_m, new_y, max_d
+        with nogil:
+            for i in range(length):
+                y = <int>(self.data_c[i] / 10000)
+                m = <int>((self.data_c[i] / 100) % 100)
+                d = <int>(self.data_c[i] % 100)
+                total = (m - 1) + n
+                new_y = y + total / 12
+                new_m = total % 12 + 1
+                if new_m <= 0:
+                    new_m += 12
+                    new_y -= 1
+                max_d = _days_in_month(new_y, new_m)
+                if d > max_d:
+                    d = max_d
+                res.data_c[i] = new_y * 10000 + new_m * 100 + d
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def sub_months(self, int n):
+        return self.add_months(-n)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def add_years(self, int n):
+        cdef Py_ssize_t length = self.length
+        cdef TimestampColumn res = TimestampColumn(self.capacity)
+        res.length = length
+        cdef Py_ssize_t i
+        cdef int y, m, d, new_y, max_d
+        with nogil:
+            for i in range(length):
+                y = <int>(self.data_c[i] / 10000)
+                m = <int>((self.data_c[i] / 100) % 100)
+                d = <int>(self.data_c[i] % 100)
+                new_y = y + n
+                max_d = _days_in_month(new_y, m)
+                if d > max_d:
+                    d = max_d
+                res.data_c[i] = new_y * 10000 + m * 100 + d
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def sub_years(self, int n):
+        return self.add_years(-n)
+
+    # -----------------------------------------------------------------
+    #  Date component extraction
+    # -----------------------------------------------------------------
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def day_of_week(self):
+        """Return day of week: 0=Monday … 6=Sunday (ISO 8601)."""
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef int y, m, d
+        cdef long long daynum
+        with nogil:
+            for i in range(self.length):
+                y = <int>(self.data_c[i] / 10000)
+                m = <int>((self.data_c[i] / 100) % 100)
+                d = <int>(self.data_c[i] % 100)
+                daynum = _date_to_daynum(y, m, d)
+                # daynum mod 7: 0=Mon 1=Tue ... 6=Sun
+                res.data_c[i] = <int>(daynum % 7)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def day_of_year(self):
+        """Return day of year: 1–366."""
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef int y, m, d, doy, dm
+        cdef int cum[13]
+        with nogil:
+            cum[0] = 0
+            for i in range(1, 13):
+                cum[i] = cum[i-1] + _days_in_month(2001, i)  # 2001 is non-leap
+            for i in range(self.length):
+                y = <int>(self.data_c[i] / 10000)
+                m = <int>((self.data_c[i] / 100) % 100)
+                d = <int>(self.data_c[i] % 100)
+                doy = cum[m - 1] + d
+                if m > 2 and _is_leap_year(y):
+                    doy += 1
+                res.data_c[i] = doy
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def days_in_month(self):
+        """Return number of days in each date's month (28/29/30/31)."""
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef int y, m
+        with nogil:
+            for i in range(self.length):
+                y = <int>(self.data_c[i] / 10000)
+                m = <int>((self.data_c[i] / 100) % 100)
+                res.data_c[i] = _days_in_month(y, m)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def is_leap_year(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef int y
+        with nogil:
+            for i in range(self.length):
+                y = <int>(self.data_c[i] / 10000)
+                res.data_c[i] = 1 if _is_leap_year(y) else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def is_weekend(self):
+        """Return 1 if Saturday (5) or Sunday (6)."""
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef int y, m, d, dow
+        cdef long long daynum
+        with nogil:
+            for i in range(self.length):
+                y = <int>(self.data_c[i] / 10000)
+                m = <int>((self.data_c[i] / 100) % 100)
+                d = <int>(self.data_c[i] % 100)
+                daynum = _date_to_daynum(y, m, d)
+                dow = <int>(daynum % 7)
+                res.data_c[i] = 1 if dow >= 5 else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def is_month_start(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if (self.data_c[i] % 100) == 1 else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def is_month_end(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef int y, m, d
+        with nogil:
+            for i in range(self.length):
+                y = <int>(self.data_c[i] / 10000)
+                m = <int>((self.data_c[i] / 100) % 100)
+                d = <int>(self.data_c[i] % 100)
+                res.data_c[i] = 1 if d == _days_in_month(y, m) else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def is_year_start(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if (self.data_c[i] % 10000) == 101 else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def is_year_end(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                res.data_c[i] = 1 if (self.data_c[i] % 10000) == 1231 else 0
+        return res
+
+    # -----------------------------------------------------------------
+    #  Date difference
+    # -----------------------------------------------------------------
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def diff_days(self, date):
+        """Return IntColumn with day difference: self[i] - date."""
+        cdef long long target = self._resolve_date(date)
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef int y, m, d
+        cdef long long daynum
+        with nogil:
+            for i in range(self.length):
+                y = <int>(self.data_c[i] / 10000)
+                m = <int>((self.data_c[i] / 100) % 100)
+                d = <int>(self.data_c[i] % 100)
+                daynum = _date_to_daynum(y, m, d)
+                y = <int>(target / 10000)
+                m = <int>((target / 100) % 100)
+                d = <int>(target % 100)
+                res.data_c[i] = <int>(daynum - _date_to_daynum(y, m, d))
         return res
