@@ -392,3 +392,88 @@ cdef class UCS2Column_SoA(BaseColumn):
                 seen.add(s)
                 result.append(s)
         return result
+
+    def _cmp_op(self, val, int op):
+        cdef Py_ssize_t i
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef str s, v
+        cdef int cmp_val
+        if isinstance(val, UCS2Column_SoA):
+            other = <UCS2Column_SoA>val
+            if other.length != self.length:
+                raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+            for i in range(self.length):
+                s = self[i]
+                v = other[i]
+                if op == 0:   cmp_val = 1 if s < v else 0
+                elif op == 1: cmp_val = 1 if s <= v else 0
+                elif op == 2: cmp_val = 1 if s > v else 0
+                elif op == 3: cmp_val = 1 if s >= v else 0
+                elif op == 4: cmp_val = 1 if s == v else 0
+                elif op == 5: cmp_val = 1 if s != v else 0
+                res.data_c[i] = cmp_val
+        else:
+            v = <str>val
+            for i in range(self.length):
+                s = self[i]
+                if op == 0:   cmp_val = 1 if s < v else 0
+                elif op == 1: cmp_val = 1 if s <= v else 0
+                elif op == 2: cmp_val = 1 if s > v else 0
+                elif op == 3: cmp_val = 1 if s >= v else 0
+                elif op == 4: cmp_val = 1 if s == v else 0
+                elif op == 5: cmp_val = 1 if s != v else 0
+                res.data_c[i] = cmp_val
+        return res
+
+    def __lt__(self, val):  return self._cmp_op(val, 0)
+    def __le__(self, val):  return self._cmp_op(val, 1)
+    def __gt__(self, val):  return self._cmp_op(val, 2)
+    def __ge__(self, val):  return self._cmp_op(val, 3)
+    def __eq__(self, val):  return self._cmp_op(val, 4)
+    def __ne__(self, val):  return self._cmp_op(val, 5)
+
+    def __and__(self, other):
+        if not isinstance(other, IntColumn):
+            raise TypeError("Cannot & non-IntColumn mask")
+        if self.length != other.length:
+            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 1 if self[i] != '' and other.data_c[i] else 0
+        return res
+
+    def __or__(self, other):
+        if not isinstance(other, IntColumn):
+            raise TypeError("Cannot | non-IntColumn mask")
+        if self.length != other.length:
+            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 1 if self[i] != '' or other.data_c[i] else 0
+        return res
+
+    def __invert__(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 0 if self[i] != '' else 1
+        return res
+
+    def __str__(self):
+        cdef list items = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            items.append(repr(self[i]))
+        return f"UCS2Column([{', '.join(items)}])"
+
+    def __bool__(self):
+        return self.length > 0
+
+    def __len__(self):
+        return self.length

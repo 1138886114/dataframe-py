@@ -15,7 +15,7 @@ from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.timestampcolumn cimport TimestampColumn
-from fluidframe.core.index cimport IndexBase, RangeIndex
+from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
 
 
@@ -199,16 +199,30 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
-        cdef RangeIndex new_idx
+        cdef Py_ssize_t n, i
+        cdef Py_ssize_t* idx_c
         new_df = FastDataFrame()
         new_df.df_length = self.df_length
         for col_name, col_obj in self.columns.items():
             new_df.columns[col_name] = col_obj.copy()
         if self.index is not None:
-            new_idx = RangeIndex(0, 0)
-            new_idx._values = list(self.index._values)
-            new_idx.length = self.index.length
-            new_df.index = new_idx
+            if isinstance(self.index, RangeIndex):
+                new_idx = RangeIndex((<RangeIndex>self.index).start,
+                                     self.index.length,
+                                     (<RangeIndex>self.index).step)
+                new_df.index = new_idx
+            elif isinstance(self.index, IntIndex):
+                n = self.index.length
+                idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+                if not idx_c: raise MemoryError()
+                for i in range(n):
+                    idx_c[i] = i
+                try:
+                    new_df.index = self.index._take(idx_c, n)
+                finally:
+                    free(idx_c)
+            else:
+                new_df.index = self.index
         return new_df
 
     @cython.binding(False)
@@ -220,7 +234,10 @@ cdef class FastDataFrame:
             row[col_name] = col_obj.pop_front()
         self.df_length -= 1
         if self.index is not None and self.index.length > 0:
-            self.index._values.pop(0)
+            if isinstance(self.index, RangeIndex):
+                (<RangeIndex>self.index).start += (<RangeIndex>self.index).step
+            elif isinstance(self.index, IntIndex):
+                (<IntIndex>self.index).pop_back()
             self.index.length -= 1
         return row
 
@@ -233,7 +250,8 @@ cdef class FastDataFrame:
             row[col_name] = col_obj.pop_back()
         self.df_length -= 1
         if self.index is not None and self.index.length > 0:
-            self.index._values.pop()
+            if isinstance(self.index, IntIndex):
+                (<IntIndex>self.index).pop_back()
             self.index.length -= 1
         return row
 
@@ -521,10 +539,15 @@ cdef class FastDataFrame:
     def reset_index(self):
         cdef IntColumn idx_col = IntColumn(self.df_length)
         cdef Py_ssize_t i
+        cdef Py_ssize_t n_old = self.index.length if self.index is not None else 0
         for i in range(self.df_length):
-            idx_col.data_c[i] = <int>i
+            if i < n_old:
+                idx_col.data_c[i] = <int>(<list>self.index.values())[i]
+            else:
+                idx_col.data_c[i] = <int>i
         idx_col.length = self.df_length
         self.columns['index'] = idx_col
+        self.index = RangeIndex(0, self.df_length)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -669,10 +692,7 @@ cdef class FastDataFrame:
 
         if self.index is not None:
             if inplace:
-                new_idx = RangeIndex(0, 0)
-                new_idx._values = [self.index._values[keep_idx_c[i]] for i in range(keep_count)]
-                new_idx.length = keep_count
-                self.index = new_idx
+                self.index = self.index._take(keep_idx_c, keep_count)
             else:
                 result_df.index = self.index._take(keep_idx_c, keep_count)
 
@@ -690,6 +710,9 @@ cdef class FastDataFrame:
         cdef str name
         cdef BaseColumn col
         cdef Py_ssize_t rem_len = self.df_length - row_idx - 1
+        cdef Py_ssize_t rem_len_idx, ii
+        cdef IntColumn tmp_col, idx_col
+        cdef RangeIndex ri
 
         for name, col in self.columns.items():
             if isinstance(col, IntColumn):
@@ -725,7 +748,31 @@ cdef class FastDataFrame:
 
         self.df_length -= 1
         if self.index is not None and self.index.length > 0:
-            self.index._values.pop(row_idx)
+            if isinstance(self.index, RangeIndex):
+                ri = <RangeIndex>self.index
+                if row_idx == 0:
+                    ri.start += ri.step
+                elif row_idx == self.index.length - 1:
+                    pass
+                else:
+                    rem_len_idx = self.index.length - row_idx - 1
+                    tmp_col = IntColumn(self.index.length)
+                    tmp_col.length = self.index.length
+                    for ii in range(self.index.length):
+                        tmp_col.data_c[ii] = <int>(ri.start + ii * ri.step)
+                    memmove(tmp_col.data_c + row_idx,
+                            tmp_col.data_c + row_idx + 1,
+                            rem_len_idx * sizeof(int))
+                    tmp_col.length = self.index.length - 1
+                    self.index = IntIndex(tmp_col)
+                    return
+            elif isinstance(self.index, IntIndex):
+                idx_col = (<IntIndex>self.index).data
+                if rem_len > 0:
+                    memmove(idx_col.data_c + row_idx,
+                            idx_col.data_c + row_idx + 1,
+                            rem_len * sizeof(int))
+                idx_col.length -= 1
             self.index.length -= 1
 
     cdef void _drop_row_ucs2(self, UCS2Column_SoA col, Py_ssize_t row_idx, Py_ssize_t rem_len):

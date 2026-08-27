@@ -569,3 +569,94 @@ cdef class Char256Column_SoA(BaseColumn):
                 seen.add(val)
                 result.append(val)
         return result
+
+    def _cmp_op(self, val, int op):
+        cdef Py_ssize_t i
+        cdef IntColumn res = IntColumn(self.capacity)
+        cdef bytes v_bytes
+        cdef char* v_ptr
+        res.length = self.length
+        if isinstance(val, Char256Column_SoA):
+            other = <Char256Column_SoA>val
+            if other.length != self.length:
+                raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+            if op == 0:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) < 0 else 0
+            elif op == 1:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) <= 0 else 0
+            elif op == 2:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) > 0 else 0
+            elif op == 3:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) >= 0 else 0
+            elif op == 4:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) == 0 else 0
+            elif op == 5:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) != 0 else 0
+        else:
+            v_bytes = val.encode('ascii') if isinstance(val, str) else val
+            v_ptr = v_bytes
+            if op == 0:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) < 0 else 0
+            elif op == 1:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) <= 0 else 0
+            elif op == 2:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) > 0 else 0
+            elif op == 3:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) >= 0 else 0
+            elif op == 4:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) == 0 else 0
+            elif op == 5:
+                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) != 0 else 0
+        return res
+
+    def __lt__(self, val):  return self._cmp_op(val, 0)
+    def __le__(self, val):  return self._cmp_op(val, 1)
+    def __gt__(self, val):  return self._cmp_op(val, 2)
+    def __ge__(self, val):  return self._cmp_op(val, 3)
+    def __eq__(self, val):  return self._cmp_op(val, 4)
+    def __ne__(self, val):  return self._cmp_op(val, 5)
+
+    def __and__(self, other):
+        if not isinstance(other, IntColumn):
+            raise TypeError("Cannot & non-IntColumn mask")
+        if self.length != other.length:
+            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 1 if (self.data_c + i * 256)[0] != 0 and other.data_c[i] else 0
+        return res
+
+    def __or__(self, other):
+        if not isinstance(other, IntColumn):
+            raise TypeError("Cannot | non-IntColumn mask")
+        if self.length != other.length:
+            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 1 if (self.data_c + i * 256)[0] != 0 or other.data_c[i] else 0
+        return res
+
+    def __invert__(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 0 if (self.data_c + i * 256)[0] != 0 else 1
+        return res
+
+    def __str__(self):
+        cdef list items = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            items.append(repr((self.data_c + i * 256).decode('ascii')))
+        return f"Char256Column([{', '.join(items)}])"
+
+    def __bool__(self):
+        return self.length > 0
+
+    def __len__(self):
+        return self.length

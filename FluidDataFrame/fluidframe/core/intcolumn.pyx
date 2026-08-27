@@ -361,3 +361,16 @@ cdef class IntColumn(BaseColumn):
         for i in range(self.length):
             res.data_c[i] = 0 if self.data_c[i] != 0 else 1
         return res
+
+    def __str__(self):
+        cdef list items = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            items.append(str(self.data_c[i]))
+        return f"IntColumn([{', '.join(items)}])"
+
+    def __bool__(self):
+        return self.length > 0
+
+    def __len__(self):
+        return self.length

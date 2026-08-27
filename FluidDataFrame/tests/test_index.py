@@ -74,22 +74,27 @@ def test_multi_index():
     check('MultiIndex nlevels', mi.nlevels == 2)
     check('MultiIndex names', mi.names == ['letter', 'number'])
 
-    loc = mi.get_loc((0, 0))
+    # get_loc uses actual values, not codes
+    # Row 0: codes (0,0) → ('A', 'X')
+    loc = mi.get_loc(('A', 'X'))
     check('MultiIndex get_loc unique', loc == 0)
 
-    loc = mi.get_loc((1, 1))
-    check('MultiIndex get_loc [1,1]', loc == 3)
+    # Row 3: codes (1,1) → ('B', 'Y')
+    loc = mi.get_loc(('B', 'Y'))
+    check('MultiIndex get_loc [B,Y]', loc == 3)
 
     c1b = IntColumn()
     c1b.append(0); c1b.append(0); c1b.append(0)
     c2b = IntColumn()
     c2b.append(0); c2b.append(1); c2b.append(0)
     mi2 = MultiIndex([['A'], ['X', 'Y']], [c1b, c2b])
-    loc = mi2.get_loc((0, 0))
+    loc = mi2.get_loc(('A', 'X'))
     check('MultiIndex get_loc multi', loc == [0, 2])
 
-    check('MultiIndex get_loc missing', expect_exception(KeyError, mi.get_loc, (99, 99)))
-    check('MultiIndex get_loc wrong len', expect_exception(KeyError, mi.get_loc, (0,)))
+    check('MultiIndex get_loc missing', expect_exception(KeyError, mi.get_loc, ('Z', 'W')))
+    # Partial key lookup is supported (matches all rows with first level = 'A')
+    loc = mi.get_loc(('A',))
+    check('MultiIndex get_loc partial', loc == [0, 2])
 
 def test_dataframe_index():
     df = FastDataFrame({'a': int, 'b': str})

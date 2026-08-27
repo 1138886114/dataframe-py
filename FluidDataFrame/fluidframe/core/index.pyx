@@ -22,11 +22,21 @@ cdef class IndexBase:
     cpdef get_loc(self, object key):
         raise NotImplementedError()
 
+    cpdef list values(self):
+        raise NotImplementedError()
+
 
 cdef class IntIndex(IndexBase):
     def __cinit__(self, IntColumn col):
         self.data = col
         self.length = col.length
+
+    cpdef list values(self):
+        cdef list result = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            result.append(self.data.data_c[i])
+        return result
 
     cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n):
         cdef IntColumn new_col = IntColumn(n)
@@ -95,6 +105,13 @@ cdef class RangeIndex(IndexBase):
         if idx < 0 or idx >= self.length: raise KeyError(key)
         return idx
 
+    cpdef list values(self):
+        cdef list result = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            result.append(self.start + i * self.step)
+        return result
+
 cdef class MultiIndex(IndexBase):
     def __cinit__(self, list levels, list codes, list names=None):
         self.levels = levels
@@ -162,3 +179,15 @@ cdef class MultiIndex(IndexBase):
         if not matches: raise KeyError(key)
         if len(matches) == 1: return matches[0]
         return matches
+
+    cpdef list values(self):
+        cdef list result = []
+        cdef Py_ssize_t i, j
+        cdef IntColumn col
+        for i in range(self.length):
+            row = []
+            for j in range(self.nlevels):
+                col = <IntColumn>self.codes[j]
+                row.append(self.levels[j][col.data_c[i]])
+            result.append(tuple(row))
+        return result

@@ -635,3 +635,95 @@ cdef class TimestampColumn(BaseColumn):
                 d = <int>(target % 100)
                 res.data_c[i] = <int>(daynum - _date_to_daynum(y, m, d))
         return res
+
+    # -----------------------------------------------------------------
+    #  Comparison operators → return IntColumn (0/1 mask)
+    # -----------------------------------------------------------------
+
+    def _cmp_op(self, val, int op):
+        cdef Py_ssize_t i
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        if isinstance(val, TimestampColumn):
+            other = <TimestampColumn>val
+            if other.length != self.length:
+                raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+            if op == 0:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] < other.data_c[i] else 0
+            elif op == 1:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] <= other.data_c[i] else 0
+            elif op == 2:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] > other.data_c[i] else 0
+            elif op == 3:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] >= other.data_c[i] else 0
+            elif op == 4:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] == other.data_c[i] else 0
+            elif op == 5:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] != other.data_c[i] else 0
+        else:
+            v = <long long>val
+            if op == 0:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] < v else 0
+            elif op == 1:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] <= v else 0
+            elif op == 2:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] > v else 0
+            elif op == 3:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] >= v else 0
+            elif op == 4:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] == v else 0
+            elif op == 5:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] != v else 0
+        return res
+
+    def __lt__(self, val):  return self._cmp_op(val, 0)
+    def __le__(self, val):  return self._cmp_op(val, 1)
+    def __gt__(self, val):  return self._cmp_op(val, 2)
+    def __ge__(self, val):  return self._cmp_op(val, 3)
+    def __eq__(self, val):  return self._cmp_op(val, 4)
+    def __ne__(self, val):  return self._cmp_op(val, 5)
+
+    def __and__(self, other):
+        if not isinstance(other, IntColumn):
+            raise TypeError("Cannot & non-IntColumn mask")
+        if self.length != other.length:
+            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 1 if self.data_c[i] and other.data_c[i] else 0
+        return res
+
+    def __or__(self, other):
+        if not isinstance(other, IntColumn):
+            raise TypeError("Cannot | non-IntColumn mask")
+        if self.length != other.length:
+            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 1 if self.data_c[i] or other.data_c[i] else 0
+        return res
+
+    def __invert__(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 0 if self.data_c[i] else 1
+        return res
+
+    def __str__(self):
+        cdef list items = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            items.append(str(self.data_c[i]))
+        return f"TimestampColumn([{', '.join(items)}])"
+
+    def __bool__(self):
+        return self.length > 0
+
+    def __len__(self):
+        return self.length
