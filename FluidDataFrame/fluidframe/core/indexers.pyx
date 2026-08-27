@@ -6,6 +6,8 @@ cimport cython
 from libc.stdlib cimport malloc, free
 from fluidframe.core._base cimport aligned_malloc
 from fluidframe.core.fastdataframe cimport FastDataFrame
+from fluidframe.core.intcolumn cimport IntColumn
+from fluidframe.core.index cimport IndexBase
 
 cdef class _ILocIndexer:
     def __cinit__(self, FastDataFrame frame):
@@ -28,7 +30,6 @@ cdef class _ILocIndexer:
             if idx < 0: idx += n_orig
             if idx < 0 or idx >= n_orig: raise IndexError("Index out of bounds")
 
-            # TODO: 后续可以返回类似于 Series 的结构，当前返回 1行的 df
             indices_c = <Py_ssize_t*>aligned_malloc(sizeof(Py_ssize_t))
             if not indices_c: raise MemoryError()
             indices_c[0] = idx
@@ -90,13 +91,91 @@ cdef class _LocIndexer:
         self.frame = frame
 
     def __getitem__(self, key):
-        cdef object loc_res = self.frame.index.get_loc(key)
+        cdef Py_ssize_t n_orig = self.frame.df_length
+        cdef object loc_res
 
-        # get_loc 的返回可能有多种：
-        # 1. 整数 (匹配唯一一条)
-        # 2. Slice 对象 (匹配一段区间)
-        # 3. 数组/列表 (匹配多条散列数据)
+        # Case 1: Callable filter — df.loc[lambda df: df.col > 5]
+        if callable(key):
+            mask = key(self.frame)
+            return self._apply_mask(mask)
 
-        # 将 get_loc 的结果转发给同构的逻辑即可（复用代码，直接模拟 iloc 行为）
-        # 这里为了保持骨架清晰，可以用 Python 层的 _iloc 代理，或者抽取公共 _take_by_py_obj 函数
-        return self.frame.iloc[loc_res]
+        # Case 2: IntColumn boolean mask — df.loc[mask_col]
+        if isinstance(key, IntColumn):
+            return self._apply_mask(key)
+
+        # Case 3: list of booleans — df.loc[[True, False, True]]
+        if isinstance(key, list):
+            return self._apply_bool_list(key)
+
+        # Case 4: tuple key — index-based lookup via index.get_loc()
+        if self.frame.index is not None:
+            loc_res = self.frame.index.get_loc(key)
+            return self.frame.iloc[loc_res]
+
+        raise TypeError(f"Unsupported loc key type: {type(key).__name__}")
+
+    cdef FastDataFrame _apply_mask(self, IntColumn mask):
+        cdef Py_ssize_t n_orig = self.frame.df_length
+        if isinstance(mask, IntColumn):
+            if (<IntColumn>mask).length != n_orig:
+                raise ValueError(f"Mask length {(<IntColumn>mask).length} != DataFrame length {n_orig}")
+        else:
+            raise TypeError("Mask must be an IntColumn (0/1 boolean)")
+
+        cdef IntColumn mask_col = <IntColumn>mask
+        cdef Py_ssize_t keep_count = 0
+        cdef Py_ssize_t i
+        for i in range(n_orig):
+            if mask_col.data_c[i] != 0:
+                keep_count += 1
+
+        if keep_count == 0:
+            result = FastDataFrame()
+            for col_name, col_obj in self.frame.columns.items():
+                result.columns[col_name] = col_obj.copy()
+                result.columns[col_name].length = 0
+            return result
+
+        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
+        if not keep_idx: raise MemoryError()
+        cdef Py_ssize_t j = 0
+        for i in range(n_orig):
+            if mask_col.data_c[i] != 0:
+                keep_idx[j] = i
+                j += 1
+
+        try:
+            return self.frame._take(keep_idx, keep_count)
+        finally:
+            free(keep_idx)
+
+    cdef FastDataFrame _apply_bool_list(self, list mask):
+        cdef Py_ssize_t n_orig = self.frame.df_length
+        if len(mask) != n_orig:
+            raise ValueError(f"Mask length {len(mask)} != DataFrame length {n_orig}")
+
+        cdef Py_ssize_t keep_count = 0
+        cdef Py_ssize_t i
+        for i in range(n_orig):
+            if mask[i]:
+                keep_count += 1
+
+        if keep_count == 0:
+            result = FastDataFrame()
+            for col_name, col_obj in self.frame.columns.items():
+                result.columns[col_name] = col_obj.copy()
+                result.columns[col_name].length = 0
+            return result
+
+        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
+        if not keep_idx: raise MemoryError()
+        cdef Py_ssize_t j = 0
+        for i in range(n_orig):
+            if mask[i]:
+                keep_idx[j] = i
+                j += 1
+
+        try:
+            return self.frame._take(keep_idx, keep_count)
+        finally:
+            free(keep_idx)

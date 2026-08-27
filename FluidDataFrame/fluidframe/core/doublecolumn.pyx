@@ -9,6 +9,7 @@ from libc.stdlib cimport free
 from libc.math cimport sqrt, fabs, NAN
 
 from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
+from fluidframe.core.intcolumn cimport IntColumn
 
 @cython.final
 @cython.boundscheck(False)
@@ -259,3 +260,101 @@ cdef class DoubleColumn(BaseColumn):
                 seen.add(val)
                 result.append(val)
         return result
+
+    # ---- Comparison operators (return IntColumn as 0/1 mask) ----
+
+    @cython.binding(False)
+    def _cmp_op(self, object val, int op):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef double v
+        cdef bint is_nan_val = False
+        if isinstance(val, DoubleColumn):
+            other = <DoubleColumn>val
+            if other.length != self.length:
+                raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+            if op == 0:  # <
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] < other.data_c[i] else 0
+            elif op == 1:  # <=
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] <= other.data_c[i] else 0
+            elif op == 2:  # >
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] > other.data_c[i] else 0
+            elif op == 3:  # >=
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] >= other.data_c[i] else 0
+            elif op == 4:  # == (NaN != NaN)
+                for i in range(self.length):
+                    res.data_c[i] = 1 if (self.data_c[i] == other.data_c[i] and self.data_c[i] == self.data_c[i]) else 0
+            elif op == 5:  # !=
+                for i in range(self.length):
+                    res.data_c[i] = 1 if (self.data_c[i] != other.data_c[i] or self.data_c[i] != self.data_c[i]) else 0
+        else:
+            v = <double>val
+            is_nan_val = (v != v)
+            if op == 0:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] < v else 0
+            elif op == 1:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] <= v else 0
+            elif op == 2:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] > v else 0
+            elif op == 3:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] >= v else 0
+            elif op == 4:
+                for i in range(self.length):
+                    if is_nan_val:
+                        res.data_c[i] = 1 if self.data_c[i] != self.data_c[i] else 0
+                    else:
+                        res.data_c[i] = 1 if self.data_c[i] == v else 0
+            elif op == 5:
+                for i in range(self.length):
+                    if is_nan_val:
+                        res.data_c[i] = 1 if self.data_c[i] == self.data_c[i] else 0
+                    else:
+                        res.data_c[i] = 1 if self.data_c[i] != v else 0
+        return res
+
+    def __lt__(self, val):  return self._cmp_op(val, 0)
+    def __le__(self, val):  return self._cmp_op(val, 1)
+    def __gt__(self, val):  return self._cmp_op(val, 2)
+    def __ge__(self, val):  return self._cmp_op(val, 3)
+    def __eq__(self, val):  return self._cmp_op(val, 4)
+    def __ne__(self, val):  return self._cmp_op(val, 5)
+
+    def __and__(self, other):
+
+        if not isinstance(other, IntColumn):
+            raise TypeError("Bitwise AND only supported between two IntColumn masks")
+        cdef IntColumn a = <IntColumn>self
+        cdef IntColumn b = <IntColumn>other
+        if a.length != b.length:
+            raise ValueError(f"Length mismatch: {a.length} vs {b.length}")
+        cdef IntColumn res = IntColumn(a.capacity)
+        res.length = a.length
+        cdef Py_ssize_t i
+        for i in range(a.length):
+            res.data_c[i] = 1 if (a.data_c[i] != 0 and b.data_c[i] != 0) else 0
+        return res
+
+    def __or__(self, other):
+
+        if not isinstance(other, IntColumn):
+            raise TypeError("Bitwise OR only supported between two IntColumn masks")
+        cdef IntColumn a = <IntColumn>self
+        cdef IntColumn b = <IntColumn>other
+        if a.length != b.length:
+            raise ValueError(f"Length mismatch: {a.length} vs {b.length}")
+        cdef IntColumn res = IntColumn(a.capacity)
+        res.length = a.length
+        cdef Py_ssize_t i
+        for i in range(a.length):
+            res.data_c[i] = 1 if (a.data_c[i] != 0 or b.data_c[i] != 0) else 0
+        return res
+
+    def __invert__(self):
+
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 0 if self.data_c[i] != 0 else 1
+        return res

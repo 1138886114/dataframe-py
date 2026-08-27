@@ -161,12 +161,10 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     def append_row(self, **kwargs):
-        # 预校验列完整性
         for col_name in self.columns:
             if col_name not in kwargs:
                 raise ValueError(f"Missing value for column: {col_name}")
 
-        # 执行与异常回滚
         try:
             for col_name, val in kwargs.items():
                 self.columns[col_name].append(val)
@@ -297,7 +295,6 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sort_values(self, str col_name, bint reverse=False, bint inplace=False):
-        # TODO: 去除inplace 参数，返回new_df
         if col_name not in self.columns:
             raise KeyError(f"Column '{col_name}' not found")
 
@@ -574,7 +571,6 @@ cdef class FastDataFrame:
     @cython.wraparound(False)
     @cython.binding(False)
     def drop_with_index(self, list drop_indices, bint inplace=False):
-        # TODO: 去除inplace参数，返回new_df
         cdef Py_ssize_t n_orig = self.df_length
         if n_orig == 0:
             return self if inplace else self.copy()

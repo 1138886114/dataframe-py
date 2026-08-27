@@ -277,3 +277,87 @@ cdef class IntColumn(BaseColumn):
                 seen.add(val)
                 result.append(val)
         return result
+
+    # ---- Comparison operators (return IntColumn as 0/1 mask) ----
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def _cmp_op(self, object val, int op):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef int v
+        if isinstance(val, IntColumn):
+            other = <IntColumn>val
+            if other.length != self.length:
+                raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+            if op == 0:  # <
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] < other.data_c[i] else 0
+            elif op == 1:  # <=
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] <= other.data_c[i] else 0
+            elif op == 2:  # >
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] > other.data_c[i] else 0
+            elif op == 3:  # >=
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] >= other.data_c[i] else 0
+            elif op == 4:  # ==
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] == other.data_c[i] else 0
+            elif op == 5:  # !=
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] != other.data_c[i] else 0
+        else:
+            v = <int>val
+            if op == 0:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] < v else 0
+            elif op == 1:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] <= v else 0
+            elif op == 2:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] > v else 0
+            elif op == 3:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] >= v else 0
+            elif op == 4:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] == v else 0
+            elif op == 5:
+                for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] != v else 0
+        return res
+
+    def __lt__(self, val):  return self._cmp_op(val, 0)
+    def __le__(self, val):  return self._cmp_op(val, 1)
+    def __gt__(self, val):  return self._cmp_op(val, 2)
+    def __ge__(self, val):  return self._cmp_op(val, 3)
+    def __eq__(self, val):  return self._cmp_op(val, 4)
+    def __ne__(self, val):  return self._cmp_op(val, 5)
+
+    def __and__(self, other):
+        if not isinstance(other, IntColumn):
+            raise TypeError("Bitwise AND only supported between two IntColumn masks")
+        cdef IntColumn a = <IntColumn>self
+        cdef IntColumn b = <IntColumn>other
+        if a.length != b.length:
+            raise ValueError(f"Length mismatch: {a.length} vs {b.length}")
+        cdef IntColumn res = IntColumn(a.capacity)
+        res.length = a.length
+        cdef Py_ssize_t i
+        for i in range(a.length):
+            res.data_c[i] = 1 if (a.data_c[i] != 0 and b.data_c[i] != 0) else 0
+        return res
+
+    def __or__(self, other):
+        if not isinstance(other, IntColumn):
+            raise TypeError("Bitwise OR only supported between two IntColumn masks")
+        cdef IntColumn a = <IntColumn>self
+        cdef IntColumn b = <IntColumn>other
+        if a.length != b.length:
+            raise ValueError(f"Length mismatch: {a.length} vs {b.length}")
+        cdef IntColumn res = IntColumn(a.capacity)
+        res.length = a.length
+        cdef Py_ssize_t i
+        for i in range(a.length):
+            res.data_c[i] = 1 if (a.data_c[i] != 0 or b.data_c[i] != 0) else 0
+        return res
+
+    def __invert__(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 0 if self.data_c[i] != 0 else 1
+        return res
