@@ -5,11 +5,9 @@
 cimport cython
 from libc.stdlib cimport malloc, free
 from fluidframe.core._base cimport aligned_malloc
-from fluidframe.core.dataframe cimport FastDataFrame
+from fluidframe.core.fastdataframe cimport FastDataFrame
 
 cdef class _ILocIndexer:
-    cdef FastDataFrame frame
-
     def __cinit__(self, FastDataFrame frame):
         self.frame = frame
 
@@ -40,7 +38,12 @@ cdef class _ILocIndexer:
             # 获取切片 (df.iloc[2:10])
             start, stop, step = key.indices(n_orig)
             n_new = len(range(start, stop, step))
-            if n_new <= 0: return FastDataFrame()
+            if n_new <= 0:
+                result = FastDataFrame()
+                for col_name, col_obj in self.frame.columns.items():
+                    result.columns[col_name] = col_obj.copy()
+                    result.columns[col_name].length = 0
+                return result
 
             indices_c = <Py_ssize_t*>aligned_malloc(n_new * sizeof(Py_ssize_t))
             if not indices_c: raise MemoryError()
@@ -53,7 +56,12 @@ cdef class _ILocIndexer:
         elif isinstance(key, list):
             # 获取列表 (df.iloc[[0, 2, 4]])
             n_new = len(key)
-            if n_new == 0: return FastDataFrame()
+            if n_new == 0:
+                result = FastDataFrame()
+                for col_name, col_obj in self.frame.columns.items():
+                    result.columns[col_name] = col_obj.copy()
+                    result.columns[col_name].length = 0
+                return result
             indices_c = <Py_ssize_t*>aligned_malloc(n_new * sizeof(Py_ssize_t))
             if not indices_c: raise MemoryError()
 
@@ -78,8 +86,6 @@ cdef class _ILocIndexer:
 
 
 cdef class _LocIndexer:
-    cdef FastDataFrame frame
-
     def __cinit__(self, FastDataFrame frame):
         self.frame = frame
 

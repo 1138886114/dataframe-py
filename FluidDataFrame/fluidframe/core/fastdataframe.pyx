@@ -15,6 +15,9 @@ from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.index cimport IndexBase
+from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
+from fluidframe.core.index import RangeIndex
 
 from fluidframe._schema_types import Char256, Timestamp, _parse_schema
 from fluidframe._schema_types import TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
@@ -108,7 +111,6 @@ cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indic
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class FastDataFrame:
-    cdef public IndexBase index
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -169,6 +171,9 @@ cdef class FastDataFrame:
             for col_name, val in kwargs.items():
                 self.columns[col_name].append(val)
             self.df_length += 1
+            if self.index is not None:
+                self.index._values.append(self.df_length - 1)
+                self.index.length = self.df_length
         except Exception:
             for col_name, col_obj in self.columns.items():
                 while col_obj.length > self.df_length:
@@ -182,6 +187,11 @@ cdef class FastDataFrame:
         new_df.df_length = self.df_length
         for col_name, col_obj in self.columns.items():
             new_df.columns[col_name] = col_obj.copy()
+        if self.index is not None:
+            new_idx = RangeIndex(0, 0)
+            new_idx._values = list(self.index._values)
+            new_idx.length = self.index.length
+            new_df.index = new_idx
         return new_df
 
     @cython.binding(False)
@@ -192,6 +202,9 @@ cdef class FastDataFrame:
         for col_name, col_obj in self.columns.items():
             row[col_name] = col_obj.pop_front()
         self.df_length -= 1
+        if self.index is not None and self.index.length > 0:
+            self.index._values.pop(0)
+            self.index.length -= 1
         return row
 
     @cython.binding(False)
@@ -202,6 +215,9 @@ cdef class FastDataFrame:
         for col_name, col_obj in self.columns.items():
             row[col_name] = col_obj.pop_back()
         self.df_length -= 1
+        if self.index is not None and self.index.length > 0:
+            self.index._values.pop()
+            self.index.length -= 1
         return row
 
     @cython.binding(False)
@@ -281,7 +297,7 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sort_values(self, str col_name, bint reverse=False, bint inplace=False):
-        // TODO:  去除inplace 参数，返回new_df
+        # TODO: 去除inplace 参数，返回new_df
         if col_name not in self.columns:
             raise KeyError(f"Column '{col_name}' not found")
 
@@ -324,6 +340,9 @@ cdef class FastDataFrame:
                 raise NotImplementedError()
             if not inplace:
                 result_df.columns[name] = new_col
+
+        if not inplace and self.index is not None:
+            result_df.index = self.index._take(idx_c, n)
 
         free(idx_c)
         if not inplace:
@@ -555,7 +574,7 @@ cdef class FastDataFrame:
     @cython.wraparound(False)
     @cython.binding(False)
     def drop_with_index(self, list drop_indices, bint inplace=False):
-        // TODO： 去除inplace参数，返回new_df
+        # TODO: 去除inplace参数，返回new_df
         cdef Py_ssize_t n_orig = self.df_length
         if n_orig == 0:
             return self if inplace else self.copy()
@@ -632,6 +651,15 @@ cdef class FastDataFrame:
             if not inplace:
                 result_df.columns[name] = new_col
 
+        if self.index is not None:
+            if inplace:
+                new_idx = RangeIndex(0, 0)
+                new_idx._values = [self.index._values[keep_idx_c[i]] for i in range(keep_count)]
+                new_idx.length = keep_count
+                self.index = new_idx
+            else:
+                result_df.index = self.index._take(keep_idx_c, keep_count)
+
         free(keep_idx_c)
         if not inplace:
             return result_df
@@ -680,6 +708,9 @@ cdef class FastDataFrame:
                 (<TimestampColumn>col).length -= 1
 
         self.df_length -= 1
+        if self.index is not None and self.index.length > 0:
+            self.index._values.pop(row_idx)
+            self.index.length -= 1
 
     cdef void _drop_row_ucs2(self, UCS2Column_SoA col, Py_ssize_t row_idx, Py_ssize_t rem_len):
         cdef Py_ssize_t start_offset = col.offsets_c[row_idx]
@@ -777,7 +808,12 @@ cdef class FastDataFrame:
     def head(self, Py_ssize_t n=5):
         if n < 0: raise ValueError("n must be non-negative")
         n = min(n, self.df_length)
-        if n == 0: return FastDataFrame()
+        if n == 0:
+            result = FastDataFrame()
+            for col_name, col_obj in self.columns.items():
+                result.columns[col_name] = col_obj.copy()
+                result.columns[col_name].length = 0
+            return result
 
         cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
         if not idx_c: raise MemoryError()

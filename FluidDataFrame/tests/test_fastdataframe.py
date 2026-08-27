@@ -196,7 +196,7 @@ df = FastDataFrame({'a': int})
 for i in range(10): df.append_row(a=i)
 check('head 3', df.head(3).shape == (3, 1))
 check('head large', df.head(100).shape == (10, 1))
-check('head 0', df.head(0).shape == (0, 0))
+check('head 0', df.head(0).shape == (0, 1))
 check('head neg', expect_exception(ValueError, df.head, -1))
 
 df = FastDataFrame({'a': int})

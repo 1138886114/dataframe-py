@@ -1,6 +1,7 @@
 
 cdef class IndexBase:
     cdef public Py_ssize_t length
+    cdef public list _values
 
     cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n)
     cdef IndexBase _concat(self, IndexBase other)

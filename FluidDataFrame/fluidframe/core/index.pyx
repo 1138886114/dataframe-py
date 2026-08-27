@@ -27,19 +27,24 @@ cdef class RangeIndex(IndexBase):
         self.start = start
         self.length = length
         self.step = step
+        self._values = [start + i * step for i in range(length)]
 
     cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n):
-        # RangeIndex 被切片后，可能会变成不连续的，直接降级为普通索引(后续可实现 Int64Index)
-        # 这里为了演示，假设直接返回一个包含了提取下标的结构
-        pass
+        cdef list new_vals = []
+        cdef Py_ssize_t i
+        for i in range(n):
+            new_vals.append(self.start + indices[i] * self.step)
+        cdef RangeIndex result = RangeIndex(0, 0)
+        result._values = new_vals
+        result.length = n
+        return result
 
     cpdef get_loc(self, object key):
-        if isinstance(key, int):
-            cdef Py_ssize_t idx = <Py_ssize_t>key
-            if idx < self.start or idx >= self.start + self.length * self.step:
-                raise KeyError(key)
-            return (idx - self.start) // self.step
-        raise TypeError("RangeIndex only supports integer keys")
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            if self._values[i] == key:
+                return i
+        raise KeyError(key)
 
 cdef class MultiIndex(IndexBase):
     def __cinit__(self, list levels, list codes, list names=None):
@@ -53,20 +58,40 @@ cdef class MultiIndex(IndexBase):
             self.length = 0
 
     cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n):
-        # 极速生成新的 MultiIndex：直接对 codes（即 IntColumn）进行 _reorder
         cdef list new_codes = []
         cdef IntColumn col, new_col
         cdef Py_ssize_t i
-
-        # 将 C 数组转换为 Python 列表（或直接在 IntColumn 中实现 _take_c）
-        # 这里假设 IntColumn 增加了一个 _take_c(indices, n) 的纯 C 接口
         for col in self.codes:
-            # new_col = col._take_c(indices, n) # 需要你在 IntColumn 补充此方法
-            pass
-
+            new_col = IntColumn(n)
+            new_col.length = n
+            for i in range(n):
+                new_col.data_c[i] = col.data_c[indices[i]]
+            new_codes.append(new_col)
         return MultiIndex(self.levels, new_codes, self.names)
 
     cpdef get_loc(self, object key):
-        # 核心逻辑：将来引入 C++ unordered_map<tuple, vector<int>> 进行 O(1) 查询
-        # 目前骨架可以先用 Python 的方式占位，后续再优化为 C++
-        pass
+        cdef tuple target
+        if not isinstance(key, tuple):
+            target = (key,)
+        else:
+            target = <tuple>key
+        if len(target) != self.nlevels:
+            raise KeyError(key)
+        cdef list matches = []
+        cdef Py_ssize_t i, j
+        cdef bint match
+        cdef IntColumn col
+        for i in range(self.length):
+            match = True
+            for j in range(self.nlevels):
+                col = <IntColumn>self.codes[j]
+                if col.data_c[i] != target[j]:
+                    match = False
+                    break
+            if match:
+                matches.append(i)
+        if len(matches) == 0:
+            raise KeyError(key)
+        if len(matches) == 1:
+            return matches[0]
+        return matches
