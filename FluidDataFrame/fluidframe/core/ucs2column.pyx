@@ -5,7 +5,7 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove
-from libc.stdlib cimport malloc, realloc, free
+from libc.stdlib cimport free
 
 from fluidframe.core._base cimport BaseColumn
 from fluidframe.core.intcolumn cimport IntColumn
@@ -51,8 +51,8 @@ cdef class UCS2Column_SoA(BaseColumn):
         self.char_capacity = max(self.capacity * 16, 1024)
         self.char_length = 0
 
-        self.offsets_c = <Py_ssize_t*>malloc((self.capacity + 1) * sizeof(Py_ssize_t))
-        self.chars_c = <Py_UCS2*>malloc(self.char_capacity * sizeof(Py_UCS2))
+        self.offsets_c = <Py_ssize_t*>aligned_malloc((self.capacity + 1) * sizeof(Py_ssize_t))
+        self.chars_c = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
 
         if not self.offsets_c or not self.chars_c:
             raise MemoryError()
@@ -65,13 +65,13 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     cdef void _reserve_rows(self, Py_ssize_t new_cap) except *:
         if new_cap > self.capacity:
-            self.offsets_c = <Py_ssize_t*>realloc(self.offsets_c, (new_cap + 1) * sizeof(Py_ssize_t))
+            self.offsets_c = <Py_ssize_t*>aligned_realloc(self.offsets_c, (new_cap + 1) * sizeof(Py_ssize_t))
             if not self.offsets_c: raise MemoryError()
             self.capacity = new_cap
 
     cdef void _reserve_chars(self, Py_ssize_t new_char_cap) except *:
         if new_char_cap > self.char_capacity:
-            self.chars_c = <Py_UCS2*>realloc(self.chars_c, new_char_cap * sizeof(Py_UCS2))
+            self.chars_c = <Py_UCS2*>aligned_realloc(self.chars_c, new_char_cap * sizeof(Py_UCS2))
             if not self.chars_c: raise MemoryError()
             self.char_capacity = new_char_cap
 
@@ -139,8 +139,8 @@ cdef class UCS2Column_SoA(BaseColumn):
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
         cdef Py_ssize_t n = self.length
-        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>malloc((self.capacity + 1) * sizeof(Py_ssize_t))
-        cdef Py_UCS2* new_chars = <Py_UCS2*>malloc(self.char_capacity * sizeof(Py_UCS2))
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((self.capacity + 1) * sizeof(Py_ssize_t))
+        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
         if not new_offsets or not new_chars: raise MemoryError()
 
         new_offsets[0] = 0

@@ -5,7 +5,7 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove, strncmp
-from libc.stdlib cimport malloc, realloc, free
+from libc.stdlib cimport free
 from libc.math cimport NAN
 from cpython.unicode cimport Py_UCS2
 
@@ -243,6 +243,9 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sort_values(self, str col_name, bint reverse=False, bint inplace=False):
+        if col_name not in self.columns:
+            raise KeyError(f"Column '{col_name}' not found")
+
         cdef Py_ssize_t n = self.df_length
         if n == 0:
             if inplace:

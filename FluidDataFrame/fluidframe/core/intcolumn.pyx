@@ -5,7 +5,7 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove
-from libc.stdlib cimport malloc, realloc, free
+from libc.stdlib cimport free
 from libc.math cimport sqrt, fabs, NAN
 from fluidframe.core._base cimport BaseColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -20,7 +20,7 @@ cdef class IntColumn(BaseColumn):
     def __cinit__(self, Py_ssize_t init_capacity=16):
         self.capacity = max(init_capacity, 1)
         self.length = 0
-        self.data_c = <int*>malloc(self.capacity * sizeof(int))
+        self.data_c = <int*>aligned_malloc(self.capacity * sizeof(int))
         if not self.data_c: raise MemoryError()
 
     def __dealloc__(self):
@@ -29,7 +29,7 @@ cdef class IntColumn(BaseColumn):
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
-            self.data_c = <int*>realloc(self.data_c, new_cap * sizeof(int))
+            self.data_c = <int*>aligned_realloc(self.data_c, new_cap * sizeof(int))
             if not self.data_c: raise MemoryError()
             self.capacity = new_cap
 
@@ -174,7 +174,7 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def median(self):
         if self.length == 0: return NAN
-        cdef int* temp = <int*>malloc(self.length * sizeof(int))
+        cdef int* temp = <int*>aligned_malloc(self.length * sizeof(int))
         if not temp: raise MemoryError()
         memcpy(temp, self.data_c, self.length * sizeof(int))
         cdef list py_list = [temp[i] for i in range(self.length)]
@@ -251,7 +251,7 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
-        cdef int* new_data = <int*>malloc(self.capacity * sizeof(int))
+        cdef int* new_data = <int*>aligned_malloc(self.capacity * sizeof(int))
         if not new_data: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(self.length):

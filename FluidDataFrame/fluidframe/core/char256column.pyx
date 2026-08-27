@@ -5,7 +5,7 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove, strstr, strlen, strncmp, strncpy, strncat
-from libc.stdlib cimport malloc, realloc, free
+from libc.stdlib cimport free
 
 cdef extern from "<ctype.h>" nogil:
     int tolower(int)
@@ -53,7 +53,7 @@ cdef class Char256Column_SoA(BaseColumn):
     def __cinit__(self, Py_ssize_t init_capacity=16):
         self.capacity = max(init_capacity, 1)
         self.length = 0
-        self.data_c = <char*>malloc(self.capacity * 256)
+        self.data_c = <char*>aligned_malloc(self.capacity * 256)
         if not self.data_c: raise MemoryError()
 
     def __dealloc__(self):
@@ -61,7 +61,7 @@ cdef class Char256Column_SoA(BaseColumn):
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
-            self.data_c = <char*>realloc(self.data_c, new_cap * 256)
+            self.data_c = <char*>aligned_realloc(self.data_c, new_cap * 256)
             if not self.data_c: raise MemoryError()
             self.capacity = new_cap
 
@@ -113,7 +113,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
-        cdef char* new_data = <char*>malloc(self.capacity * 256)
+        cdef char* new_data = <char*>aligned_malloc(self.capacity * 256)
         if not new_data: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(self.length):
@@ -124,6 +124,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getitem__(self, Py_ssize_t idx):
+        if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError()
         cdef char* ptr = self.data_c + (idx * 256)
         return ptr.decode('ascii')
@@ -133,7 +134,7 @@ cdef class Char256Column_SoA(BaseColumn):
     def contains(self, str substring):
         cdef bytes b_sub = substring.encode('ascii')
         cdef const char* c_sub = b_sub
-        cdef int* out_idx = <int*>malloc(self.length * sizeof(int))
+        cdef int* out_idx = <int*>aligned_malloc(self.length * sizeof(int))
         if not out_idx: raise MemoryError()
         cdef int count = 0
         cdef Py_ssize_t i
@@ -177,7 +178,7 @@ cdef class Char256Column_SoA(BaseColumn):
             s = (self.data_c + i * 256).decode('ascii', errors='ignore')
             match = prog.search(s)
             if match and match.groups():
-                res.append(match.group(1))
+                res.append(match.group(1) or "")
             else:
                 res.append("")
         return res
@@ -308,8 +309,8 @@ cdef class Char256Column_SoA(BaseColumn):
                 if left == 256 or ptr[left] == b'\0':
                     ptr[0] = b'\0'
                     continue
-                right = 255
-                while right >= 0 and (ptr[right] == b'\0' or isspace(ptr[right])):
+                right = strlen(ptr) - 1
+                while right >= left and isspace(ptr[right]):
                     right -= 1
                 if left > 0:
                     memmove(ptr, ptr + left, right - left + 1)
@@ -341,11 +342,12 @@ cdef class Char256Column_SoA(BaseColumn):
         with nogil:
             for i in range(self.length):
                 ptr = res.data_c + i * 256
-                right = 255
-                while right >= 0 and (ptr[right] == b'\0' or isspace(ptr[right])):
+                right = strlen(ptr) - 1
+                while right >= left and isspace(ptr[right]):
                     right -= 1
-                if right < 255:
-                    ptr[right + 1] = b'\0'
+                if left > 0:
+                    memmove(ptr, ptr + left, right - left + 1)
+                ptr[right - left + 1] = b'\0'
         return res
 
     @cython.binding(False)
@@ -368,6 +370,9 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     def count(self, str substring):
         cdef bytes b_sub = substring.encode('ascii')
+        cdef size_t sub_len = len(b_sub)
+        if sub_len == 0:
+            return self.len().add(1)
         cdef const char* c_sub = b_sub
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -382,7 +387,7 @@ cdef class Char256Column_SoA(BaseColumn):
                 match = strstr(ptr, c_sub)
                 while match != NULL:
                     cnt += 1
-                    match = strstr(match + 1, c_sub)
+                    match = strstr(match + sub_len, c_sub)
                 res.data_c[i] = cnt
         return res
 
