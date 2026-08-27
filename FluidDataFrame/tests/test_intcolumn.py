@@ -1,0 +1,221 @@
+import math
+import sys
+sys.path.insert(0, '..')
+from fluidframe.core.intcolumn import IntColumn
+
+passed = 0
+failed = 0
+
+def check(name, condition):
+    global passed, failed
+    if condition:
+        passed += 1
+    else:
+        failed += 1
+        print(f'  FAIL: {name}')
+
+def expect_exception(exc_type, fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+        return False
+    except exc_type:
+        return True
+    except Exception:
+        return False
+
+print('=== IntColumn Tests ===')
+
+col = IntColumn()
+check('empty length', col.length == 0)
+check('empty capacity', col.capacity == 16)
+
+col = IntColumn()
+col.append(10); col.append(20); col.append(30)
+check('append length', col.length == 3)
+check('getitem 0', col[0] == 10)
+check('getitem 1', col[1] == 20)
+check('getitem 2', col[2] == 30)
+
+col = IntColumn()
+col.append(-1); col.append(-2147483648)
+check('append negative', col[0] == -1)
+check('append min int', col[1] == -2147483648)
+
+col = IntColumn()
+col.append(2147483647); col.append(0)
+check('append max int', col[0] == 2147483647)
+check('append zero', col[1] == 0)
+
+col = IntColumn(); col.append(1)
+check('getitem out of range', expect_exception(IndexError, col.__getitem__, 1))
+check('getitem negative', expect_exception(IndexError, col.__getitem__, -2))
+
+col = IntColumn(); col.append(1); col.append(2)
+val = col.pop_back()
+check('pop_back val', val == 2)
+check('pop_back len', col.length == 1)
+
+col2 = IntColumn()
+check('pop_back empty', expect_exception(IndexError, col2.pop_back))
+
+col = IntColumn(); col.append(1); col.append(2); col.append(3)
+val = col.pop_front()
+check('pop_front val', val == 1)
+check('pop_front len', col.length == 2)
+check('pop_front [0]', col[0] == 2)
+check('pop_front [1]', col[1] == 3)
+
+col2 = IntColumn()
+check('pop_front empty', expect_exception(IndexError, col2.pop_front))
+
+col = IntColumn(); col.append(42)
+val = col.pop_front()
+check('pop_front single val', val == 42)
+check('pop_front single len', col.length == 0)
+
+col = IntColumn(); col.append(1); col.append(2)
+col2 = col.copy()
+check('copy length', col2.length == 2)
+check('copy [0]', col2[0] == 1)
+check('copy [1]', col2[1] == 2)
+col2.append(3)
+check('copy independent orig', col.length == 2)
+check('copy independent new', col2.length == 3)
+
+col1 = IntColumn(); col1.append(1); col1.append(2)
+col2 = IntColumn(); col2.append(3); col2.append(4)
+col1.concat(col2)
+check('concat length', col1.length == 4)
+check('concat [0]', col1[0] == 1)
+check('concat [3]', col1[3] == 4)
+
+col = IntColumn(); col.append(5); col.append(3); col.append(8); col.append(1)
+check('max', col.max() == 8)
+
+col = IntColumn(); col.append(42)
+check('max single', col.max() == 42)
+
+col2 = IntColumn()
+check('max empty', expect_exception(ValueError, col2.max))
+
+col = IntColumn(); col.append(5); col.append(3); col.append(8); col.append(1)
+check('min', col.min() == 1)
+
+col = IntColumn()
+check('min empty', expect_exception(ValueError, col.min))
+
+col = IntColumn(); col.append(10); col.append(20); col.append(30)
+check('mean', col.mean() == 20.0)
+
+col = IntColumn()
+check('mean empty', math.isnan(col.mean()))
+
+col = IntColumn(); col.append(1); col.append(2); col.append(3)
+check('var', col.var() == 1.0)
+
+col = IntColumn(); col.append(5)
+check('var single', col.var() == 0.0)
+
+col = IntColumn(); col.append(1); col.append(2); col.append(3)
+check('std', col.std() == 1.0)
+
+col = IntColumn(); col.append(1); col.append(2); col.append(3)
+check('sum', col.sum() == 6.0)
+
+col = IntColumn()
+check('sum empty', col.sum() == 0.0)
+
+col = IntColumn(); col.append(0); col.append(1); col.append(0); col.append(5)
+check('count_nonzeros', col.count_nonzeros() == 2)
+
+col = IntColumn(); col.append(1); col.append(5); col.append(3)
+check('idxmax', col.idxmax() == 1)
+
+col = IntColumn()
+check('idxmax empty', expect_exception(ValueError, col.idxmax))
+
+col = IntColumn(); col.append(5); col.append(1); col.append(3)
+check('idxmin', col.idxmin() == 1)
+
+col = IntColumn()
+check('idxmin empty', expect_exception(ValueError, col.idxmin))
+
+col = IntColumn(); col.append(1); col.append(5)
+check('argmax', col.argmax() == 1)
+
+col = IntColumn(); col.append(5); col.append(1)
+check('argmin', col.argmin() == 1)
+
+col = IntColumn(); col.append(3); col.append(1); col.append(2)
+check('median odd', col.median() == 2)
+
+col = IntColumn(); col.append(4); col.append(1); col.append(3); col.append(2)
+check('median even', col.median() == 2.5)
+
+col = IntColumn()
+check('median empty', math.isnan(col.median()))
+
+col = IntColumn(); col.append(1); col.append(2); col.append(3)
+check('mad', col.mad() == 2.0 / 3.0)
+
+col = IntColumn()
+check('mad empty', math.isnan(col.mad()))
+
+col = IntColumn(); col.append(1); col.append(2)
+res = col.add(10)
+check('add [0]', res[0] == 11)
+check('add [1]', res[1] == 12)
+
+col = IntColumn(); col.append(10); col.append(20)
+res = col.sub(5)
+check('sub [0]', res[0] == 5)
+check('sub [1]', res[1] == 15)
+
+col = IntColumn(); col.append(3); col.append(4)
+res = col.mul(2)
+check('mul [0]', res[0] == 6)
+check('mul [1]', res[1] == 8)
+
+col = IntColumn(); col.append(10); col.append(20)
+res = col.div(5)
+check('div [0]', res[0] == 2.0)
+check('div [1]', res[1] == 4.0)
+
+col = IntColumn(); col.append(10)
+res = col.div(0)
+check('div by zero', math.isnan(res[0]))
+
+col = IntColumn(); col.append(1); col.append(3); col.append(6); col.append(10)
+res = col.diff()
+check('diff [0]', res[0] == 0)
+check('diff [1]', res[1] == 2)
+check('diff [2]', res[2] == 3)
+check('diff [3]', res[3] == 4)
+
+col = IntColumn()
+res = col.diff()
+check('diff empty', res.length == 0)
+
+col = IntColumn(); col.append(1); col.append(2); col.append(1); col.append(3); col.append(2)
+check('unique', col.unique() == [1, 2, 3])
+
+col = IntColumn()
+check('unique empty', col.unique() == [])
+
+col = IntColumn(); col.append(42)
+check('unique single', col.unique() == [42])
+
+col = IntColumn()
+for i in range(100):
+    col.append(i)
+check('growth length', col.length == 100)
+check('growth [99]', col[99] == 99)
+
+col = IntColumn(); col.append(10); col.append(20); col.append(30)
+col._reorder([2, 0, 1])
+check('reorder [0]', col[0] == 30)
+check('reorder [1]', col[1] == 10)
+check('reorder [2]', col[2] == 20)
+
+print(f'\nResults: {passed} passed, {failed} failed')
+if failed: sys.exit(1)

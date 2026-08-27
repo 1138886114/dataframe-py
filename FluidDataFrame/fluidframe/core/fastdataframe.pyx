@@ -43,21 +43,26 @@ cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, P
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef void _c_argsort_numeric(NumericType* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
-    if left >= right:
-        return
+    if left >= right: return
 
-    cdef Py_ssize_t i = left, j = right
-    cdef Py_ssize_t pivot_idx = indices[(left + right) // 2]
-    cdef NumericType pivot = data[pivot_idx]
+    cdef Py_ssize_t mid = left + ((right - left) >> 1)
     cdef Py_ssize_t temp
+    if data[indices[left]] > data[indices[mid]]:
+        temp = indices[left]; indices[left] = indices[mid]; indices[mid] = temp
+    if data[indices[left]] > data[indices[right]]:
+        temp = indices[left]; indices[left] = indices[right]; indices[right] = temp
+    if data[indices[mid]] > data[indices[right]]:
+        temp = indices[mid]; indices[mid] = indices[right]; indices[right] = temp
+
+    cdef Py_ssize_t pivot_idx = indices[mid]
+    cdef NumericType pivot = data[pivot_idx]
+    cdef Py_ssize_t i = left, j = right
 
     while i <= j:
         while data[indices[i]] < pivot: i += 1
         while data[indices[j]] > pivot: j -= 1
         if i <= j:
-            temp = indices[i]
-            indices[i] = indices[j]
-            indices[j] = temp
+            temp = indices[i]; indices[i] = indices[j]; indices[j] = temp
             i += 1
             j -= 1
 
@@ -103,12 +108,14 @@ cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indic
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class FastDataFrame:
+    cdef public IndexBase index
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __init__(self, dict schema=None):
         self.columns = {}
         self.df_length = 0
+        self.index = RangeIndex(0, 0)
 
         if schema:
             parsed = _parse_schema(schema)
@@ -124,11 +131,26 @@ cdef class FastDataFrame:
                 elif dtype == TYPE_TIMESTAMP:
                     self.columns[col_name] = TimestampColumn()
 
+    @property
+    def loc(self):
+        return _LocIndexer(self)
+
+    @property
+    def iloc(self):
+        return _ILocIndexer(self)
+
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getattr__(self, name):
         if name in self.columns: return self.columns[name]
-        raise AttributeError(f"FastDataFrame has no column '{name}'")
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __dir__(self):
+        cdef list base_dir = dir(type(self))
+        return sorted(set(base_dir + list(self.columns.keys())))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -137,9 +159,21 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     def append_row(self, **kwargs):
-        for col_name, val in kwargs.items():
-            self.columns[col_name].append(val)
-        self.df_length += 1
+        # 预校验列完整性
+        for col_name in self.columns:
+            if col_name not in kwargs:
+                raise ValueError(f"Missing value for column: {col_name}")
+
+        # 执行与异常回滚
+        try:
+            for col_name, val in kwargs.items():
+                self.columns[col_name].append(val)
+            self.df_length += 1
+        except Exception:
+            for col_name, col_obj in self.columns.items():
+                while col_obj.length > self.df_length:
+                    col_obj.pop_back()
+            raise
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -171,12 +205,16 @@ cdef class FastDataFrame:
         return row
 
     @cython.binding(False)
-    @cython.always_allow_keywords(False)
     def concat(self, FastDataFrame other):
-        for col_name, col_obj in self.columns.items():
-            if col_name in other.columns:
+        if set(self.columns.keys()) != set(other.columns.keys()):
+            raise ValueError("Schema mismatch during concat")
+
+        try:
+            for col_name, col_obj in self.columns.items():
                 col_obj.concat(other.columns[col_name])
-        self.df_length += other.df_length
+            self.df_length += other.df_length
+        except Exception:
+            raise RuntimeError("Concat failed halfway, dataframe is corrupted.")
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -243,6 +281,7 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sort_values(self, str col_name, bint reverse=False, bint inplace=False):
+        // TODO:  去除inplace 参数，返回new_df
         if col_name not in self.columns:
             raise KeyError(f"Column '{col_name}' not found")
 
@@ -516,6 +555,7 @@ cdef class FastDataFrame:
     @cython.wraparound(False)
     @cython.binding(False)
     def drop_with_index(self, list drop_indices, bint inplace=False):
+        // TODO： 去除inplace参数，返回new_df
         cdef Py_ssize_t n_orig = self.df_length
         if n_orig == 0:
             return self if inplace else self.copy()
@@ -695,15 +735,17 @@ cdef class FastDataFrame:
     def to_csv(self, filename, sep=','):
         import csv
         cdef list col_names = list(self.columns.keys())
-        cdef Py_ssize_t i
-        cdef str name
-        cdef BaseColumn col
+        cdef list col_objs = [self.columns[name] for name in col_names]
+        cdef Py_ssize_t i, j
+        cdef Py_ssize_t num_cols = len(col_names)
+
         cdef list row
+
         with open(filename, 'w', encoding='utf-8', newline='') as f:
             writer = csv.writer(f, delimiter=sep)
             writer.writerow(col_names)
             for i in range(self.df_length):
-                row = [str(self.columns[name][i]) for name in col_names]
+                row = [str(col_objs[j][i]) for j in range(num_cols)]
                 writer.writerow(row)
 
     @cython.binding(False)
@@ -726,6 +768,9 @@ cdef class FastDataFrame:
                 result.columns[name] = self._reorder_ucs2_column(<UCS2Column_SoA>col, indices, n, False)
             elif isinstance(col, TimestampColumn):
                 result.columns[name] = self._reorder_timestamp_column(<TimestampColumn>col, indices, n, False)
+
+        if self.index is not None:
+            result.index = self.index._take(indices, n)
         return result
 
     @cython.binding(False)
@@ -733,13 +778,16 @@ cdef class FastDataFrame:
         if n < 0: raise ValueError("n must be non-negative")
         n = min(n, self.df_length)
         if n == 0: return FastDataFrame()
+
         cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
         if not idx_c: raise MemoryError()
         cdef Py_ssize_t i
-        for i in range(n): idx_c[i] = i
-        cdef FastDataFrame result = self._take(idx_c, n)
-        free(idx_c)
-        return result
+        try:
+            for i in range(n):
+                idx_c[i] = i
+            return self._take(idx_c, n)
+        finally:
+            free(idx_c)
 
     @cython.binding(False)
     def tail(self, Py_ssize_t n=5):
