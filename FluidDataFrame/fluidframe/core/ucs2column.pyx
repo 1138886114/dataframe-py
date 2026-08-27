@@ -64,15 +64,19 @@ cdef class UCS2Column_SoA(BaseColumn):
         if self.chars_c is not NULL: free(self.chars_c)
 
     cdef void _reserve_rows(self, Py_ssize_t new_cap) except *:
+        cdef Py_ssize_t* new_ptr
         if new_cap > self.capacity:
-            self.offsets_c = <Py_ssize_t*>aligned_realloc(self.offsets_c, (self.capacity + 1) * sizeof(Py_ssize_t), (new_cap + 1) * sizeof(Py_ssize_t))
-            if not self.offsets_c: raise MemoryError()
+            new_ptr = <Py_ssize_t*>aligned_realloc(self.offsets_c, (self.capacity + 1) * sizeof(Py_ssize_t), (new_cap + 1) * sizeof(Py_ssize_t))
+            if not new_ptr: raise MemoryError()
+            self.offsets_c = new_ptr
             self.capacity = new_cap
 
     cdef void _reserve_chars(self, Py_ssize_t new_char_cap) except *:
+        cdef Py_UCS2* new_ptr
         if new_char_cap > self.char_capacity:
-            self.chars_c = <Py_UCS2*>aligned_realloc(self.chars_c, self.char_capacity * sizeof(Py_UCS2), new_char_cap * sizeof(Py_UCS2))
-            if not self.chars_c: raise MemoryError()
+            new_ptr = <Py_UCS2*>aligned_realloc(self.chars_c, self.char_capacity * sizeof(Py_UCS2), new_char_cap * sizeof(Py_UCS2))
+            if not new_ptr: raise MemoryError()
+            self.chars_c = new_ptr
             self.char_capacity = new_char_cap
 
     @cython.binding(False)
@@ -139,26 +143,36 @@ cdef class UCS2Column_SoA(BaseColumn):
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
         cdef Py_ssize_t n = self.length
-        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((self.capacity + 1) * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
+        if not new_offsets: raise MemoryError()
         cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
-        if not new_offsets or not new_chars: raise MemoryError()
+        if not new_chars:
+            free(new_offsets)
+            raise MemoryError()
 
         new_offsets[0] = 0
         cdef Py_ssize_t current_char_len = 0
         cdef Py_ssize_t idx, start, end, str_len
         cdef Py_ssize_t i
 
-        for i in range(n):
-            idx = <Py_ssize_t>indices[i]
-            start = self.offsets_c[idx]
-            end = self.offsets_c[idx + 1]
-            str_len = end - start
+        try:
+            for i in range(n):
+                idx = <Py_ssize_t>indices[i]
+                if idx < 0 or idx >= n:
+                    raise IndexError("Index out of bounds")
+                start = self.offsets_c[idx]
+                end = self.offsets_c[idx + 1]
+                str_len = end - start
 
-            if str_len > 0:
-                memcpy(new_chars + current_char_len, self.chars_c + start, str_len * sizeof(Py_UCS2))
+                if str_len > 0:
+                    memcpy(new_chars + current_char_len, self.chars_c + start, str_len * sizeof(Py_UCS2))
 
-            current_char_len += str_len
-            new_offsets[i + 1] = current_char_len
+                current_char_len += str_len
+                new_offsets[i + 1] = current_char_len
+        except Exception:
+            free(new_offsets)
+            free(new_chars)
+            raise
 
         free(self.offsets_c)
         free(self.chars_c)

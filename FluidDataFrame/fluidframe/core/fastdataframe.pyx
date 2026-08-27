@@ -9,7 +9,7 @@ from libc.stdlib cimport free
 from libc.math cimport NAN
 from cpython.unicode cimport Py_UCS2
 
-from fluidframe.core._base cimport BaseColumn, NumericType, DataType
+from fluidframe.core._base cimport BaseColumn, NumericType, DataType, aligned_malloc
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
@@ -362,7 +362,7 @@ cdef class FastDataFrame:
 
     cdef TimestampColumn _reorder_timestamp_column(self, TimestampColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
         cdef long long* old_data = col.data_c
-        cdef long long* new_data = <long long*>malloc(col.capacity * sizeof(long long))
+        cdef long long* new_data = <long long*>aligned_malloc(n * sizeof(long long))
         if not new_data: raise MemoryError()
 
         cdef Py_ssize_t i
@@ -471,8 +471,8 @@ cdef class FastDataFrame:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     cdef UCS2Column_SoA _reorder_ucs2_column(self, UCS2Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>malloc((n + 1) * sizeof(Py_ssize_t))
-        cdef Py_UCS2* new_chars = <Py_UCS2*>malloc(col.char_capacity * sizeof(Py_UCS2))
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
+        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(col.char_capacity * sizeof(Py_UCS2))
         if not new_offsets or not new_chars: raise MemoryError()
 
         new_offsets[0] = 0

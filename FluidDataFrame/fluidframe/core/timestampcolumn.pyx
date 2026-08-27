@@ -28,9 +28,11 @@ cdef class TimestampColumn(BaseColumn):
         if self.data_c is not NULL: free(self.data_c)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
+        cdef long long* new_ptr
         if new_cap > self.capacity:
-            self.data_c = <long long*>aligned_realloc(self.data_c, self.capacity * sizeof(long long), new_cap * sizeof(long long))
-            if not self.data_c: raise MemoryError()
+            new_ptr = <long long*>aligned_realloc(self.data_c, self.capacity * sizeof(long long), new_cap * sizeof(long long))
+            if not new_ptr: raise MemoryError()
+            self.data_c = new_ptr
             self.capacity = new_cap
 
     @cython.binding(False)
@@ -47,7 +49,7 @@ cdef class TimestampColumn(BaseColumn):
         self.length += 1
 
     cdef inline long long _parse(self, str s) noexcept:
-        cdef bytes b = s.encode('ascii')
+        cdef bytes b = s.encode('ascii', errors='ignore')
         cdef const unsigned char* buf = <const unsigned char*>b
         cdef long long val = 0
         cdef int i = 0
@@ -108,17 +110,25 @@ cdef class TimestampColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
-        cdef long long* new_data = <long long*>aligned_malloc(self.capacity * sizeof(long long))
+        cdef Py_ssize_t n = self.length
+        cdef long long* new_data = <long long*>aligned_malloc(n * sizeof(long long))
         if not new_data: raise MemoryError()
-        cdef Py_ssize_t i
-        for i in range(self.length):
-            new_data[i] = self.data_c[<Py_ssize_t>indices[i]]
+        cdef Py_ssize_t i, idx
+        try:
+            for i in range(n):
+                idx = <Py_ssize_t>indices[i]
+                if idx < 0 or idx >= n: raise IndexError("Index out of bounds")
+                new_data[i] = self.data_c[idx]
+        except Exception:
+            free(new_data)
+            raise
         free(self.data_c)
         self.data_c = new_data
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getitem__(self, Py_ssize_t idx):
+        if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError()
         return self.data_c[idx]
 
@@ -166,14 +176,62 @@ cdef class TimestampColumn(BaseColumn):
 
     @cython.binding(False)
     def strftime(self, str fmt):
-        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef bytes b_fmt = fmt.encode('ascii', errors='ignore')
+        cdef const char* c_fmt = b_fmt
+        cdef Py_ssize_t fmt_len = len(b_fmt)
+
+        cdef Char256Column_SoA res = Char256Column_SoA(self.length)
+        res.length = self.length
+
         cdef Py_ssize_t i
         cdef long long val
         cdef int y, m, d
-        for i in range(self.length):
-            val = self.data_c[i]
-            y = <int>(val / 10000)
-            m = <int>((val / 100) % 100)
-            d = <int>(val % 100)
-            res.append(fmt.replace('%Y', f'{y:04d}').replace('%m', f'{m:02d}').replace('%d', f'{d:02d}'))
+        cdef char* dest
+        cdef int f_idx, d_idx
+        cdef char ch, c_percent = 37, c_Y = 89, c_m = 109, c_d = 100, c_zero = 48, c_backslash0 = 0
+
+        with nogil:
+            for i in range(self.length):
+                val = self.data_c[i]
+                y = <int>(val / 10000)
+                m = <int>((val / 100) % 100)
+                d = <int>(val % 100)
+
+                dest = res.data_c + (i * 256)
+                f_idx = 0
+                d_idx = 0
+
+                while f_idx < fmt_len and d_idx < 255:
+                    ch = c_fmt[f_idx]
+                    if ch == c_percent and f_idx + 1 < fmt_len:
+                        f_idx += 1
+                        ch = c_fmt[f_idx]
+                        if ch == c_Y:
+                            if d_idx + 4 <= 255:
+                                dest[d_idx]   = c_zero + <char>((y / 1000) % 10)
+                                dest[d_idx+1] = c_zero + <char>((y / 100) % 10)
+                                dest[d_idx+2] = c_zero + <char>((y / 10) % 10)
+                                dest[d_idx+3] = c_zero + <char>(y % 10)
+                                d_idx += 4
+                        elif ch == c_m:
+                            if d_idx + 2 <= 255:
+                                dest[d_idx]   = c_zero + <char>((m / 10) % 10)
+                                dest[d_idx+1] = c_zero + <char>(m % 10)
+                                d_idx += 2
+                        elif ch == c_d:
+                            if d_idx + 2 <= 255:
+                                dest[d_idx]   = c_zero + <char>((d / 10) % 10)
+                                dest[d_idx+1] = c_zero + <char>(d % 10)
+                                d_idx += 2
+                        else:
+                            if d_idx + 2 <= 255:
+                                dest[d_idx] = c_percent
+                                dest[d_idx+1] = ch
+                                d_idx += 2
+                    else:
+                        dest[d_idx] = ch
+                        d_idx += 1
+
+                    f_idx += 1
+                dest[d_idx] = c_backslash0
         return res
