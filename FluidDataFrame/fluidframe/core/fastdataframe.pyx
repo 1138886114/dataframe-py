@@ -15,9 +15,9 @@ from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.timestampcolumn cimport TimestampColumn
-from fluidframe.core.index cimport IndexBase
+from fluidframe.core.index cimport IndexBase, RangeIndex
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
-from fluidframe.core.index import RangeIndex
+
 
 from fluidframe._schema_types import Char256, Timestamp, _parse_schema
 from fluidframe._schema_types import TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
@@ -165,22 +165,41 @@ cdef class FastDataFrame:
             if col_name not in kwargs:
                 raise ValueError(f"Missing value for column: {col_name}")
 
+        cdef Py_ssize_t original_df_length = self.df_length
+        cdef Py_ssize_t original_index_length = self.index.length if self.index is not None else 0
+
         try:
             for col_name, val in kwargs.items():
                 self.columns[col_name].append(val)
             self.df_length += 1
+
             if self.index is not None:
-                self.index._values.append(self.df_length - 1)
-                self.index.length = self.df_length
+                if isinstance(self.index, RangeIndex):
+                    self.index.length = self.df_length
+                elif isinstance(self.index, IntIndex):
+                    (<IntIndex>self.index).append(<int>(self.df_length - 1))
+                elif isinstance(self.index, MultiIndex):
+                    raise NotImplementedError("Appending rows to MultiIndex is not supported via append_row yet.")
         except Exception:
+            self.df_length = original_df_length
+
             for col_name, col_obj in self.columns.items():
-                while col_obj.length > self.df_length:
+                while col_obj.length > original_df_length:
                     col_obj.pop_back()
+
+            if self.index is not None:
+                if isinstance(self.index, RangeIndex):
+                    self.index.length = original_index_length
+                elif isinstance(self.index, IntIndex):
+                    while (<IntIndex>self.index).length > original_index_length:
+                        (<IntIndex>self.index).pop_back()
+
             raise
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
+        cdef RangeIndex new_idx
         new_df = FastDataFrame()
         new_df.df_length = self.df_length
         for col_name, col_obj in self.columns.items():
@@ -572,6 +591,7 @@ cdef class FastDataFrame:
     @cython.binding(False)
     def drop_with_index(self, list drop_indices, bint inplace=False):
         cdef Py_ssize_t n_orig = self.df_length
+        cdef RangeIndex new_idx
         if n_orig == 0:
             return self if inplace else self.copy()
 

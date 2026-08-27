@@ -28,13 +28,13 @@ def expect_exception(exc_type, fn, *args, **kwargs):
 def test_range_index():
     ri = RangeIndex(0, 5)
     check('RangeIndex length', ri.length == 5)
-    check('RangeIndex values', ri._values == [0, 1, 2, 3, 4])
+    check('RangeIndex values', ri.values() == [0, 1, 2, 3, 4])
 
     ri = RangeIndex(10, 3, 2)
-    check('RangeIndex custom', ri._values == [10, 12, 14])
+    check('RangeIndex custom', ri.values() == [10, 12, 14])
 
     ri = RangeIndex(0, 0)
-    check('RangeIndex empty', ri.length == 0 and ri._values == [])
+    check('RangeIndex empty', ri.length == 0 and ri.values() == [])
 
 def test_range_index_get_loc():
     ri = RangeIndex(0, 5)
@@ -51,17 +51,17 @@ def test_range_index_take():
     df.append_row(a=50)
 
     h = df.head(3)
-    check('head index values', h.index._values == [0, 1, 2])
+    check('head index values', h.index.values() == [0, 1, 2])
 
     t = df.tail(2)
-    check('tail index values', t.index._values == [3, 4])
+    check('tail index values', t.index.values() == [3, 4])
 
     df2 = FastDataFrame({'val': int})
     df2.append_row(val=30)
     df2.append_row(val=10)
     df2.append_row(val=20)
     sorted_df = df2.sort_values('val')
-    check('sort index values', sorted_df.index._values == [1, 2, 0])
+    check('sort index values', sorted_df.index.values() == [1, 2, 0])
 
 def test_multi_index():
     c1 = IntColumn()
@@ -102,11 +102,11 @@ def test_dataframe_index():
 
     h = df.head(2)
     check('head index length', h.index.length == 2)
-    check('head index values', h.index._values == [0, 1])
+    check('head index values', h.index.values() == [0, 1])
 
     t = df.tail(2)
     check('tail index length', t.index.length == 2)
-    check('tail index values', t.index._values == [1, 2])
+    check('tail index values', t.index.values() == [1, 2])
 
 def test_iloc():
     df = FastDataFrame({'a': int, 'b': str})
@@ -160,11 +160,11 @@ def test_head_tail_index():
         df.append_row(x=i * 10)
 
     h = df.head(3)
-    check('head 3 index', h.index._values == [0, 1, 2])
+    check('head 3 index', h.index.values() == [0, 1, 2])
     check('head 3 data', h['x'][0] == 0 and h['x'][2] == 20)
 
     t = df.tail(3)
-    check('tail 3 index', t.index._values == [7, 8, 9])
+    check('tail 3 index', t.index.values() == [7, 8, 9])
     check('tail 3 data', t['x'][0] == 70 and t['x'][2] == 90)
 
     h0 = df.head(0)
@@ -176,14 +176,14 @@ def test_dropna_index():
     df.append_row(a=float('nan'))
     df.append_row(a=3.0)
     cleaned = df.dropna()
-    check('dropna index', cleaned.index._values == [0, 2])
+    check('dropna index', cleaned.index.values() == [0, 2])
 
 def test_drop_with_index_index():
     df = FastDataFrame({'a': int})
     for i in range(5):
         df.append_row(a=i)
     df2 = df.drop_with_index([1, 3])
-    check('drop_with_index index', df2.index._values == [0, 2, 4])
+    check('drop_with_index index', df2.index.values() == [0, 2, 4])
 
 def test_iloc_index():
     df = FastDataFrame({'a': int})
@@ -191,13 +191,13 @@ def test_iloc_index():
         df.append_row(a=i * 10)
 
     r = df.iloc[1:4]
-    check('iloc index', r.index._values == [1, 2, 3])
+    check('iloc index', r.index.values() == [1, 2, 3])
 
     r = df.iloc[[0, 4]]
-    check('iloc list index', r.index._values == [0, 4])
+    check('iloc list index', r.index.values() == [0, 4])
 
     r = df.iloc[-2:]
-    check('iloc neg slice index', r.index._values == [3, 4])
+    check('iloc neg slice index', r.index.values() == [3, 4])
 
 def run_all():
     print('=== Index Tests ===')

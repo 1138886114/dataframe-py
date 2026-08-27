@@ -1,12 +1,14 @@
 
 cdef class IndexBase:
     cdef public Py_ssize_t length
-    cdef public list _values
 
     cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n)
     cdef IndexBase _concat(self, IndexBase other)
-
     cpdef get_loc(self, object key)
+
+
+cdef class IntIndex(IndexBase):
+    cdef public IntColumn data
 
 cdef class RangeIndex(IndexBase):
     cdef public Py_ssize_t start
