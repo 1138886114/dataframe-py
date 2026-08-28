@@ -13,3 +13,10 @@ cdef class IntColumn(BaseColumn):
     cdef public Py_ssize_t capacity
     cdef int* data_c
     cdef void _reserve(self, Py_ssize_t new_cap)
+    cdef double _sum_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
+    cdef double _mean_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
+    cdef double _min_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
+    cdef double _max_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
+    cdef Py_ssize_t _count_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
+    cdef double _var_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
+    cdef double _std_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil

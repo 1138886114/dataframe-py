@@ -30,5 +30,7 @@ cdef class FastDataFrameGroupBy:
     cdef IntColumn _native_count(self)
     cdef DoubleColumn _native_min(self, str col_name)
     cdef DoubleColumn _native_max(self, str col_name)
+    cdef DoubleColumn _native_var(self, str col_name)
+    cdef DoubleColumn _native_std(self, str col_name)
     cdef object _python_agg(self, str col_name, str func_name)
     cdef object _extract_key_column(self, str col_name)

@@ -199,6 +199,251 @@ cdef class IntColumn(BaseColumn):
                 total_dev += fabs(<double>self.data_c[i] - m)
         return total_dev / self.length
 
+    # ==========================================
+    # Whole-column statistical methods
+    # ==========================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def prod(self):
+        if self.length == 0: return NAN
+        cdef double total = 1
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                total *= self.data_c[i]
+        return total
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def nunique(self):
+        if self.length == 0: return 0
+        cdef set seen = set()
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            seen.add(self.data_c[i])
+        return len(seen)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def value_counts(self):
+        cdef dict counts = {}
+        cdef Py_ssize_t i
+        cdef int val
+        for i in range(self.length):
+            val = self.data_c[i]
+            if val in counts:
+                counts[val] += 1
+            else:
+                counts[val] = 1
+        return counts
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def mode(self):
+        if self.length == 0: return []
+        cdef dict counts = {}
+        cdef Py_ssize_t i
+        cdef int val
+        cdef int max_count = 0
+        for i in range(self.length):
+            val = self.data_c[i]
+            if val in counts:
+                counts[val] += 1
+            else:
+                counts[val] = 1
+            if counts[val] > max_count:
+                max_count = counts[val]
+        return [k for k, v in counts.items() if v == max_count]
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def quantile(self, double q):
+        if self.length == 0: return NAN
+        if q < 0 or q > 1: raise ValueError("q must be between 0 and 1")
+        cdef int* temp = <int*>aligned_malloc(self.length * sizeof(int))
+        if not temp: raise MemoryError()
+        memcpy(temp, self.data_c, self.length * sizeof(int))
+        cdef list py_list = [temp[i] for i in range(self.length)]
+        free(temp)
+        py_list.sort()
+        cdef double pos = q * (self.length - 1)
+        cdef Py_ssize_t idx = <Py_ssize_t>pos
+        cdef double frac = pos - idx
+        if idx >= self.length - 1:
+            return <double>py_list[self.length - 1]
+        return py_list[idx] + frac * (py_list[idx + 1] - py_list[idx])
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cumsum(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef double total = 0
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                total += self.data_c[i]
+                res.data_c[i] = <int>total
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cummax(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        if self.length == 0: return res
+        cdef int cur_max = self.data_c[0]
+        cdef Py_ssize_t i
+        with nogil:
+            res.data_c[0] = cur_max
+            for i in range(1, self.length):
+                if self.data_c[i] > cur_max:
+                    cur_max = self.data_c[i]
+                res.data_c[i] = cur_max
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cummin(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        if self.length == 0: return res
+        cdef int cur_min = self.data_c[0]
+        cdef Py_ssize_t i
+        with nogil:
+            res.data_c[0] = cur_min
+            for i in range(1, self.length):
+                if self.data_c[i] < cur_min:
+                    cur_min = self.data_c[i]
+                res.data_c[i] = cur_min
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def diff(self, int periods=1):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(periods):
+                res.data_c[i] = 0
+            for i in range(periods, self.length):
+                res.data_c[i] = self.data_c[i] - self.data_c[i - periods]
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pct_change(self, int periods=1):
+        cdef DoubleColumn res = DoubleColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef double prev
+        with nogil:
+            for i in range(periods):
+                res.data_c[i] = NAN
+            for i in range(periods, self.length):
+                prev = <double>self.data_c[i - periods]
+                if prev == 0:
+                    res.data_c[i] = NAN
+                else:
+                    res.data_c[i] = (<double>self.data_c[i] - prev) / prev
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def skew(self):
+        if self.length < 3: return NAN
+        cdef double m = self.mean()
+        cdef double s = self.std()
+        if s == 0: return NAN
+        cdef double sum_cube = 0
+        cdef Py_ssize_t i
+        cdef double v
+        for i in range(self.length):
+            v = (<double>self.data_c[i] - m) / s
+            sum_cube += v * v * v
+        cdef double n = <double>self.length
+        return (n / ((n - 1) * (n - 2))) * sum_cube
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def kurt(self):
+        if self.length < 4: return NAN
+        cdef double m = self.mean()
+        cdef double s = self.std()
+        if s == 0: return NAN
+        cdef double sum_pow4 = 0
+        cdef Py_ssize_t i
+        cdef double v
+        for i in range(self.length):
+            v = (<double>self.data_c[i] - m) / s
+            sum_pow4 += v * v * v * v
+        cdef double n = <double>self.length
+        cdef double kurt = (n * (n + 1) / ((n - 1) * (n - 2) * (n - 3))) * sum_pow4
+        kurt -= 3.0 * (n - 1) * (n - 1) / ((n - 2) * (n - 3))
+        return kurt
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def sem(self):
+        if self.length == 0: return NAN
+        return self.std() / sqrt(<double>self.length)
+
+    # ==========================================
+    # Subset aggregation (nogil, for groupby)
+    # ==========================================
+    cdef double _sum_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
+        cdef double total = 0
+        cdef Py_ssize_t i
+        for i in range(n):
+            total += self.data_c[indices[i]]
+        return total
+
+    cdef double _mean_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
+        if n == 0: return NAN
+        cdef double total = 0
+        cdef Py_ssize_t i
+        for i in range(n):
+            total += self.data_c[indices[i]]
+        return total / n
+
+    cdef double _min_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
+        if n == 0: return NAN
+        cdef double val, min_val
+        min_val = <double>self.data_c[indices[0]]
+        cdef Py_ssize_t i
+        for i in range(1, n):
+            val = <double>self.data_c[indices[i]]
+            if val < min_val: min_val = val
+        return min_val
+
+    cdef double _max_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
+        if n == 0: return NAN
+        cdef double val, max_val
+        max_val = <double>self.data_c[indices[0]]
+        cdef Py_ssize_t i
+        for i in range(1, n):
+            val = <double>self.data_c[indices[i]]
+            if val > max_val: max_val = val
+        return max_val
+
+    cdef Py_ssize_t _count_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
+        return n
+
+    cdef double _var_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
+        if n < 2: return 0.0
+        cdef double m = self._mean_rows(indices, n)
+        cdef double sum_sq = 0
+        cdef double v
+        cdef Py_ssize_t i
+        for i in range(n):
+            v = <double>self.data_c[indices[i]] - m
+            sum_sq += v * v
+        return sum_sq / (n - 1)
+
+    cdef double _std_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
+        return sqrt(self._var_rows(indices, n))
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def add(self, int val, int fill_value=0):
