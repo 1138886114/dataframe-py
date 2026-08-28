@@ -1005,3 +1005,14 @@ cdef class FastDataFrame:
         cdef FastDataFrame result = self._take(keep_idx, keep_count)
         free(keep_idx)
         return result
+
+    @cython.binding(False)
+    def groupby(self, by_cols):
+        from fluidframe.core.groupby import FastDataFrameGroupBy
+        if isinstance(by_cols, str):
+            by_cols = [by_cols]
+        cdef list by_list = list(by_cols)
+        for cn in by_list:
+            if cn not in self.columns:
+                raise KeyError(f"Column '{cn}' not found")
+        return FastDataFrameGroupBy(self, by_list)
