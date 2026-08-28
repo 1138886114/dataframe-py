@@ -5,7 +5,6 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove, strstr, strlen, strncmp, strncpy, strncat
-from libc.stdlib cimport malloc, free
 
 cdef extern from "<ctype.h>" nogil:
     int tolower(int)
@@ -16,6 +15,19 @@ cdef extern from "<ctype.h>" nogil:
     int isalnum(int)
     int islower(int)
     int isupper(int)
+
+# 注入跨平台兼容的 ALIGNED_FREE，防止混用原生 free 引发堆破坏
+cdef extern from *:
+    """
+    #if defined(_MSC_VER) || defined(_WIN32)
+    #include <malloc.h>
+    #define ALIGNED_FREE(ptr) _aligned_free(ptr)
+    #else
+    #include <stdlib.h>
+    #define ALIGNED_FREE(ptr) free(ptr)
+    #endif
+    """
+    void ALIGNED_FREE(void* ptr) nogil
 
 import re
 
@@ -58,7 +70,7 @@ cdef class Char256Column_SoA(BaseColumn):
         if not self.data_c: raise MemoryError()
 
     def __dealloc__(self):
-        if self.data_c is not NULL: free(self.data_c)
+        if self.data_c is not NULL: ALIGNED_FREE(self.data_c)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
@@ -114,7 +126,10 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
-        cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t n = len(indices)
+        if n != self.length:
+            raise ValueError("Length of indices must match column length")
+
         cdef char* new_data = <char*>aligned_malloc(n * 256)
         if not new_data: raise MemoryError()
         cdef Py_ssize_t i, idx
@@ -125,9 +140,9 @@ cdef class Char256Column_SoA(BaseColumn):
                     raise IndexError("Index out of bounds")
                 memcpy(new_data + (i * 256), self.data_c + (idx * 256), 256)
         except Exception:
-            free(new_data)
+            ALIGNED_FREE(new_data)
             raise
-        free(self.data_c)
+        ALIGNED_FREE(self.data_c)
         self.data_c = new_data
 
     @cython.binding(False)
@@ -154,7 +169,7 @@ cdef class Char256Column_SoA(BaseColumn):
                     out_idx[count] = i
                     count += 1
         cdef list res = [out_idx[j] for j in range(count)]
-        free(out_idx)
+        ALIGNED_FREE(out_idx)
         return res
 
     @cython.binding(False)
@@ -378,12 +393,18 @@ cdef class Char256Column_SoA(BaseColumn):
     def count(self, str substring):
         cdef bytes b_sub = substring.encode('ascii')
         cdef size_t sub_len = len(b_sub)
-        if sub_len == 0:
-            return self.len().add(1)
-        cdef const char* c_sub = b_sub
+
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
+
+        if sub_len == 0:
+            with nogil:
+                for i in range(self.length):
+                    res.data_c[i] = <int>strlen(self.data_c + i * 256) + 1
+            return res
+
+        cdef const char* c_sub = b_sub
         cdef char* ptr
         cdef char* match
         cdef int cnt
@@ -672,25 +693,25 @@ cdef class Char256Column_SoA(BaseColumn):
 
 
     cdef Char256Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef char* old_data = self.data_c
-        cdef char* new_data = <char*>malloc(self.capacity * 256)
-        if not new_data: raise MemoryError()
         cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                memcpy(new_data + (i * 256), old_data + (indices[i] * 256), 256)
-        if inplace:
-            free(self.data_c)
+        if not inplace:
+            new_col = Char256Column_SoA(max(n, 1))
+            new_col.length = n
+            with nogil:
+                for i in range(n):
+                    memcpy(new_col.data_c + (i * 256), self.data_c + (indices[i] * 256), 256)
+            return new_col
+        else:
+            new_data = <char*>aligned_malloc(max(n, self.capacity) * 256)
+            if not new_data: raise MemoryError()
+            with nogil:
+                for i in range(n):
+                    memcpy(new_data + (i * 256), self.data_c + (indices[i] * 256), 256)
+            ALIGNED_FREE(self.data_c)
             self.data_c = new_data
+            self.capacity = max(n, self.capacity)
             self.length = n
             return self
-        else:
-            new_col = Char256Column_SoA(self.capacity)
-            free(new_col.data_c)
-            new_col.data_c = new_data
-            new_col.length = n
-            return new_col
-
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
         if rem_len > 0:
