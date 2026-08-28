@@ -446,7 +446,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def add(self, int val, int fill_value=0):
+    def add(self, int val):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -456,7 +456,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def sub(self, int val, int fill_value=0):
+    def sub(self, int val):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -466,7 +466,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def mul(self, int val, int fill_value=0):
+    def mul(self, int val):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -476,7 +476,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def div(self, int val, int fill_value=0):
+    def div(self, int val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -487,22 +487,20 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def diff(self):
-        cdef IntColumn res = IntColumn(self.capacity)
-        if self.length == 0: return res
-        res.append(0)
-        for i in range(1, self.length):
-            res.append(self.data_c[i] - self.data_c[i-1])
-        return res
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
-        cdef int* new_data = <int*>aligned_malloc(self.capacity * sizeof(int))
+        cdef Py_ssize_t n = self.length
+        cdef int* new_data = <int*>aligned_malloc(n * sizeof(int))
         if not new_data: raise MemoryError()
-        cdef Py_ssize_t i
-        for i in range(self.length):
-            new_data[i] = self.data_c[<Py_ssize_t>indices[i]]
+        cdef Py_ssize_t i, idx
+        try:
+            for i in range(n):
+                idx = <Py_ssize_t>indices[i]
+                if idx < 0 or idx >= n:
+                    raise IndexError("Index out of bounds")
+                new_data[i] = self.data_c[idx]
+        except Exception:
+            free(new_data)
+            raise
         free(self.data_c)
         self.data_c = new_data
 
@@ -724,7 +722,8 @@ cdef class IntColumn(BaseColumn):
                 count += 1
         return count
 
-    cdef void gather_nonzero_to(self, Py_ssize_t* out):
+    cdef void gather_zero_to(self, Py_ssize_t* out):
+        """Gather indices where value == 0 into out[]"""
         cdef Py_ssize_t j = 0
         cdef Py_ssize_t i
         for i in range(self.length):

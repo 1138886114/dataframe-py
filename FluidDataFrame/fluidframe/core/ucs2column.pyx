@@ -279,13 +279,43 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     @cython.binding(False)
     def replace(self, str old, str new):
-        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
-            res.append(s.replace(old, new))
-        return res
+            s = self[i].replace(old, new)
+            self._set_item(i, s)
+        return self
+
+    cdef inline void _set_item(self, Py_ssize_t idx, str val):
+        """Replace string at given index in-place."""
+        cdef Py_ssize_t old_start = self.offsets_c[idx]
+        cdef Py_ssize_t old_len = self.offsets_c[idx + 1] - old_start
+        cdef Py_ssize_t new_len = len(val)
+        cdef Py_ssize_t ci, diff, oi
+
+        if new_len > old_len:
+            self._reserve_chars(self.char_capacity + (new_len - old_len))
+            if self.char_length - (old_start + old_len) > 0:
+                memmove(self.chars_c + old_start + new_len,
+                        self.chars_c + old_start + old_len,
+                        (self.char_length - old_start - old_len) * sizeof(Py_UCS2))
+        elif new_len < old_len:
+            if self.char_length - (old_start + old_len) > 0:
+                memmove(self.chars_c + old_start + new_len,
+                        self.chars_c + old_start + old_len,
+                        (self.char_length - old_start - old_len) * sizeof(Py_UCS2))
+
+        if new_len > 0:
+            if PyUnicode_KIND(val) == PyUnicode_2BYTE_KIND:
+                memcpy(self.chars_c + old_start, PyUnicode_DATA(val), new_len * sizeof(Py_UCS2))
+            else:
+                for ci in range(new_len):
+                    self.chars_c[old_start + ci] = <Py_UCS2>PyUnicode_READ_CHAR(val, ci)
+
+        self.char_length += (new_len - old_len)
+        diff = new_len - old_len
+        for oi in range(idx + 1, self.length + 1):
+            self.offsets_c[oi] += diff
 
     @cython.binding(False)
     def lower(self):
@@ -335,6 +365,31 @@ cdef class UCS2Column_SoA(BaseColumn):
         for i in range(self.length):
             s = self[i]
             res.append(s.rstrip())
+        return res
+
+    @cython.binding(False)
+    def count(self, str substring):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str s
+        cdef Py_ssize_t sub_len = len(substring)
+        cdef Py_ssize_t cnt, pos
+        if sub_len == 0:
+            for i in range(self.length):
+                res.data_c[i] = <int>(len(self[i]) + 1)
+            return res
+        for i in range(self.length):
+            s = self[i]
+            cnt = 0
+            pos = 0
+            while True:
+                pos = s.find(substring, pos)
+                if pos == -1:
+                    break
+                cnt += 1
+                pos += sub_len
+            res.data_c[i] = <int>cnt
         return res
 
     @cython.binding(False)

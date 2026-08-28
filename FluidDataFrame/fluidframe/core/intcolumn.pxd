@@ -28,4 +28,4 @@ cdef class IntColumn(BaseColumn):
     cdef void to_double_buffer(self, double* out, Py_ssize_t n)
     cdef IntColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, int sentinel)
     cpdef Py_ssize_t count_nonzero(self)
-    cdef void gather_nonzero_to(self, Py_ssize_t* out)
+    cdef void gather_zero_to(self, Py_ssize_t* out)

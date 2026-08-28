@@ -481,7 +481,7 @@ cdef class DoubleColumn(BaseColumn):
         return sqrt(self._var_rows(indices, n))
 
     @cython.binding(False)
-    def add(self, double val, double fill_value=0.0):
+    def add(self, double val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -490,7 +490,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
-    def sub(self, double val, double fill_value=0.0):
+    def sub(self, double val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -499,7 +499,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
-    def mul(self, double val, double fill_value=0.0):
+    def mul(self, double val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -508,7 +508,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
-    def div(self, double val, double fill_value=0.0):
+    def div(self, double val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -590,34 +590,29 @@ cdef class DoubleColumn(BaseColumn):
 
     def __and__(self, other):
         if not isinstance(other, IntColumn):
-            raise TypeError("Bitwise AND only supported between two IntColumn masks")
-        cdef IntColumn a = <IntColumn>self
-        cdef IntColumn b = <IntColumn>other
-        if a.length != b.length:
-            raise ValueError(f"Length mismatch: {a.length} vs {b.length}")
-        cdef IntColumn res = IntColumn(a.capacity)
-        res.length = a.length
+            raise TypeError("Cannot & non-IntColumn mask")
+        if self.length != other.length:
+            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
         cdef Py_ssize_t i
-        for i in range(a.length):
-            res.data_c[i] = 1 if (a.data_c[i] != 0 and b.data_c[i] != 0) else 0
+        for i in range(self.length):
+            res.data_c[i] = 1 if (self.data_c[i] != 0 and other.data_c[i] != 0) else 0
         return res
 
     def __or__(self, other):
         if not isinstance(other, IntColumn):
-            raise TypeError("Bitwise OR only supported between two IntColumn masks")
-        cdef IntColumn a = <IntColumn>self
-        cdef IntColumn b = <IntColumn>other
-        if a.length != b.length:
-            raise ValueError(f"Length mismatch: {a.length} vs {b.length}")
-        cdef IntColumn res = IntColumn(a.capacity)
-        res.length = a.length
+            raise TypeError("Cannot | non-IntColumn mask")
+        if self.length != other.length:
+            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
         cdef Py_ssize_t i
-        for i in range(a.length):
-            res.data_c[i] = 1 if (a.data_c[i] != 0 or b.data_c[i] != 0) else 0
+        for i in range(self.length):
+            res.data_c[i] = 1 if (self.data_c[i] != 0 or other.data_c[i] != 0) else 0
         return res
 
     def __invert__(self):
-
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i

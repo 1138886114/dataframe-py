@@ -7,7 +7,7 @@ cimport cython
 from libc.string cimport memcpy, memmove, strncmp, memset
 from libc.stdlib cimport free
 from libc.math cimport NAN
-from cpython.unicode cimport Py_UCS2
+from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
 
 from fluidframe.core._base cimport BaseColumn, NumericType, DataType, aligned_malloc
 from fluidframe.core.intcolumn cimport IntColumn
@@ -1252,6 +1252,10 @@ cdef class FastDataFrame:
                 raise ValueError(f"Missing value for column '{col_name}'")
 
         cdef Py_ssize_t orig_len = self.df_length
+        cdef Py_UCS2* ucs2_chars_ptr
+        cdef Py_ssize_t ucs2_val_len, ucs2_start, _ci, _oi
+        cdef UCS2Column_SoA ucs2_obj
+        cdef str ucs2_val
         try:
             for col_name, col_obj in self.columns.items():
                 val = kwargs[col_name]
@@ -1264,6 +1268,27 @@ cdef class FastDataFrame:
                     bval = (<str>val).encode('utf-8')[:255] if isinstance(val, str) else str(val).encode('utf-8')[:255]
                     memset((<Char256Column_SoA>col_obj).data_c + (pos * 256), 0, 256)
                     memcpy((<Char256Column_SoA>col_obj).data_c + (pos * 256), <char*>bval, len(bval))
+                elif col_obj.dtype == TYPE_UCS2:
+                    ucs2_val = <str>val if isinstance(val, str) else str(val)
+                    ucs2_obj = <UCS2Column_SoA>col_obj
+                    ucs2_val_len = len(ucs2_val)
+                    ucs2_start = ucs2_obj.offsets_c[pos]
+                    if ucs2_val_len > 0:
+                        ucs2_obj._reserve_chars(ucs2_obj.char_capacity + ucs2_val_len)
+                        if ucs2_obj.char_length - ucs2_start > 0:
+                            memmove(ucs2_obj.chars_c + ucs2_start + ucs2_val_len,
+                                    ucs2_obj.chars_c + ucs2_start,
+                                    (ucs2_obj.char_length - ucs2_start) * sizeof(Py_UCS2))
+                        if PyUnicode_KIND(ucs2_val) == PyUnicode_2BYTE_KIND:
+                            memcpy(ucs2_obj.chars_c + ucs2_start,
+                                   PyUnicode_DATA(ucs2_val),
+                                   ucs2_val_len * sizeof(Py_UCS2))
+                        else:
+                            for _ci in range(ucs2_val_len):
+                                ucs2_obj.chars_c[ucs2_start + _ci] = <Py_UCS2>PyUnicode_READ_CHAR(ucs2_val, _ci)
+                        for _oi in range(pos + 1, ucs2_obj.length + 1):
+                            ucs2_obj.offsets_c[_oi] += ucs2_val_len
+                        ucs2_obj.char_length += ucs2_val_len
                 elif col_obj.dtype == TYPE_TIMESTAMP:
                     (<TimestampColumn>col_obj).data_c[pos] = <long long>val
             self.df_length += 1
@@ -1391,7 +1416,7 @@ cdef class FastDataFrame:
 
         cdef Py_ssize_t* keep_idx = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
         if not keep_idx: raise MemoryError()
-        mask.gather_nonzero_to(keep_idx)
+        mask.gather_zero_to(keep_idx)
 
         cdef FastDataFrame result = self._take(keep_idx, keep_count)
         free(keep_idx)

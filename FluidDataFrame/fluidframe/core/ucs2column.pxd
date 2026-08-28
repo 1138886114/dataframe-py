@@ -28,4 +28,5 @@ cdef class UCS2Column_SoA(BaseColumn):
     cdef void _reserve_chars(self, Py_ssize_t new_char_cap) except *
     cdef inline void _fallback_copy_chars(self, str val, Py_ssize_t str_len)
     cdef UCS2Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
+    cdef inline void _set_item(self, Py_ssize_t idx, str val)
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len)

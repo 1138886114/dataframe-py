@@ -132,7 +132,8 @@ cdef class FastDataFrameGroupBy:
 
             self.group_rows[0][g_id].push_back(i)
 
-    cdef DoubleColumn _native_sum(self, str col_name):
+    cdef DoubleColumn _native_agg(self, str col_name, str func):
+        """Generic native aggregation dispatcher for numeric columns."""
         cdef DoubleColumn res_col = DoubleColumn(self.num_groups)
         res_col.length = self.num_groups
         cdef BaseColumn orig_col = self.df.columns[col_name]
@@ -142,24 +143,31 @@ cdef class FastDataFrameGroupBy:
         for g_id in range(self.num_groups):
             sz = self.group_rows[0][g_id].size()
             if orig_col.dtype == TYPE_DOUBLE:
-                res_col.data_c[g_id] = (<DoubleColumn>orig_col)._sum_rows(self.group_rows[0][g_id].data(), sz)
+                if func == 'sum':
+                    res_col.data_c[g_id] = (<DoubleColumn>orig_col)._sum_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'mean':
+                    res_col.data_c[g_id] = (<DoubleColumn>orig_col)._mean_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'min':
+                    res_col.data_c[g_id] = (<DoubleColumn>orig_col)._min_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'max':
+                    res_col.data_c[g_id] = (<DoubleColumn>orig_col)._max_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'var':
+                    res_col.data_c[g_id] = (<DoubleColumn>orig_col)._var_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'std':
+                    res_col.data_c[g_id] = (<DoubleColumn>orig_col)._std_rows(self.group_rows[0][g_id].data(), sz)
             elif orig_col.dtype == TYPE_INT:
-                res_col.data_c[g_id] = (<IntColumn>orig_col)._sum_rows(self.group_rows[0][g_id].data(), sz)
-        return res_col
-
-    cdef DoubleColumn _native_mean(self, str col_name):
-        cdef DoubleColumn res_col = DoubleColumn(self.num_groups)
-        res_col.length = self.num_groups
-        cdef BaseColumn orig_col = self.df.columns[col_name]
-        cdef int g_id
-        cdef Py_ssize_t sz
-
-        for g_id in range(self.num_groups):
-            sz = self.group_rows[0][g_id].size()
-            if orig_col.dtype == TYPE_DOUBLE:
-                res_col.data_c[g_id] = (<DoubleColumn>orig_col)._mean_rows(self.group_rows[0][g_id].data(), sz)
-            elif orig_col.dtype == TYPE_INT:
-                res_col.data_c[g_id] = (<IntColumn>orig_col)._mean_rows(self.group_rows[0][g_id].data(), sz)
+                if func == 'sum':
+                    res_col.data_c[g_id] = (<IntColumn>orig_col)._sum_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'mean':
+                    res_col.data_c[g_id] = (<IntColumn>orig_col)._mean_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'min':
+                    res_col.data_c[g_id] = (<IntColumn>orig_col)._min_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'max':
+                    res_col.data_c[g_id] = (<IntColumn>orig_col)._max_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'var':
+                    res_col.data_c[g_id] = (<IntColumn>orig_col)._var_rows(self.group_rows[0][g_id].data(), sz)
+                elif func == 'std':
+                    res_col.data_c[g_id] = (<IntColumn>orig_col)._std_rows(self.group_rows[0][g_id].data(), sz)
         return res_col
 
     cdef IntColumn _native_count(self):
@@ -168,66 +176,6 @@ cdef class FastDataFrameGroupBy:
         cdef int g_id
         for g_id in range(self.num_groups):
             res_col.data_c[g_id] = <int>self.group_rows[0][g_id].size()
-        return res_col
-
-    cdef DoubleColumn _native_min(self, str col_name):
-        cdef DoubleColumn res_col = DoubleColumn(self.num_groups)
-        res_col.length = self.num_groups
-        cdef BaseColumn orig_col = self.df.columns[col_name]
-        cdef int g_id
-        cdef Py_ssize_t sz
-
-        for g_id in range(self.num_groups):
-            sz = self.group_rows[0][g_id].size()
-            if orig_col.dtype == TYPE_DOUBLE:
-                res_col.data_c[g_id] = (<DoubleColumn>orig_col)._min_rows(self.group_rows[0][g_id].data(), sz)
-            elif orig_col.dtype == TYPE_INT:
-                res_col.data_c[g_id] = (<IntColumn>orig_col)._min_rows(self.group_rows[0][g_id].data(), sz)
-        return res_col
-
-    cdef DoubleColumn _native_max(self, str col_name):
-        cdef DoubleColumn res_col = DoubleColumn(self.num_groups)
-        res_col.length = self.num_groups
-        cdef BaseColumn orig_col = self.df.columns[col_name]
-        cdef int g_id
-        cdef Py_ssize_t sz
-
-        for g_id in range(self.num_groups):
-            sz = self.group_rows[0][g_id].size()
-            if orig_col.dtype == TYPE_DOUBLE:
-                res_col.data_c[g_id] = (<DoubleColumn>orig_col)._max_rows(self.group_rows[0][g_id].data(), sz)
-            elif orig_col.dtype == TYPE_INT:
-                res_col.data_c[g_id] = (<IntColumn>orig_col)._max_rows(self.group_rows[0][g_id].data(), sz)
-        return res_col
-
-    cdef DoubleColumn _native_var(self, str col_name):
-        cdef DoubleColumn res_col = DoubleColumn(self.num_groups)
-        res_col.length = self.num_groups
-        cdef BaseColumn orig_col = self.df.columns[col_name]
-        cdef int g_id
-        cdef Py_ssize_t sz
-
-        for g_id in range(self.num_groups):
-            sz = self.group_rows[0][g_id].size()
-            if orig_col.dtype == TYPE_DOUBLE:
-                res_col.data_c[g_id] = (<DoubleColumn>orig_col)._var_rows(self.group_rows[0][g_id].data(), sz)
-            elif orig_col.dtype == TYPE_INT:
-                res_col.data_c[g_id] = (<IntColumn>orig_col)._var_rows(self.group_rows[0][g_id].data(), sz)
-        return res_col
-
-    cdef DoubleColumn _native_std(self, str col_name):
-        cdef DoubleColumn res_col = DoubleColumn(self.num_groups)
-        res_col.length = self.num_groups
-        cdef BaseColumn orig_col = self.df.columns[col_name]
-        cdef int g_id
-        cdef Py_ssize_t sz
-
-        for g_id in range(self.num_groups):
-            sz = self.group_rows[0][g_id].size()
-            if orig_col.dtype == TYPE_DOUBLE:
-                res_col.data_c[g_id] = (<DoubleColumn>orig_col)._std_rows(self.group_rows[0][g_id].data(), sz)
-            elif orig_col.dtype == TYPE_INT:
-                res_col.data_c[g_id] = (<IntColumn>orig_col)._std_rows(self.group_rows[0][g_id].data(), sz)
         return res_col
 
     cdef object _python_agg(self, str col_name, str func_name):
@@ -338,20 +286,10 @@ cdef class FastDataFrameGroupBy:
 
         cdef str col_name, func_name
         for col_name, func_name in agg_dict.items():
-            if func_name == 'sum':
-                res.columns[col_name] = self._native_sum(col_name)
-            elif func_name == 'mean':
-                res.columns[col_name] = self._native_mean(col_name)
+            if func_name in ('sum', 'mean', 'min', 'max', 'var', 'std'):
+                res.columns[col_name] = self._native_agg(col_name, func_name)
             elif func_name == 'count':
                 res.columns[col_name] = self._native_count()
-            elif func_name == 'min':
-                res.columns[col_name] = self._native_min(col_name)
-            elif func_name == 'max':
-                res.columns[col_name] = self._native_max(col_name)
-            elif func_name == 'var':
-                res.columns[col_name] = self._native_var(col_name)
-            elif func_name == 'std':
-                res.columns[col_name] = self._native_std(col_name)
             else:
                 res.columns[col_name] = self._python_agg(col_name, func_name)
 
@@ -361,8 +299,8 @@ cdef class FastDataFrameGroupBy:
 
         return res
 
-    @cython.binding(False)
-    def sum(self, str col_name=None):
+    cdef FastDataFrame _convenience_agg(self, str func_name, str col_name=None):
+        """Shared implementation for sum/mean/min/max/var/std convenience methods."""
         cdef FastDataFrame res
         cdef dict agg
         cdef str cn
@@ -370,7 +308,7 @@ cdef class FastDataFrameGroupBy:
         if col_name is not None:
             res = FastDataFrame()
             res.df_length = self.num_groups
-            res.columns[col_name] = self._native_sum(col_name)
+            res.columns[col_name] = self._native_agg(col_name, func_name)
             for cn in self.by_cols:
                 res.columns[cn] = self._extract_key_column(cn)
             return res
@@ -380,30 +318,16 @@ cdef class FastDataFrameGroupBy:
                 if cn not in self.by_cols:
                     c = self.df.columns[cn]
                     if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        agg[cn] = 'sum'
+                        agg[cn] = func_name
             return self.agg(agg)
 
     @cython.binding(False)
+    def sum(self, str col_name=None):
+        return self._convenience_agg('sum', col_name)
+
+    @cython.binding(False)
     def mean(self, str col_name=None):
-        cdef FastDataFrame res
-        cdef dict agg
-        cdef str cn
-        cdef BaseColumn c
-        if col_name is not None:
-            res = FastDataFrame()
-            res.df_length = self.num_groups
-            res.columns[col_name] = self._native_mean(col_name)
-            for cn in self.by_cols:
-                res.columns[cn] = self._extract_key_column(cn)
-            return res
-        else:
-            agg = {}
-            for cn in self.df.columns:
-                if cn not in self.by_cols:
-                    c = self.df.columns[cn]
-                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        agg[cn] = 'mean'
-            return self.agg(agg)
+        return self._convenience_agg('mean', col_name)
 
     @cython.binding(False)
     def count(self):
@@ -416,91 +340,19 @@ cdef class FastDataFrameGroupBy:
 
     @cython.binding(False)
     def min(self, str col_name=None):
-        cdef FastDataFrame res
-        cdef dict agg
-        cdef str cn
-        cdef BaseColumn c
-        if col_name is not None:
-            res = FastDataFrame()
-            res.df_length = self.num_groups
-            res.columns[col_name] = self._native_min(col_name)
-            for cn in self.by_cols:
-                res.columns[cn] = self._extract_key_column(cn)
-            return res
-        else:
-            agg = {}
-            for cn in self.df.columns:
-                if cn not in self.by_cols:
-                    c = self.df.columns[cn]
-                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        agg[cn] = 'min'
-            return self.agg(agg)
+        return self._convenience_agg('min', col_name)
 
     @cython.binding(False)
     def max(self, str col_name=None):
-        cdef FastDataFrame res
-        cdef dict agg
-        cdef str cn
-        cdef BaseColumn c
-        if col_name is not None:
-            res = FastDataFrame()
-            res.df_length = self.num_groups
-            res.columns[col_name] = self._native_max(col_name)
-            for cn in self.by_cols:
-                res.columns[cn] = self._extract_key_column(cn)
-            return res
-        else:
-            agg = {}
-            for cn in self.df.columns:
-                if cn not in self.by_cols:
-                    c = self.df.columns[cn]
-                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        agg[cn] = 'max'
-            return self.agg(agg)
+        return self._convenience_agg('max', col_name)
 
     @cython.binding(False)
     def var(self, str col_name=None):
-        cdef FastDataFrame res
-        cdef dict agg
-        cdef str cn
-        cdef BaseColumn c
-        if col_name is not None:
-            res = FastDataFrame()
-            res.df_length = self.num_groups
-            res.columns[col_name] = self._native_var(col_name)
-            for cn in self.by_cols:
-                res.columns[cn] = self._extract_key_column(cn)
-            return res
-        else:
-            agg = {}
-            for cn in self.df.columns:
-                if cn not in self.by_cols:
-                    c = self.df.columns[cn]
-                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        agg[cn] = 'var'
-            return self.agg(agg)
+        return self._convenience_agg('var', col_name)
 
     @cython.binding(False)
     def std(self, str col_name=None):
-        cdef FastDataFrame res
-        cdef dict agg
-        cdef str cn
-        cdef BaseColumn c
-        if col_name is not None:
-            res = FastDataFrame()
-            res.df_length = self.num_groups
-            res.columns[col_name] = self._native_std(col_name)
-            for cn in self.by_cols:
-                res.columns[cn] = self._extract_key_column(cn)
-            return res
-        else:
-            agg = {}
-            for cn in self.df.columns:
-                if cn not in self.by_cols:
-                    c = self.df.columns[cn]
-                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        agg[cn] = 'std'
-            return self.agg(agg)
+        return self._convenience_agg('std', col_name)
 
     @cython.binding(False)
     def apply(self, object func):

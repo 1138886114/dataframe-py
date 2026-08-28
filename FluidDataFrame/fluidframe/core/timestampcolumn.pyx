@@ -684,38 +684,6 @@ cdef class TimestampColumn(BaseColumn):
     def __eq__(self, val):  return self._cmp_op(val, 4)
     def __ne__(self, val):  return self._cmp_op(val, 5)
 
-    def __and__(self, other):
-        if not isinstance(other, IntColumn):
-            raise TypeError("Cannot & non-IntColumn mask")
-        if self.length != other.length:
-            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
-        cdef IntColumn res = IntColumn(self.capacity)
-        res.length = self.length
-        cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 1 if self.data_c[i] and other.data_c[i] else 0
-        return res
-
-    def __or__(self, other):
-        if not isinstance(other, IntColumn):
-            raise TypeError("Cannot | non-IntColumn mask")
-        if self.length != other.length:
-            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
-        cdef IntColumn res = IntColumn(self.capacity)
-        res.length = self.length
-        cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 1 if self.data_c[i] or other.data_c[i] else 0
-        return res
-
-    def __invert__(self):
-        cdef IntColumn res = IntColumn(self.capacity)
-        res.length = self.length
-        cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 0 if self.data_c[i] else 1
-        return res
-
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i
