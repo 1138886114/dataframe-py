@@ -22,20 +22,27 @@ from fluidframe.core.index cimport RangeIndex
 cdef double* _to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
     """Convert DataFrame to a single contiguous row-major double* array.
     Caller must free() the returned pointer."""
+    import sys
     cdef Py_ssize_t rows = df.df_length
     cdef list col_names = list(df.columns.keys())
     cdef Py_ssize_t cols = len(col_names)
+    sys.stderr.write(f"DEBUG _to_contiguous: rows={rows}, cols={cols}\n")
+    sys.stderr.flush()
     cdef double* data = <double*>calloc(rows * cols, sizeof(double))
     if not data:
         raise MemoryError()
     cdef Py_ssize_t i, j
     cdef BaseColumn col
+    cdef int col_dtype
     for j in range(cols):
         col = df.columns[col_names[j]]
+        col_dtype = col.dtype
+        sys.stderr.write(f"DEBUG col {j}: dtype={col_dtype}\n")
+        sys.stderr.flush()
         for i in range(rows):
-            if col.dtype == TYPE_INT:
+            if col_dtype == TYPE_INT:
                 data[i * cols + j] = <double>(<IntColumn>col).data_c[i]
-            elif col.dtype == TYPE_DOUBLE:
+            elif col_dtype == TYPE_DOUBLE:
                 data[i * cols + j] = (<DoubleColumn>col).data_c[i]
     out_rows[0] = rows
     out_cols[0] = cols
@@ -130,6 +137,7 @@ def det(FastDataFrame df):
     """Determinant via LU decomposition."""
     cdef Py_ssize_t n = df.df_length
     cdef list col_names = list(df.columns.keys())
+    print(f"DEBUG det: n={n}, cols={len(col_names)}")
     if len(col_names) != n:
         raise ValueError("Matrix must be square")
 
