@@ -88,6 +88,7 @@ def dot(FastDataFrame a, FastDataFrame b):
     """Matrix multiplication: C = A x B (row-major)."""
     cdef Py_ssize_t a_rows, a_cols, b_rows, b_cols
     cdef Py_ssize_t i, j, k
+    cdef Py_ssize_t size_c
     cdef double s
     cdef double* A = NULL
     cdef double* B = NULL
@@ -105,7 +106,7 @@ def dot(FastDataFrame a, FastDataFrame b):
         A = _to_contiguous(a, &a_rows, &a_cols)
         B = _to_contiguous(b, &b_rows, &b_cols)
 
-        cdef Py_ssize_t size_c = a_rows * b_cols
+        size_c = a_rows * b_cols
         if size_c == 0: size_c = 1
         C = <double*>calloc(size_c, sizeof(double))
         if not C: raise MemoryError()
@@ -127,12 +128,13 @@ def dot(FastDataFrame a, FastDataFrame b):
 
 def transpose(FastDataFrame df):
     cdef Py_ssize_t rows, cols, i, j
+    cdef Py_ssize_t size
     cdef double* A = NULL
     cdef double* B = NULL
 
     try:
         A = _to_contiguous(df, &rows, &cols)
-        cdef Py_ssize_t size = rows * cols
+        size = rows * cols
         if size == 0: size = 1
         B = <double*>malloc(size * sizeof(double))
         if not B: raise MemoryError()
@@ -151,19 +153,20 @@ def transpose(FastDataFrame df):
 def det(FastDataFrame df):
     """Determinant via LU decomposition with Partial Pivoting."""
     cdef Py_ssize_t n = df.df_length
-    if len(list(df.columns.keys())) != n:
-        raise ValueError("Matrix must be square")
-
     cdef Py_ssize_t rows, cols, i, j, k, pivot_row
+    cdef Py_ssize_t size
     cdef double* A = NULL
     cdef double* LU = NULL
     cdef double det_val = 1.0
     cdef double pivot, temp, max_val, abs_val
     cdef int sign = 1
 
+    if len(list(df.columns.keys())) != n:
+        raise ValueError("Matrix must be square")
+
     try:
         A = _to_contiguous(df, &rows, &cols)
-        cdef Py_ssize_t size = n * n
+        size = n * n
         if size == 0: size = 1
         LU = <double*>malloc(size * sizeof(double))
         if not LU: raise MemoryError()
@@ -210,19 +213,20 @@ def det(FastDataFrame df):
 
 def inv(FastDataFrame df):
     cdef Py_ssize_t n = df.df_length
-    if len(list(df.columns.keys())) != n:
-        raise ValueError("Matrix must be square")
-
     cdef Py_ssize_t rows, cols, i, j, k, pivot_row
+    cdef Py_ssize_t size_aug, size_res
     cdef double* A = NULL
     cdef double* aug = NULL
     cdef double* result_data = NULL
     cdef double pivot, temp, max_val, abs_val
     cdef int singular = 0
 
+    if len(list(df.columns.keys())) != n:
+        raise ValueError("Matrix must be square")
+
     try:
         A = _to_contiguous(df, &rows, &cols)
-        cdef Py_ssize_t size_aug = n * 2 * n
+        size_aug = n * 2 * n
         if size_aug == 0: size_aug = 1
         aug = <double*>malloc(size_aug * sizeof(double))
         if not aug: raise MemoryError()
@@ -233,7 +237,6 @@ def inv(FastDataFrame df):
                     aug[i * 2 * n + j] = A[i * n + j]
                     aug[i * 2 * n + n + j] = 1.0 if i == j else 0.0
 
-            # 引入 Partial Pivoting，彻底修复 inv 算法缺陷
             for i in range(n):
                 pivot_row = i
                 max_val = fabs(aug[i * 2 * n + i])
@@ -247,7 +250,6 @@ def inv(FastDataFrame df):
                     singular = 1
                     break
 
-                # 行交换覆盖整个增广矩阵
                 if pivot_row != i:
                     for j in range(i, 2 * n):
                         temp = aug[i * 2 * n + j]
@@ -267,7 +269,7 @@ def inv(FastDataFrame df):
         if singular:
             raise ValueError("Matrix is singular")
 
-        cdef Py_ssize_t size_res = n * n
+        size_res = n * n
         if size_res == 0: size_res = 1
         result_data = <double*>malloc(size_res * sizeof(double))
         if not result_data: raise MemoryError()
@@ -301,7 +303,6 @@ def norm(FastDataFrame df, str ord_type="frobenius"):
     cdef double val
     cdef int mode = 0
 
-    # 分流计算逻辑，便于内部纯 C 执行
     if ord_type in ('frobenius', 'fro', '2'):
         mode = 1
     elif ord_type in ('count', 'zero'):
