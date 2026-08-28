@@ -1016,3 +1016,208 @@ cdef class FastDataFrame:
             if cn not in self.columns:
                 raise KeyError(f"Column '{cn}' not found")
         return FastDataFrameGroupBy(self, by_list)
+
+    # ==========================================
+    # Construction helpers
+    # ==========================================
+    @staticmethod
+    def from_dict(dict data, columns=None):
+        cdef FastDataFrame df = FastDataFrame()
+        cdef str col_name
+        cdef list values
+        cdef Py_ssize_t n = 0
+        cdef Py_ssize_t i
+        cdef list col_names
+        cdef list new_names
+        cdef dict new_cols
+        cdef object sample
+        cdef IntColumn int_col
+        cdef DoubleColumn dbl_col
+        cdef Char256Column_SoA c256_col
+        cdef UCS2Column_SoA ucs2_col
+
+        for col_name, values in data.items():
+            if n == 0:
+                n = len(values)
+            if len(values) != n:
+                raise ValueError(f"Column '{col_name}' length {len(values)} != expected {n}")
+
+        if n == 0:
+            return df
+
+        df.df_length = n
+        df.index = RangeIndex(0, n)
+
+        for col_name, values in data.items():
+            if len(values) == 0:
+                continue
+            sample = values[0]
+            if isinstance(sample, int):
+                int_col = IntColumn(n)
+                int_col.length = n
+                for i in range(n):
+                    int_col.data_c[i] = <int>values[i]
+                df.columns[col_name] = int_col
+            elif isinstance(sample, float):
+                dbl_col = DoubleColumn(n)
+                dbl_col.length = n
+                for i in range(n):
+                    dbl_col.data_c[i] = <double>values[i]
+                df.columns[col_name] = dbl_col
+            elif isinstance(sample, str):
+                try:
+                    sample.encode('ascii')
+                    c256_col = Char256Column_SoA(n)
+                    c256_col.length = n
+                    for i in range(n):
+                        c256_col.append(<str>values[i])
+                    df.columns[col_name] = c256_col
+                except UnicodeEncodeError:
+                    ucs2_col = UCS2Column_SoA(n)
+                    ucs2_col.length = n
+                    for i in range(n):
+                        ucs2_col.append(<str>values[i])
+                    df.columns[col_name] = ucs2_col
+            else:
+                raise TypeError(f"Unsupported type for column '{col_name}': {type(sample)}")
+
+        if columns is not None:
+            col_names = list(df.columns.keys())
+            new_names = list(columns)
+            if len(new_names) != len(col_names):
+                raise ValueError(f"columns length {len(new_names)} != {len(col_names)}")
+            new_cols = {}
+            for i in range(len(new_names)):
+                new_cols[new_names[i]] = df.columns[col_names[i]]
+            df.columns = new_cols
+
+        return df
+
+    @staticmethod
+    def arange(Py_ssize_t n):
+        cdef FastDataFrame df = FastDataFrame()
+        if n <= 0:
+            return df
+        df.df_length = n
+        df.index = RangeIndex(0, n)
+        cdef IntColumn col = IntColumn(n)
+        col.length = n
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                col.data_c[i] = <int>i
+        df.columns['0'] = col
+        return df
+
+    def reshape(self, Py_ssize_t rows, Py_ssize_t cols):
+        if self.df_length != rows * cols:
+            raise ValueError(f"Cannot reshape {self.df_length} elements into ({rows}, {cols})")
+
+        cdef FastDataFrame result = FastDataFrame()
+        result.df_length = rows
+        result.index = RangeIndex(0, rows)
+
+        cdef list col_names = [chr(65 + i) for i in range(cols)]
+
+        cdef list all_vals = []
+        cdef str name
+        cdef BaseColumn col_obj
+        for i in range(self.df_length):
+            for name in self.columns:
+                col_obj = self.columns[name]
+                all_vals.append(col_obj[i])
+
+        for c_idx in range(cols):
+            col = DoubleColumn(rows)
+            col.length = rows
+            for r_idx in range(rows):
+                col.data_c[r_idx] = <double>all_vals[r_idx * cols + c_idx]
+            result.columns[col_names[c_idx]] = col
+
+        return result
+
+    # ==========================================
+    # Random namespace
+    # ==========================================
+    @staticmethod
+    def randn(Py_ssize_t rows, Py_ssize_t cols):
+        import random as _random
+        cdef FastDataFrame df = FastDataFrame()
+        if rows <= 0 or cols <= 0:
+            return df
+        df.df_length = rows
+        df.index = RangeIndex(0, rows)
+        cdef list col_names = [chr(65 + i) for i in range(cols)]
+        cdef Py_ssize_t c_idx, r_idx
+        for c_idx in range(cols):
+            col = DoubleColumn(rows)
+            col.length = rows
+            for r_idx in range(rows):
+                col.data_c[r_idx] = _random.gauss(0, 1)
+            df.columns[col_names[c_idx]] = col
+        return df
+
+    @staticmethod
+    def rand(Py_ssize_t rows, Py_ssize_t cols):
+        import random as _random
+        cdef FastDataFrame df = FastDataFrame()
+        if rows <= 0 or cols <= 0:
+            return df
+        df.df_length = rows
+        df.index = RangeIndex(0, rows)
+        cdef list col_names = [chr(65 + i) for i in range(cols)]
+        cdef Py_ssize_t c_idx, r_idx
+        for c_idx in range(cols):
+            col = DoubleColumn(rows)
+            col.length = rows
+            for r_idx in range(rows):
+                col.data_c[r_idx] = _random.random()
+            df.columns[col_names[c_idx]] = col
+        return df
+
+    @staticmethod
+    def zeros(Py_ssize_t rows, Py_ssize_t cols):
+        cdef FastDataFrame df = FastDataFrame()
+        if rows <= 0 or cols <= 0:
+            return df
+        df.df_length = rows
+        df.index = RangeIndex(0, rows)
+        cdef list col_names = [chr(65 + i) for i in range(cols)]
+        cdef Py_ssize_t c_idx
+        for c_idx in range(cols):
+            col = DoubleColumn(rows)
+            col.length = rows
+            df.columns[col_names[c_idx]] = col
+        return df
+
+    @staticmethod
+    def ones(Py_ssize_t rows, Py_ssize_t cols):
+        cdef FastDataFrame df = FastDataFrame()
+        if rows <= 0 or cols <= 0:
+            return df
+        df.df_length = rows
+        df.index = RangeIndex(0, rows)
+        cdef list col_names = [chr(65 + i) for i in range(cols)]
+        cdef Py_ssize_t c_idx, r_idx
+        for c_idx in range(cols):
+            col = DoubleColumn(rows)
+            col.length = rows
+            with nogil:
+                for r_idx in range(rows):
+                    col.data_c[r_idx] = 1.0
+            df.columns[col_names[c_idx]] = col
+        return df
+
+    def to_numpy(self):
+        cdef list result = []
+        cdef list row
+        cdef Py_ssize_t i, j
+        cdef list col_names = list(self.columns.keys())
+        cdef list col_objs = [self.columns[name] for name in col_names]
+        cdef Py_ssize_t num_cols = len(col_names)
+        for i in range(self.df_length):
+            row = []
+            for j in range(num_cols):
+                row.append(col_objs[j][i])
+            result.append(row)
+        return result

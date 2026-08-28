@@ -12,6 +12,7 @@ extensions = [
     Extension("fluidframe.core.indexers", ["fluidframe/core/indexers.pyx"]),
     Extension("fluidframe.core.fastdataframe", ["fluidframe/core/fastdataframe.pyx"]),
     Extension("fluidframe.core.groupby", ["fluidframe/core/groupby.pyx"], language="c++"),
+    Extension("fluidframe.core.linalg", ["fluidframe/core/linalg.pyx"]),
     Extension("fluidframe.core.fluidframe", ["fluidframe/core/fluidframe.pyx"]),
 ]
 
