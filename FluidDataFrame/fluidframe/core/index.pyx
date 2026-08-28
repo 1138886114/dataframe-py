@@ -51,8 +51,6 @@ cdef class IntIndex(IndexBase):
         return IntIndex(new_col)
 
     cpdef get_loc(self, object key):
-        if not isinstance(key, int):
-            raise KeyError(key)
         cdef int target = <int>key
         cdef list matches = []
         cdef Py_ssize_t i
@@ -154,12 +152,12 @@ cdef class MultiIndex(IndexBase):
             except ValueError:
                 raise KeyError(target[level_idx])
 
-        cdef int* c_target_codes = <int*>malloc(target_len * sizeof(int))
+        cdef int* c_target_codes = <int*>aligned_malloc(target_len * sizeof(int))
         if not c_target_codes: raise MemoryError()
         for level_idx in range(target_len):
             c_target_codes[level_idx] = target_codes[level_idx]
 
-        cdef int** code_ptrs = <int**>malloc(target_len * sizeof(int*))
+        cdef int** code_ptrs = <int**>aligned_malloc(target_len * sizeof(int*))
         if not code_ptrs:
             free(c_target_codes)
             raise MemoryError()
@@ -170,17 +168,18 @@ cdef class MultiIndex(IndexBase):
         cdef Py_ssize_t i
         cdef bint match
 
-        for i in range(self.length):
-            match = True
-            for level_idx in range(target_len):
-                if code_ptrs[level_idx][i] != c_target_codes[level_idx]:
-                    match = False
-                    break
-            if match:
-                matches.append(i)
-
-        free(c_target_codes)
-        free(code_ptrs)
+        try:
+            for i in range(self.length):
+                match = True
+                for level_idx in range(target_len):
+                    if code_ptrs[level_idx][i] != c_target_codes[level_idx]:
+                        match = False
+                        break
+                if match:
+                    matches.append(i)
+        finally:
+            free(c_target_codes)
+            free(code_ptrs)
 
         if not matches: raise KeyError(key)
         if len(matches) == 1: return matches[0]

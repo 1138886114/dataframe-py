@@ -17,10 +17,11 @@ from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.timestampcolumn cimport TimestampColumn
 from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex, INDEX_RANGE, INDEX_INT, INDEX_MULTI
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
+from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
 
 
 from fluidframe._schema_types import Char256, Timestamp, _parse_schema
-from fluidframe._schema_types import TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
+# from fluidframe._schema_types import TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return

@@ -7,7 +7,7 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdlib cimport free
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_UCS2
 from fluidframe.core.intcolumn cimport IntColumn
 
 from cpython.unicode cimport (
@@ -47,7 +47,7 @@ cdef class UCS2Column_SoA(BaseColumn):
     def __cinit__(self, Py_ssize_t init_capacity=64):
         self.capacity = max(init_capacity, 1)
         self.length = 0
-
+        self.dtype = TYPE_UCS2
         self.char_capacity = max(self.capacity * 16, 1024)
         self.char_length = 0
 

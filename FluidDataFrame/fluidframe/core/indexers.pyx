@@ -40,11 +40,11 @@ cdef class _ILocIndexer:
             start, stop, step = key.indices(n_orig)
             n_new = len(range(start, stop, step))
             if n_new <= 0:
-                result = FastDataFrame()
-                for col_name, col_obj in self.frame.columns.items():
-                    result.columns[col_name] = col_obj.copy()
-                    result.columns[col_name].length = 0
-                return result
+                indices_c = <Py_ssize_t*>aligned_malloc(sizeof(Py_ssize_t))
+                try:
+                    return self.frame._take(indices_c, 0)
+                finally:
+                    free(indices_c)
 
             indices_c = <Py_ssize_t*>aligned_malloc(n_new * sizeof(Py_ssize_t))
             if not indices_c: raise MemoryError()
@@ -58,11 +58,11 @@ cdef class _ILocIndexer:
             # 获取列表 (df.iloc[[0, 2, 4]])
             n_new = len(key)
             if n_new == 0:
-                result = FastDataFrame()
-                for col_name, col_obj in self.frame.columns.items():
-                    result.columns[col_name] = col_obj.copy()
-                    result.columns[col_name].length = 0
-                return result
+                indices_c = <Py_ssize_t*>aligned_malloc(sizeof(Py_ssize_t))
+                try:
+                    return self.frame._take(indices_c, 0)
+                finally:
+                    free(indices_c)
             indices_c = <Py_ssize_t*>aligned_malloc(n_new * sizeof(Py_ssize_t))
             if not indices_c: raise MemoryError()
 
@@ -136,7 +136,7 @@ cdef class _LocIndexer:
                 result.columns[col_name].length = 0
             return result
 
-        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>aligned_malloc(keep_count * sizeof(Py_ssize_t))
         if not keep_idx: raise MemoryError()
         cdef Py_ssize_t j = 0
         for i in range(n_orig):
@@ -167,7 +167,7 @@ cdef class _LocIndexer:
                 result.columns[col_name].length = 0
             return result
 
-        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>aligned_malloc(keep_count * sizeof(Py_ssize_t))
         if not keep_idx: raise MemoryError()
         cdef Py_ssize_t j = 0
         for i in range(n_orig):

@@ -8,7 +8,7 @@ from libc.string cimport memcpy, memmove
 from libc.stdlib cimport free
 from libc.math cimport sqrt, fabs, NAN
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_DOUBLE
 from fluidframe.core.intcolumn cimport IntColumn
 
 @cython.final
@@ -21,6 +21,7 @@ cdef class DoubleColumn(BaseColumn):
     def __cinit__(self, Py_ssize_t init_capacity=16):
         self.capacity = max(init_capacity, 1)
         self.length = 0
+        self.dtype = TYPE_DOUBLE
         self.data_c = <double*>aligned_malloc(self.capacity * sizeof(double))
         if not self.data_c: raise MemoryError()
 

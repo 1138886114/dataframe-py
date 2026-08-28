@@ -7,7 +7,7 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdlib cimport free
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_TIMESTAMP
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 
@@ -71,8 +71,9 @@ cdef class TimestampColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __cinit__(self, Py_ssize_t init_capacity=16):
-        self.capacity = max(init_capacity, 1)
+        self.capacity = init_capacity if init_capacity > 0 else 1
         self.length = 0
+        self.dtype = TYPE_TIMESTAMP
         self.data_c = <long long*>aligned_malloc(self.capacity * sizeof(long long))
         if not self.data_c: raise MemoryError()
 

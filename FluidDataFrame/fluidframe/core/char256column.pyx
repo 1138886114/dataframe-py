@@ -19,7 +19,7 @@ cdef extern from "<ctype.h>" nogil:
 
 import re
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_CHAR256
 from fluidframe.core.intcolumn cimport IntColumn
 
 cdef inline bint _c_str_contains(char* source, const char* target) noexcept nogil:
@@ -53,6 +53,7 @@ cdef class Char256Column_SoA(BaseColumn):
     def __cinit__(self, Py_ssize_t init_capacity=16):
         self.capacity = max(init_capacity, 1)
         self.length = 0
+        self.dtype = TYPE_CHAR256
         self.data_c = <char*>aligned_malloc(self.capacity * 256)
         if not self.data_c: raise MemoryError()
 
