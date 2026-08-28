@@ -19,7 +19,10 @@ cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t a
         return NULL
     cdef void* new_ptr = aligned_malloc(new_size, alignment)
     if new_ptr != NULL and ptr != NULL:
-        memcpy(new_ptr, ptr, old_size)
+        if old_size < new_size:
+            memcpy(new_ptr, ptr, old_size)
+        else:
+            memcpy(new_ptr, ptr, new_size)
         free(ptr)
     return new_ptr
 

@@ -5,7 +5,7 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove, strstr, strlen, strncmp, strncpy, strncat
-from libc.stdlib cimport free
+from libc.stdlib cimport malloc, free
 
 cdef extern from "<ctype.h>" nogil:
     int tolower(int)
@@ -114,11 +114,19 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
-        cdef char* new_data = <char*>aligned_malloc(self.capacity * 256)
+        cdef Py_ssize_t n = self.length
+        cdef char* new_data = <char*>aligned_malloc(n * 256)
         if not new_data: raise MemoryError()
-        cdef Py_ssize_t i
-        for i in range(self.length):
-            memcpy(new_data + (i * 256), self.data_c + (<Py_ssize_t>indices[i] * 256), 256)
+        cdef Py_ssize_t i, idx
+        try:
+            for i in range(n):
+                idx = <Py_ssize_t>indices[i]
+                if idx < 0 or idx >= n:
+                    raise IndexError("Index out of bounds")
+                memcpy(new_data + (i * 256), self.data_c + (idx * 256), 256)
+        except Exception:
+            free(new_data)
+            raise
         free(self.data_c)
         self.data_c = new_data
 

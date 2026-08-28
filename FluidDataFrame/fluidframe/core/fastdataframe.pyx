@@ -5,7 +5,7 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove, strncmp, memset
-from libc.stdlib cimport free
+from libc.stdlib cimport free, malloc
 from libc.math cimport NAN
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
 
@@ -1161,6 +1161,67 @@ cdef class FastDataFrame:
                         rem * sizeof(long long))
             tc.length = col_len + 1
 
+    cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos):
+        """Remove element at pos by shifting data left (inverse of _shift_right)."""
+        cdef Py_ssize_t rem, col_len
+        cdef Py_ssize_t start_offset, new_offsets_len, i, removed_len
+        cdef UCS2Column_SoA ucs2_col
+        cdef Py_ssize_t* new_offsets
+        cdef IntColumn ic
+        cdef DoubleColumn dc
+        cdef Char256Column_SoA cc
+        cdef TimestampColumn tc
+        if col.dtype == TYPE_INT:
+            ic = <IntColumn>col
+            col_len = ic.length
+            rem = col_len - pos - 1
+            if rem > 0:
+                memmove(ic.data_c + pos,
+                        ic.data_c + pos + 1,
+                        rem * sizeof(int))
+            ic.length = col_len - 1
+        elif col.dtype == TYPE_DOUBLE:
+            dc = <DoubleColumn>col
+            col_len = dc.length
+            rem = col_len - pos - 1
+            if rem > 0:
+                memmove(dc.data_c + pos,
+                        dc.data_c + pos + 1,
+                        rem * sizeof(double))
+            dc.length = col_len - 1
+        elif col.dtype == TYPE_CHAR256:
+            cc = <Char256Column_SoA>col
+            col_len = cc.length
+            rem = col_len - pos - 1
+            if rem > 0:
+                memmove(cc.data_c + (pos * 256),
+                        cc.data_c + ((pos + 1) * 256),
+                        rem * 256)
+            cc.length = col_len - 1
+        elif col.dtype == TYPE_UCS2:
+            ucs2_col = <UCS2Column_SoA>col
+            col_len = ucs2_col.length
+            start_offset = ucs2_col.offsets_c[pos]
+            removed_len = ucs2_col.offsets_c[pos + 1] - start_offset
+            rem = ucs2_col.char_length - ucs2_col.offsets_c[pos + 1]
+            if rem > 0:
+                memmove(ucs2_col.chars_c + start_offset,
+                        ucs2_col.chars_c + ucs2_col.offsets_c[pos + 1],
+                        rem * sizeof(Py_UCS2))
+            ucs2_col.char_length -= removed_len
+            for i in range(pos, col_len):
+                ucs2_col.offsets_c[i] = ucs2_col.offsets_c[i + 1] - removed_len
+            ucs2_col.length = col_len - 1
+        elif col.dtype == TYPE_TIMESTAMP:
+            tc = <TimestampColumn>col
+            col_len = tc.length
+            rem = col_len - pos - 1
+            if rem > 0:
+                memmove(tc.data_c + pos,
+                        tc.data_c + pos + 1,
+                        rem * sizeof(long long))
+            tc.length = col_len - 1
+
     cdef double _get_col_value_as_double(self, BaseColumn col, Py_ssize_t i):
         if col.dtype == TYPE_INT:
             return <double>(<IntColumn>col).data_c[i]
@@ -1256,10 +1317,12 @@ cdef class FastDataFrame:
         cdef Py_ssize_t ucs2_val_len, ucs2_start, _ci, _oi
         cdef UCS2Column_SoA ucs2_obj
         cdef str ucs2_val
+        cdef list shifted_cols = []
         try:
             for col_name, col_obj in self.columns.items():
                 val = kwargs[col_name]
                 self._shift_right(col_obj, pos)
+                shifted_cols.append(col_name)
                 if col_obj.dtype == TYPE_INT:
                     (<IntColumn>col_obj).data_c[pos] = <int>val
                 elif col_obj.dtype == TYPE_DOUBLE:
@@ -1299,6 +1362,8 @@ cdef class FastDataFrame:
                     self.index.length = self.df_length
         except Exception:
             self.df_length = orig_len
+            for cn in shifted_cols:
+                self._shift_left(self.columns[cn], pos)
             raise
 
 

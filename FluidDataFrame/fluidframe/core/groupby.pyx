@@ -22,6 +22,23 @@ from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.timestampcolumn cimport TimestampColumn
 
+cdef enum AggFunc:
+    AGG_SUM = 0
+    AGG_MEAN = 1
+    AGG_MIN = 2
+    AGG_MAX = 3
+    AGG_VAR = 4
+    AGG_STD = 5
+
+cdef AggFunc _resolve_agg_func(str func) except? AGG_SUM:
+    if func == 'sum': return AGG_SUM
+    elif func == 'mean': return AGG_MEAN
+    elif func == 'min': return AGG_MIN
+    elif func == 'max': return AGG_MAX
+    elif func == 'var': return AGG_VAR
+    elif func == 'std': return AGG_STD
+    else: raise ValueError(f"Unknown aggregation function: {func}")
+
 
 cdef uint64_t _fnv1a_bytes(char* data, Py_ssize_t length) noexcept nogil:
     cdef uint64_t h = 14695981039346656037ULL
@@ -139,34 +156,35 @@ cdef class FastDataFrameGroupBy:
         cdef BaseColumn orig_col = self.df.columns[col_name]
         cdef int g_id
         cdef Py_ssize_t sz
+        cdef AggFunc agg_type = _resolve_agg_func(func)
 
         for g_id in range(self.num_groups):
             sz = self.group_rows[0][g_id].size()
             if orig_col.dtype == TYPE_DOUBLE:
-                if func == 'sum':
+                if agg_type == AGG_SUM:
                     res_col.data_c[g_id] = (<DoubleColumn>orig_col)._sum_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'mean':
+                elif agg_type == AGG_MEAN:
                     res_col.data_c[g_id] = (<DoubleColumn>orig_col)._mean_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'min':
+                elif agg_type == AGG_MIN:
                     res_col.data_c[g_id] = (<DoubleColumn>orig_col)._min_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'max':
+                elif agg_type == AGG_MAX:
                     res_col.data_c[g_id] = (<DoubleColumn>orig_col)._max_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'var':
+                elif agg_type == AGG_VAR:
                     res_col.data_c[g_id] = (<DoubleColumn>orig_col)._var_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'std':
+                elif agg_type == AGG_STD:
                     res_col.data_c[g_id] = (<DoubleColumn>orig_col)._std_rows(self.group_rows[0][g_id].data(), sz)
             elif orig_col.dtype == TYPE_INT:
-                if func == 'sum':
+                if agg_type == AGG_SUM:
                     res_col.data_c[g_id] = (<IntColumn>orig_col)._sum_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'mean':
+                elif agg_type == AGG_MEAN:
                     res_col.data_c[g_id] = (<IntColumn>orig_col)._mean_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'min':
+                elif agg_type == AGG_MIN:
                     res_col.data_c[g_id] = (<IntColumn>orig_col)._min_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'max':
+                elif agg_type == AGG_MAX:
                     res_col.data_c[g_id] = (<IntColumn>orig_col)._max_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'var':
+                elif agg_type == AGG_VAR:
                     res_col.data_c[g_id] = (<IntColumn>orig_col)._var_rows(self.group_rows[0][g_id].data(), sz)
-                elif func == 'std':
+                elif agg_type == AGG_STD:
                     res_col.data_c[g_id] = (<IntColumn>orig_col)._std_rows(self.group_rows[0][g_id].data(), sz)
         return res_col
 
@@ -235,6 +253,7 @@ cdef class FastDataFrameGroupBy:
             return res_dbl
         else:
             fs = <Py_ssize_t*>malloc(self.num_groups * sizeof(Py_ssize_t))
+            if not fs: raise MemoryError()
             for i in range(self.num_groups):
                 fs[i] = self.first_seen_rows[0][i]
             tmp = self.df._take(fs, self.num_groups)

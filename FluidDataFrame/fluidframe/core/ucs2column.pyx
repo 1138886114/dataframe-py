@@ -537,7 +537,10 @@ cdef class UCS2Column_SoA(BaseColumn):
     cdef UCS2Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
         cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
-        if not new_offsets or not new_chars: raise MemoryError()
+        if not new_offsets or not new_chars:
+            if new_offsets: free(new_offsets)
+            if new_chars: free(new_chars)
+            raise MemoryError()
         new_offsets[0] = 0
         cdef Py_ssize_t current_char_len = 0
         cdef Py_ssize_t i, idx, start, end, str_len

@@ -5,7 +5,7 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove
-from libc.stdlib cimport free
+from libc.stdlib cimport malloc, free
 from libc.math cimport sqrt, fabs, NAN
 from fluidframe.core._base cimport TYPE_INT, BaseColumn, aligned_malloc, aligned_realloc
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -179,13 +179,16 @@ cdef class IntColumn(BaseColumn):
         cdef int* temp = <int*>aligned_malloc(self.length * sizeof(int))
         if not temp: raise MemoryError()
         memcpy(temp, self.data_c, self.length * sizeof(int))
-        cdef list py_list = [temp[i] for i in range(self.length)]
-        free(temp)
-        py_list.sort()
         cdef Py_ssize_t mid = self.length // 2
+        cdef double v1, v2, result
         if self.length % 2 == 0:
-            return (py_list[mid - 1] + py_list[mid]) / 2.0
-        return py_list[mid]
+            v1 = self._quickselect(temp, self.length, mid - 1)
+            v2 = self._quickselect(temp, self.length, mid)
+            free(temp)
+            return (v1 + v2) / 2.0
+        result = self._quickselect(temp, self.length, mid)
+        free(temp)
+        return result
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -255,6 +258,44 @@ cdef class IntColumn(BaseColumn):
                 max_count = counts[val]
         return [k for k, v in counts.items() if v == max_count]
 
+    cdef double _quickselect(self, int* data, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
+        """Find k-th smallest element using quickselect with median-of-three pivot."""
+        cdef Py_ssize_t left = 0, right = n - 1, i, j, mid
+        cdef int pivot, tmp
+        while left < right:
+            i = left
+            j = right
+            mid = left + (right - left) // 2
+            if data[left] > data[mid]:
+                tmp = data[left]
+                data[left] = data[mid]
+                data[mid] = tmp
+            if data[left] > data[right]:
+                tmp = data[left]
+                data[left] = data[right]
+                data[right] = tmp
+            if data[mid] > data[right]:
+                tmp = data[mid]
+                data[mid] = data[right]
+                data[right] = tmp
+            pivot = data[mid]
+            while i <= j:
+                while data[i] < pivot:
+                    i += 1
+                while data[j] > pivot:
+                    j -= 1
+                if i <= j:
+                    tmp = data[i]
+                    data[i] = data[j]
+                    data[j] = tmp
+                    i += 1
+                    j -= 1
+            if j < k:
+                left = i
+            if k < i:
+                right = j
+        return <double>data[k]
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def quantile(self, double q):
@@ -263,15 +304,18 @@ cdef class IntColumn(BaseColumn):
         cdef int* temp = <int*>aligned_malloc(self.length * sizeof(int))
         if not temp: raise MemoryError()
         memcpy(temp, self.data_c, self.length * sizeof(int))
-        cdef list py_list = [temp[i] for i in range(self.length)]
-        free(temp)
-        py_list.sort()
         cdef double pos = q * (self.length - 1)
         cdef Py_ssize_t idx = <Py_ssize_t>pos
         cdef double frac = pos - idx
+        cdef double result, v1, v2
         if idx >= self.length - 1:
-            return <double>py_list[self.length - 1]
-        return py_list[idx] + frac * (py_list[idx + 1] - py_list[idx])
+            result = self._quickselect(temp, self.length, self.length - 1)
+            free(temp)
+            return result
+        v1 = self._quickselect(temp, self.length, idx)
+        v2 = self._quickselect(temp, self.length, idx + 1)
+        free(temp)
+        return v1 + frac * (v2 - v1)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -349,45 +393,62 @@ cdef class IntColumn(BaseColumn):
                     res.data_c[i] = (<double>self.data_c[i] - prev) / prev
         return res
 
+    cdef void _central_moments(self, double* out_mean, double* out_m2, double* out_m3, double* out_m4) noexcept nogil:
+        cdef Py_ssize_t n = self.length
+        if n == 0:
+            out_mean[0] = 0.0
+            out_m2[0] = 0.0
+            out_m3[0] = 0.0
+            out_m4[0] = 0.0
+            return
+        cdef double mean = 0.0, m2 = 0.0, m3 = 0.0, m4 = 0.0
+        cdef double val, delta, delta_n, delta_n2, term1
+        cdef Py_ssize_t n1
+        for i in range(n):
+            n1 = i
+            val = <double>self.data_c[i]
+            delta = val - mean
+            mean += delta / (n1 + 1)
+            delta_n = val - mean
+            term1 = delta * delta_n * n1
+            delta_n2 = delta_n * delta_n
+            m4 = m4 + term1 * delta_n2 * ((n1 + 1) * (n1 + 1) - 3 * (n1 + 1) + 3) + 6.0 * delta_n2 * m2 - 4.0 * delta_n * m3
+            m3 = m3 + term1 * delta_n * (n1 - 2) - 3.0 * delta_n * m2
+            m2 = m2 + term1
+        out_mean[0] = mean
+        out_m2[0] = m2
+        out_m3[0] = m3
+        out_m4[0] = m4
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def skew(self):
         if self.length < 3: return NAN
-        cdef double m = self.mean()
-        cdef double s = self.std()
-        if s == 0: return NAN
-        cdef double sum_cube = 0
-        cdef Py_ssize_t i
-        cdef double v
-        for i in range(self.length):
-            v = (<double>self.data_c[i] - m) / s
-            sum_cube += v * v * v
+        cdef double m, m2, m3, m4
+        self._central_moments(&m, &m2, &m3, &m4)
+        if m2 == 0: return NAN
         cdef double n = <double>self.length
-        return (n / ((n - 1) * (n - 2))) * sum_cube
+        return (n * m3) / ((n - 1) * (n - 2) * (m2 / (n - 1)) ** 1.5)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def kurt(self):
         if self.length < 4: return NAN
-        cdef double m = self.mean()
-        cdef double s = self.std()
-        if s == 0: return NAN
-        cdef double sum_pow4 = 0
-        cdef Py_ssize_t i
-        cdef double v
-        for i in range(self.length):
-            v = (<double>self.data_c[i] - m) / s
-            sum_pow4 += v * v * v * v
+        cdef double m, m2, m3, m4
+        self._central_moments(&m, &m2, &m3, &m4)
+        if m2 == 0: return NAN
         cdef double n = <double>self.length
-        cdef double kurt = (n * (n + 1) / ((n - 1) * (n - 2) * (n - 3))) * sum_pow4
-        kurt -= 3.0 * (n - 1) * (n - 1) / ((n - 2) * (n - 3))
+        cdef double var_sample = m2 / (n - 1)
+        cdef double kurt = (m4 / (n - 1)) / (var_sample * var_sample) - 3.0
         return kurt
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sem(self):
         if self.length == 0: return NAN
-        return self.std() / sqrt(<double>self.length)
+        cdef double m, m2, m3, m4
+        self._central_moments(&m, &m2, &m3, &m4)
+        return sqrt(m2 / ((<double>self.length - 1) * <double>self.length))
 
     # ==========================================
     # Subset aggregation (nogil, for groupby)

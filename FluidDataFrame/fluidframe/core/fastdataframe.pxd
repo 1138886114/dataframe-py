@@ -30,5 +30,6 @@ cdef class FastDataFrame:
     cdef FastDataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n)
     cdef BaseColumn _column_from_list(self, str name, list values)
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos)
+    cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos)
     cdef double _get_col_value_as_double(self, BaseColumn col, Py_ssize_t i)
     cdef void _col_to_double_buffer(self, BaseColumn col, double* out, Py_ssize_t n)

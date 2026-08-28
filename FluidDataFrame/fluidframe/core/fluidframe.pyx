@@ -18,11 +18,40 @@ from fluidframe.core.ucs2column import UCS2Column_SoA
 from fluidframe.core.timestampcolumn import TimestampColumn
 
 
-def from_pickle(filename):
-    """从 pickle 文件恢复 FastDataFrame"""
+def from_pickle(filename, bint allow_raw_pickle=False):
+    """从 pickle 文件恢复 FastDataFrame。
+
+    Parameters
+    ----------
+    filename : str
+        Path to the pickle file.
+    allow_raw_pickle : bool, default False
+        If True, allow unrestricted pickle loading (WARNING: can execute
+        arbitrary code). If False (default), only allows safe types.
+    """
     import pickle
+
+    class _SafeUnpickler(pickle.Unpickler):
+        _ALLOWED = {
+            'builtins', 'builtins.dict', 'builtins.list', 'builtins.tuple',
+            'builtins.int', 'builtins.float', 'builtins.str', 'builtins.bytes',
+            'builtins.NoneType', 'builtins.bool', 'builtins.set',
+        }
+
+        def find_class(self, module, name):
+            if allow_raw_pickle:
+                return super().find_class(module, name)
+            full = f"{module}.{name}"
+            # Allow FluidDataFrame's own internal dict/list/tuple usage
+            if module == 'builtins' and name in ('dict', 'list', 'tuple', 'int', 'float', 'str', 'bytes', 'NoneType', 'bool', 'set'):
+                return super().find_class(module, name)
+            raise pickle.UnpicklingError(
+                f"Deserialization of '{full}' is not allowed. "
+                f"Use allow_raw_pickle=True to bypass (unsafe)."
+            )
+
     with open(filename, 'rb') as f:
-        data = pickle.load(f)
+        data = _SafeUnpickler(f).load()
     df = FastDataFrame()
     df.df_length = data['df_length']
     for col_name, (typ, values) in data['columns'].items():

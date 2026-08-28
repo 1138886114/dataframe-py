@@ -33,3 +33,5 @@ cdef class DoubleColumn(BaseColumn):
     cdef double corr_with(self, double* other, Py_ssize_t n)
     cdef double cov_with(self, double* other, Py_ssize_t n)
     cdef DoubleColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, double sentinel)
+    cdef void _central_moments(self, double* out_mean, double* out_m2, double* out_m3, double* out_m4) noexcept nogil
+    cdef double _quickselect(self, double* data, Py_ssize_t n, Py_ssize_t k) noexcept nogil

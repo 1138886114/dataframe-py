@@ -29,3 +29,5 @@ cdef class IntColumn(BaseColumn):
     cdef IntColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, int sentinel)
     cpdef Py_ssize_t count_nonzero(self)
     cdef void gather_zero_to(self, Py_ssize_t* out)
+    cdef void _central_moments(self, double* out_mean, double* out_m2, double* out_m3, double* out_m4) noexcept nogil
+    cdef double _quickselect(self, int* data, Py_ssize_t n, Py_ssize_t k) noexcept nogil
