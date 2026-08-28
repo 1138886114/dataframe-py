@@ -20,30 +20,42 @@ from fluidframe.core.index cimport RangeIndex
 # ============================================================
 
 cdef double* _to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
-    """Convert DataFrame to a single contiguous row-major double* array.
-    Caller must free() the returned pointer."""
-    import sys
+    """Convert DataFrame to a single contiguous row-major double* array."""
     cdef Py_ssize_t rows = df.df_length
     cdef list col_names = list(df.columns.keys())
     cdef Py_ssize_t cols = len(col_names)
-    sys.stderr.write(f"DEBUG _to_contiguous: rows={rows}, cols={cols}\n")
-    sys.stderr.flush()
-    cdef double* data = <double*>calloc(rows * cols, sizeof(double))
+
+    cdef double* data = <double*>aligned_malloc(rows * cols * sizeof(double))
     if not data:
         raise MemoryError()
+
     cdef Py_ssize_t i, j
     cdef BaseColumn col
     cdef int col_dtype
-    for j in range(cols):
-        col = df.columns[col_names[j]]
-        col_dtype = col.dtype
-        sys.stderr.write(f"DEBUG col {j}: dtype={col_dtype}\n")
-        sys.stderr.flush()
-        for i in range(rows):
+    cdef int* int_ptr
+    cdef double* double_ptr
+
+    try:
+        for j in range(cols):
+            col = df.columns[col_names[j]]
+            col_dtype = col.dtype
+
             if col_dtype == TYPE_INT:
-                data[i * cols + j] = <double>(<IntColumn>col).data_c[i]
+                int_ptr = (<IntColumn>col).data_c
+                with nogil:
+                    for i in range(rows):
+                        data[i * cols + j] = <double>int_ptr[i]
             elif col_dtype == TYPE_DOUBLE:
-                data[i * cols + j] = (<DoubleColumn>col).data_c[i]
+                double_ptr = (<DoubleColumn>col).data_c
+                with nogil:
+                    for i in range(rows):
+                        data[i * cols + j] = double_ptr[i]
+            else:
+                raise TypeError(f"Cannot perform linear algebra on non-numeric column '{col_names[j]}'")
+    except Exception:
+        free(data)
+        raise
+
     out_rows[0] = rows
     out_cols[0] = cols
     return data
@@ -134,10 +146,9 @@ def transpose(FastDataFrame df):
 
 
 def det(FastDataFrame df):
-    """Determinant via LU decomposition."""
+    """Determinant via LU decomposition with Partial Pivoting."""
     cdef Py_ssize_t n = df.df_length
     cdef list col_names = list(df.columns.keys())
-    print(f"DEBUG det: n={n}, cols={len(col_names)}")
     if len(col_names) != n:
         raise ValueError("Matrix must be square")
 
@@ -149,27 +160,53 @@ def det(FastDataFrame df):
         free(A)
         raise MemoryError()
 
-    cdef Py_ssize_t i, j, k
+    cdef Py_ssize_t i, j, k, pivot_row
     cdef double det_val = 1.0
-    cdef double pivot, temp
+    cdef double pivot, temp, max_val, abs_val
+    cdef int sign = 1  # 记录行交换导致的符号变化
 
     try:
         memcpy(LU, A, n * n * sizeof(double))
 
-        for i in range(n):
-            pivot = LU[i * n + i]
-            if fabs(pivot) < 1e-15:
-                free(LU)
-                free(A)
-                return 0.0
-            for k in range(i + 1, n):
-                temp = LU[k * n + i] / pivot
-                for j in range(i + 1, n):
-                    LU[k * n + j] -= temp * LU[i * n + j]
+        with nogil:
+            for i in range(n):
+                # 1. 寻找当前列的最大主元 (Partial Pivoting)
+                pivot_row = i
+                max_val = fabs(LU[i * n + i])
+                for k in range(i + 1, n):
+                    abs_val = fabs(LU[k * n + i])
+                    if abs_val > max_val:
+                        max_val = abs_val
+                        pivot_row = k
 
-        for i in range(n):
-            det_val *= LU[i * n + i]
+                # 2. 如果主元为 0 (奇异矩阵)，行列式必然为 0
+                if max_val < 1e-15:
+                    det_val = 0.0
+                    break # 安全跳出，交给 finally 清理内存，杜绝 double free！
+
+                # 3. 交换当前行与主元行
+                if pivot_row != i:
+                    for j in range(i, n):
+                        temp = LU[i * n + j]
+                        LU[i * n + j] = LU[pivot_row * n + j]
+                        LU[pivot_row * n + j] = temp
+                    sign = -sign  # 每次行交换，行列式反号
+
+                # 4. 常规高斯消元
+                pivot = LU[i * n + i]
+                for k in range(i + 1, n):
+                    temp = LU[k * n + i] / pivot
+                    for j in range(i + 1, n):
+                        LU[k * n + j] -= temp * LU[i * n + j]
+
+            # 5. 计算主对角线乘积
+            if det_val != 0.0:
+                for i in range(n):
+                    det_val *= LU[i * n + i]
+                det_val *= sign
+
     finally:
+        # 统一唯一的释放出口
         free(LU)
         free(A)
 
