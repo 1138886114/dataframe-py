@@ -7,7 +7,7 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdlib cimport free
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_UCS2
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_UCS2, TYPE_INT
 from fluidframe.core.intcolumn cimport IntColumn
 
 from cpython.unicode cimport (

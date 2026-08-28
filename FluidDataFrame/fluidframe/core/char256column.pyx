@@ -19,7 +19,7 @@ cdef extern from "<ctype.h>" nogil:
 
 import re
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_CHAR256
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_CHAR256, TYPE_INT
 from fluidframe.core.intcolumn cimport IntColumn
 
 cdef inline bint _c_str_contains(char* source, const char* target) noexcept nogil:

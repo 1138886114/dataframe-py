@@ -3,12 +3,6 @@
 cdef void* aligned_malloc(size_t size, size_t alignment=*) nogil
 cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t alignment=*) nogil
 
-cdef class BaseColumn:
-    cdef public Py_ssize_t length
-    cdef public Py_ssize_t capacity
-    cdef public DataType dtype
-
-
 cdef enum DataType:
     TYPE_INT = 0
     TYPE_FLOAT = 1
@@ -16,6 +10,11 @@ cdef enum DataType:
     TYPE_CHAR256 = 3
     TYPE_UCS2 = 4
     TYPE_TIMESTAMP = 5
+
+cdef class BaseColumn:
+    cdef public Py_ssize_t length
+    cdef public Py_ssize_t capacity
+    cdef public int dtype
 
 
 ctypedef fused NumericType:

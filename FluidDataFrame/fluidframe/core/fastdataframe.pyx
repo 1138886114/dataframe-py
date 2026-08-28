@@ -293,23 +293,23 @@ cdef class FastDataFrame:
         for i in range(n):
             indices_c[i] = i
 
-        if isinstance(col, IntColumn):
+        if col.dtype == TYPE_INT:
             with nogil:
                 _c_argsort_numeric((<IntColumn>col).data_c, indices_c, 0, n - 1)
 
-        elif isinstance(col, DoubleColumn):
+        elif col.dtype == TYPE_DOUBLE:
             with nogil:
                 _c_argsort_numeric((<DoubleColumn>col).data_c, indices_c, 0, n - 1)
 
-        elif isinstance(col, Char256Column_SoA):
+        elif col.dtype == TYPE_CHAR256:
             with nogil:
                 _c_argsort_char256((<Char256Column_SoA>col).data_c, indices_c, 0, n - 1)
 
-        elif isinstance(col, UCS2Column_SoA):
+        elif col.dtype == TYPE_UCS2:
             with nogil:
                 _c_argsort_ucs2((<UCS2Column_SoA>col).chars_c, (<UCS2Column_SoA>col).offsets_c, indices_c, 0, n - 1)
 
-        elif isinstance(col, TimestampColumn):
+        elif col.dtype == TYPE_TIMESTAMP:
             with nogil:
                 _c_argsort_numeric((<TimestampColumn>col).data_c, indices_c, 0, n - 1)
         else:
@@ -361,15 +361,15 @@ cdef class FastDataFrame:
         cdef BaseColumn new_col
 
         for name, col in self.columns.items():
-            if isinstance(col, IntColumn):
+            if col.dtype == TYPE_INT:
                 new_col = self._reorder_int_column(<IntColumn>col, idx_c, n, inplace)
-            elif isinstance(col, DoubleColumn):
+            elif col.dtype == TYPE_DOUBLE:
                 new_col = self._reorder_double_column(<DoubleColumn>col, idx_c, n, inplace)
-            elif isinstance(col, Char256Column_SoA):
+            elif col.dtype == TYPE_CHAR256:
                 new_col = self._reorder_char256_column(<Char256Column_SoA>col, idx_c, n, inplace)
-            elif isinstance(col, UCS2Column_SoA):
+            elif col.dtype == TYPE_UCS2:
                 new_col = self._reorder_ucs2_column(<UCS2Column_SoA>col, idx_c, n, inplace)
-            elif isinstance(col, TimestampColumn):
+            elif col.dtype == TYPE_TIMESTAMP:
                 new_col = self._reorder_timestamp_column(<TimestampColumn>col, idx_c, n, inplace)
             else:
                 raise NotImplementedError()
@@ -487,9 +487,9 @@ cdef class FastDataFrame:
         if periods < 0:
             raise ValueError("periods must be >= 0")
 
-        if isinstance(col, DoubleColumn):
+        if col.dtype == TYPE_DOUBLE:
             return self._diff_double(<DoubleColumn>col, periods)
-        elif isinstance(col, IntColumn):
+        elif col.dtype == TYPE_INT:
             return self._diff_int(<IntColumn>col, periods)
         else:
             raise TypeError(f"diff is only supported for numeric columns, got {type(col)}")
@@ -674,15 +674,15 @@ cdef class FastDataFrame:
         cdef str name
         cdef BaseColumn col, new_col
         for name, col in self.columns.items():
-            if isinstance(col, IntColumn):
+            if col.dtype == TYPE_INT:
                 new_col = self._reorder_int_column(<IntColumn>col, keep_idx_c, keep_count, inplace)
-            elif isinstance(col, DoubleColumn):
+            elif col.dtype == TYPE_DOUBLE:
                 new_col = self._reorder_double_column(<DoubleColumn>col, keep_idx_c, keep_count, inplace)
-            elif isinstance(col, Char256Column_SoA):
+            elif col.dtype == TYPE_CHAR256:
                 new_col = self._reorder_char256_column(<Char256Column_SoA>col, keep_idx_c, keep_count, inplace)
-            elif isinstance(col, UCS2Column_SoA):
+            elif col.dtype == TYPE_UCS2:
                 new_col = self._reorder_ucs2_column(<UCS2Column_SoA>col, keep_idx_c, keep_count, inplace)
-            elif isinstance(col, TimestampColumn):
+            elif col.dtype == TYPE_TIMESTAMP:
                 new_col = self._reorder_timestamp_column(<TimestampColumn>col, keep_idx_c, keep_count, inplace)
             else:
                 free(keep_idx_c)
@@ -716,31 +716,31 @@ cdef class FastDataFrame:
         cdef RangeIndex ri
 
         for name, col in self.columns.items():
-            if isinstance(col, IntColumn):
+            if col.dtype == TYPE_INT:
                 if rem_len > 0:
                     memmove((<IntColumn>col).data_c + row_idx,
                             (<IntColumn>col).data_c + row_idx + 1,
                             rem_len * sizeof(int))
                 (<IntColumn>col).length -= 1
 
-            elif isinstance(col, DoubleColumn):
+            elif col.dtype == TYPE_DOUBLE:
                 if rem_len > 0:
                     memmove((<DoubleColumn>col).data_c + row_idx,
                             (<DoubleColumn>col).data_c + row_idx + 1,
                             rem_len * sizeof(double))
                 (<DoubleColumn>col).length -= 1
 
-            elif isinstance(col, Char256Column_SoA):
+            elif col.dtype == TYPE_CHAR256:
                 if rem_len > 0:
                     memmove((<Char256Column_SoA>col).data_c + (row_idx * 256),
                             (<Char256Column_SoA>col).data_c + ((row_idx + 1) * 256),
                             rem_len * 256)
                 (<Char256Column_SoA>col).length -= 1
 
-            elif isinstance(col, UCS2Column_SoA):
+            elif col.dtype == TYPE_UCS2:
                 self._drop_row_ucs2(<UCS2Column_SoA>col, row_idx, rem_len)
 
-            elif isinstance(col, TimestampColumn):
+            elif col.dtype == TYPE_TIMESTAMP:
                 if rem_len > 0:
                     memmove((<TimestampColumn>col).data_c + row_idx,
                             (<TimestampColumn>col).data_c + row_idx + 1,
@@ -813,15 +813,15 @@ cdef class FastDataFrame:
         for name, col_obj in self.columns.items():
             col_len = col_obj.length
             values = [col_obj[i] for i in range(col_len)]
-            if isinstance(col_obj, IntColumn):
+            if col_obj.dtype == TYPE_INT:
                 data['columns'][name] = ('int', values)
-            elif isinstance(col_obj, DoubleColumn):
+            elif col_obj.dtype == TYPE_DOUBLE:
                 data['columns'][name] = ('float', values)
-            elif isinstance(col_obj, Char256Column_SoA):
+            elif col_obj.dtype == TYPE_CHAR256:
                 data['columns'][name] = ('char256', values)
-            elif isinstance(col_obj, UCS2Column_SoA):
+            elif col_obj.dtype == TYPE_UCS2:
                 data['columns'][name] = ('ucs2', values)
-            elif isinstance(col_obj, TimestampColumn):
+            elif col_obj.dtype == TYPE_TIMESTAMP:
                 data['columns'][name] = ('timestamp', values)
         with open(filename, 'wb') as f:
             pickle.dump(data, f)
@@ -853,15 +853,15 @@ cdef class FastDataFrame:
         cdef str name
         cdef BaseColumn col
         for name, col in self.columns.items():
-            if isinstance(col, IntColumn):
+            if col.dtype == TYPE_INT:
                 result.columns[name] = self._reorder_int_column(<IntColumn>col, indices, n, False)
-            elif isinstance(col, DoubleColumn):
+            elif col.dtype == TYPE_DOUBLE:
                 result.columns[name] = self._reorder_double_column(<DoubleColumn>col, indices, n, False)
-            elif isinstance(col, Char256Column_SoA):
+            elif col.dtype == TYPE_CHAR256:
                 result.columns[name] = self._reorder_char256_column(<Char256Column_SoA>col, indices, n, False)
-            elif isinstance(col, UCS2Column_SoA):
+            elif col.dtype == TYPE_UCS2:
                 result.columns[name] = self._reorder_ucs2_column(<UCS2Column_SoA>col, indices, n, False)
-            elif isinstance(col, TimestampColumn):
+            elif col.dtype == TYPE_TIMESTAMP:
                 result.columns[name] = self._reorder_timestamp_column(<TimestampColumn>col, indices, n, False)
 
         if self.index is not None:
@@ -917,15 +917,15 @@ cdef class FastDataFrame:
         cdef str name
         cdef BaseColumn col
         for name, col in self.columns.items():
-            if isinstance(col, IntColumn):
+            if col.dtype == TYPE_INT:
                 result[name] = int
-            elif isinstance(col, DoubleColumn):
+            elif col.dtype == TYPE_DOUBLE:
                 result[name] = float
-            elif isinstance(col, Char256Column_SoA):
+            elif col.dtype == TYPE_CHAR256:
                 result[name] = Char256
-            elif isinstance(col, UCS2Column_SoA):
+            elif col.dtype == TYPE_UCS2:
                 result[name] = str
-            elif isinstance(col, TimestampColumn):
+            elif col.dtype == TYPE_TIMESTAMP:
                 result[name] = Timestamp
         return result
 
@@ -945,7 +945,7 @@ cdef class FastDataFrame:
         cdef Py_ssize_t col_len
         for name, col_obj in self.columns.items():
             col_len = col_obj.length
-            if isinstance(col_obj, (IntColumn, DoubleColumn)):
+            if col_obj.dtype == TYPE_INT or col_obj.dtype == TYPE_DOUBLE:
                 stats[name] = {
                     'count': col_len,
                     'mean': col_obj.mean(),
@@ -954,7 +954,7 @@ cdef class FastDataFrame:
                     '50%': col_obj.median(),
                     'max': col_obj.max(),
                 }
-            elif isinstance(col_obj, (Char256Column_SoA, UCS2Column_SoA)):
+            elif col_obj.dtype == TYPE_CHAR256 or col_obj.dtype == TYPE_UCS2:
                 stats[name] = {'count': col_len}
         return stats
 
@@ -970,7 +970,7 @@ cdef class FastDataFrame:
         for name, col in self.columns.items():
             new_col = IntColumn(self.df_length)
             new_col.length = self.df_length
-            if isinstance(col, DoubleColumn):
+            if col.dtype == TYPE_DOUBLE:
                 d_data = (<DoubleColumn>col).data_c
                 with nogil:
                     for i in range(self.df_length):
@@ -994,7 +994,7 @@ cdef class FastDataFrame:
         for name in col_names:
             if name not in result.columns: continue
             col = result.columns[name]
-            if isinstance(col, DoubleColumn):
+            if col.dtype == TYPE_DOUBLE:
                 d_data = (<DoubleColumn>col).data_c
                 with nogil:
                     for i in range(self.df_length):
@@ -1016,7 +1016,7 @@ cdef class FastDataFrame:
         for i in range(n): keep_mask[i] = 1
 
         for name, col in self.columns.items():
-            if isinstance(col, DoubleColumn):
+            if col.dtype == TYPE_DOUBLE:
                 d_data = (<DoubleColumn>col).data_c
                 with nogil:
                     for i in range(n):

@@ -8,7 +8,7 @@ from libc.string cimport memcpy, memmove
 from libc.stdlib cimport free
 from libc.math cimport sqrt, fabs, NAN
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_DOUBLE
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_DOUBLE, TYPE_INT
 from fluidframe.core.intcolumn cimport IntColumn
 
 @cython.final
@@ -322,7 +322,6 @@ cdef class DoubleColumn(BaseColumn):
     def __ne__(self, val):  return self._cmp_op(val, 5)
 
     def __and__(self, other):
-
         if not isinstance(other, IntColumn):
             raise TypeError("Bitwise AND only supported between two IntColumn masks")
         cdef IntColumn a = <IntColumn>self
@@ -337,7 +336,6 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     def __or__(self, other):
-
         if not isinstance(other, IntColumn):
             raise TypeError("Bitwise OR only supported between two IntColumn masks")
         cdef IntColumn a = <IntColumn>self
