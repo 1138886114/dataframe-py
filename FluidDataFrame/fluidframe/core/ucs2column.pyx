@@ -5,9 +5,8 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove
-from libc.stdlib cimport free
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_UCS2, TYPE_INT
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT
 from fluidframe.core.intcolumn cimport IntColumn
 
 from cpython.unicode cimport (
@@ -147,7 +146,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         if not new_offsets: raise MemoryError()
         cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
         if not new_chars:
-            free(new_offsets)
+            os_aligned_free(new_offsets)
             raise MemoryError()
 
         new_offsets[0] = 0
@@ -170,8 +169,8 @@ cdef class UCS2Column_SoA(BaseColumn):
                 current_char_len += str_len
                 new_offsets[i + 1] = current_char_len
         except Exception:
-            free(new_offsets)
-            free(new_chars)
+            os_aligned_free(new_offsets)
+            os_aligned_free(new_chars)
             raise
 
         free(self.offsets_c)
@@ -538,8 +537,8 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
         cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
         if not new_offsets or not new_chars:
-            if new_offsets: free(new_offsets)
-            if new_chars: free(new_chars)
+            if new_offsets: os_aligned_free(new_offsets)
+            if new_chars: os_aligned_free(new_chars)
             raise MemoryError()
         new_offsets[0] = 0
         cdef Py_ssize_t current_char_len = 0

@@ -17,7 +17,6 @@ cdef extern from *:
     #else
     static inline void* os_aligned_malloc(size_t size, size_t alignment) {
         void* ptr = NULL;
-        /* POSIX 要求: alignment 必须是 2 的幂且是 sizeof(void*) 的倍数 */
         if (posix_memalign(&ptr, alignment, size) == 0) {
             return ptr;
         }

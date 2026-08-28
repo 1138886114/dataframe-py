@@ -7,19 +7,7 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.math cimport sqrt, fabs, NAN
 
-cdef extern from *:
-    """
-    #if defined(_MSC_VER) || defined(_WIN32)
-    #include <malloc.h>
-    #define ALIGNED_FREE(ptr) _aligned_free(ptr)
-    #else
-    #include <stdlib.h>
-    #define ALIGNED_FREE(ptr) free(ptr)
-    #endif
-    """
-    void ALIGNED_FREE(void* ptr) nogil
-
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_DOUBLE, TYPE_INT
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_DOUBLE, TYPE_INT
 from fluidframe.core.intcolumn cimport IntColumn
 
 
@@ -73,7 +61,7 @@ cdef class DoubleColumn(BaseColumn):
         if not self.data_c: raise MemoryError()
 
     def __dealloc__(self):
-        if self.data_c is not NULL: ALIGNED_FREE(self.data_c)
+        if self.data_c is not NULL: os_aligned_free(self.data_c)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
@@ -179,9 +167,9 @@ cdef class DoubleColumn(BaseColumn):
                     raise IndexError()
                 new_data[i] = self.data_c[idx]
         except Exception:
-            ALIGNED_FREE(new_data)
+            os_aligned_free(new_data)
             raise
-        ALIGNED_FREE(self.data_c)
+        os_aligned_free(self.data_c)
         self.data_c = new_data
 
     @cython.binding(False)
@@ -252,10 +240,10 @@ cdef class DoubleColumn(BaseColumn):
         if self.length % 2 == 0:
             v1 = self._quickselect(temp, self.length, mid - 1)
             v2 = self._quickselect(temp, self.length, mid)
-            ALIGNED_FREE(temp)
+            os_aligned_free(temp)
             return (v1 + v2) / 2.0
         result = self._quickselect(temp, self.length, mid)
-        ALIGNED_FREE(temp)
+        os_aligned_free(temp)
         return result
 
     @cython.binding(False)
@@ -368,11 +356,11 @@ cdef class DoubleColumn(BaseColumn):
         cdef double result, v1, v2
         if idx >= self.length - 1:
             result = self._quickselect(temp, self.length, self.length - 1)
-            ALIGNED_FREE(temp)
+            os_aligned_free(temp)
             return result
         v1 = self._quickselect(temp, self.length, idx)
         v2 = self._quickselect(temp, self.length, idx + 1)
-        ALIGNED_FREE(temp)
+        os_aligned_free(temp)
         return v1 + frac * (v2 - v1)
 
     @cython.binding(False)
@@ -731,7 +719,7 @@ cdef class DoubleColumn(BaseColumn):
             with nogil:
                 for i in range(n):
                     new_data[i] = self.data_c[indices[i]]
-            ALIGNED_FREE(self.data_c)
+            os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = max(n, self.capacity)
             self.length = n

@@ -5,9 +5,8 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove
-from libc.stdlib cimport free
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_TIMESTAMP
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_TIMESTAMP
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 
@@ -78,7 +77,7 @@ cdef class TimestampColumn(BaseColumn):
         if not self.data_c: raise MemoryError()
 
     def __dealloc__(self):
-        if self.data_c is not NULL: free(self.data_c)
+        if self.data_c is not NULL: os_aligned_free(self.data_c)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         cdef long long* new_ptr
@@ -173,9 +172,9 @@ cdef class TimestampColumn(BaseColumn):
                 if idx < 0 or idx >= n: raise IndexError("Index out of bounds")
                 new_data[i] = self.data_c[idx]
         except Exception:
-            free(new_data)
+            os_aligned_free(new_data)
             raise
-        free(self.data_c)
+        os_aligned_free(self.data_c)
         self.data_c = new_data
 
     @cython.binding(False)
@@ -707,7 +706,7 @@ cdef class TimestampColumn(BaseColumn):
             for i in range(n):
                 new_data[i] = old_data[indices[i]]
         if inplace:
-            free(self.data_c)
+            os_aligned_free(self.data_c)
             self.data_c = new_data
             self.length = n
             return self

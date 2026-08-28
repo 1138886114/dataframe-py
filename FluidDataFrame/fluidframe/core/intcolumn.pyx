@@ -5,9 +5,9 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove
-from libc.stdlib cimport malloc, free
+from libc.stdlib cimport malloc
 from libc.math cimport sqrt, fabs, NAN
-from fluidframe.core._base cimport TYPE_INT, BaseColumn, aligned_malloc, aligned_realloc
+from fluidframe.core._base cimport TYPE_INT, BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free
 from fluidframe.core.doublecolumn cimport DoubleColumn
 
 
@@ -27,7 +27,7 @@ cdef class IntColumn(BaseColumn):
 
     def __dealloc__(self):
         if self.data_c is not NULL:
-            free(self.data_c)
+            os_aligned_free(self.data_c)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
@@ -184,10 +184,10 @@ cdef class IntColumn(BaseColumn):
         if self.length % 2 == 0:
             v1 = self._quickselect(temp, self.length, mid - 1)
             v2 = self._quickselect(temp, self.length, mid)
-            free(temp)
+            os_aligned_free(temp)
             return (v1 + v2) / 2.0
         result = self._quickselect(temp, self.length, mid)
-        free(temp)
+        os_aligned_free(temp)
         return result
 
     @cython.binding(False)
@@ -310,11 +310,11 @@ cdef class IntColumn(BaseColumn):
         cdef double result, v1, v2
         if idx >= self.length - 1:
             result = self._quickselect(temp, self.length, self.length - 1)
-            free(temp)
+            os_aligned_free(temp)
             return result
         v1 = self._quickselect(temp, self.length, idx)
         v2 = self._quickselect(temp, self.length, idx + 1)
-        free(temp)
+        os_aligned_free(temp)
         return v1 + frac * (v2 - v1)
 
     @cython.binding(False)
@@ -560,9 +560,9 @@ cdef class IntColumn(BaseColumn):
                     raise IndexError("Index out of bounds")
                 new_data[i] = self.data_c[idx]
         except Exception:
-            free(new_data)
+            os_aligned_free(new_data)
             raise
-        free(self.data_c)
+        os_aligned_free(self.data_c)
         self.data_c = new_data
 
     @cython.binding(False)
@@ -691,7 +691,7 @@ cdef class IntColumn(BaseColumn):
             for i in range(n):
                 new_data[i] = old_data[indices[i]]
         if inplace:
-            free(self.data_c)
+            os_aligned_free(self.data_c)
             self.data_c = new_data
             self.length = n
             return self

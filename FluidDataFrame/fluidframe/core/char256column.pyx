@@ -16,22 +16,9 @@ cdef extern from "<ctype.h>" nogil:
     int islower(int)
     int isupper(int)
 
-# 注入跨平台兼容的 ALIGNED_FREE，防止混用原生 free 引发堆破坏
-cdef extern from *:
-    """
-    #if defined(_MSC_VER) || defined(_WIN32)
-    #include <malloc.h>
-    #define ALIGNED_FREE(ptr) _aligned_free(ptr)
-    #else
-    #include <stdlib.h>
-    #define ALIGNED_FREE(ptr) free(ptr)
-    #endif
-    """
-    void ALIGNED_FREE(void* ptr) nogil
-
 import re
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_CHAR256, TYPE_INT
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CHAR256, TYPE_INT
 from fluidframe.core.intcolumn cimport IntColumn
 
 cdef inline bint _c_str_contains(char* source, const char* target) noexcept nogil:
@@ -70,7 +57,7 @@ cdef class Char256Column_SoA(BaseColumn):
         if not self.data_c: raise MemoryError()
 
     def __dealloc__(self):
-        if self.data_c is not NULL: ALIGNED_FREE(self.data_c)
+        if self.data_c is not NULL: os_aligned_free(self.data_c)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:
@@ -140,9 +127,9 @@ cdef class Char256Column_SoA(BaseColumn):
                     raise IndexError("Index out of bounds")
                 memcpy(new_data + (i * 256), self.data_c + (idx * 256), 256)
         except Exception:
-            ALIGNED_FREE(new_data)
+            os_aligned_free(new_data)
             raise
-        ALIGNED_FREE(self.data_c)
+        os_aligned_free(self.data_c)
         self.data_c = new_data
 
     @cython.binding(False)
@@ -169,7 +156,7 @@ cdef class Char256Column_SoA(BaseColumn):
                     out_idx[count] = i
                     count += 1
         cdef list res = [out_idx[j] for j in range(count)]
-        ALIGNED_FREE(out_idx)
+        os_aligned_free(out_idx)
         return res
 
     @cython.binding(False)
@@ -707,7 +694,7 @@ cdef class Char256Column_SoA(BaseColumn):
             with nogil:
                 for i in range(n):
                     memcpy(new_data + (i * 256), self.data_c + (indices[i] * 256), 256)
-            ALIGNED_FREE(self.data_c)
+            os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = max(n, self.capacity)
             self.length = n
