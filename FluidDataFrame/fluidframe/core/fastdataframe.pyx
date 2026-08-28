@@ -113,6 +113,231 @@ cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indic
 @cython.wraparound(False)
 cdef class FastDataFrame:
 
+    cdef IntColumn _reorder_int_column(self, IntColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        cdef int* old_data = col.data_c
+        cdef int* new_data = <int*>malloc(col.capacity * sizeof(int))
+        if not new_data: raise MemoryError()
+
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                new_data[i] = old_data[indices[i]]
+
+        if inplace:
+            free(col.data_c)
+            col.data_c = new_data
+            return col
+        else:
+            new_col = IntColumn(col.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+    cdef DoubleColumn _reorder_double_column(self, DoubleColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        cdef double* old_data = col.data_c
+        cdef double* new_data = <double*>malloc(col.capacity * sizeof(double))
+        if not new_data: raise MemoryError()
+
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                new_data[i] = old_data[indices[i]]
+
+        if inplace:
+            free(col.data_c)
+            col.data_c = new_data
+            return col
+        else:
+            new_col = DoubleColumn(col.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+    cdef Char256Column_SoA _reorder_char256_column(self, Char256Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        cdef char* old_data = col.data_c
+        cdef char* new_data = <char*>malloc(col.capacity * 256)
+        if not new_data: raise MemoryError()
+
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                memcpy(new_data + (i * 256), old_data + (indices[i] * 256), 256)
+
+        if inplace:
+            free(col.data_c)
+            col.data_c = new_data
+            return col
+        else:
+            new_col = Char256Column_SoA(col.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+    cdef UCS2Column_SoA _reorder_ucs2_column(self, UCS2Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
+        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(col.char_capacity * sizeof(Py_UCS2))
+        if not new_offsets or not new_chars: raise MemoryError()
+
+        new_offsets[0] = 0
+        cdef Py_ssize_t current_char_len = 0
+        cdef Py_ssize_t i, idx, start, end, str_len
+        cdef UCS2Column_SoA new_col
+
+        with nogil:
+            for i in range(n):
+                idx = indices[i]
+                start = col.offsets_c[idx]
+                end = col.offsets_c[idx + 1]
+                str_len = end - start
+
+                if str_len > 0:
+                    memcpy(new_chars + current_char_len, col.chars_c + start, str_len * sizeof(Py_UCS2))
+
+                current_char_len += str_len
+                new_offsets[i + 1] = current_char_len
+
+        if inplace:
+            free(col.offsets_c)
+            free(col.chars_c)
+            col.offsets_c = new_offsets
+            col.chars_c = new_chars
+            col.char_length = current_char_len
+            col.length = n
+            return col
+        else:
+            new_col = UCS2Column_SoA(col.capacity)
+            free(new_col.offsets_c)
+            free(new_col.chars_c)
+            new_col.offsets_c = new_offsets
+            new_col.chars_c = new_chars
+            new_col.char_length = current_char_len
+            new_col.char_capacity = col.char_capacity
+            new_col.length = n
+            return new_col
+
+    cdef TimestampColumn _reorder_timestamp_column(self, TimestampColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        cdef long long* old_data = col.data_c
+        cdef long long* new_data = <long long*>aligned_malloc(n * sizeof(long long))
+        if not new_data: raise MemoryError()
+
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                new_data[i] = old_data[indices[i]]
+
+        if inplace:
+            free(col.data_c)
+            col.data_c = new_data
+            return col
+        else:
+            new_col = TimestampColumn(col.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+    cdef BaseColumn _reorder_column(self, BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+        if col.dtype == TYPE_INT:
+            return self._reorder_int_column(<IntColumn>col, indices, n, inplace)
+        elif col.dtype == TYPE_DOUBLE:
+            return self._reorder_double_column(<DoubleColumn>col, indices, n, inplace)
+        elif col.dtype == TYPE_CHAR256:
+            return self._reorder_char256_column(<Char256Column_SoA>col, indices, n, inplace)
+        elif col.dtype == TYPE_UCS2:
+            return self._reorder_ucs2_column(<UCS2Column_SoA>col, indices, n, inplace)
+        elif col.dtype == TYPE_TIMESTAMP:
+            return self._reorder_timestamp_column(<TimestampColumn>col, indices, n, inplace)
+        raise TypeError(f"Unsupported column dtype: {col.dtype}")
+
+    cdef str _type_name(self, BaseColumn col):
+        if col.dtype == TYPE_INT: return 'int'
+        elif col.dtype == TYPE_DOUBLE: return 'float'
+        elif col.dtype == TYPE_CHAR256: return 'char256'
+        elif col.dtype == TYPE_UCS2: return 'ucs2'
+        elif col.dtype == TYPE_TIMESTAMP: return 'timestamp'
+        return 'unknown'
+
+    cdef DoubleColumn _diff_double(self, DoubleColumn col, int periods):
+        cdef Py_ssize_t n = col.length
+        cdef DoubleColumn new_col = DoubleColumn(col.capacity)
+        new_col.length = n
+
+        cdef double* old_data = col.data_c
+        cdef double* new_data = new_col.data_c
+        cdef Py_ssize_t i
+
+        with nogil:
+            for i in range(periods):
+                new_data[i] = NAN
+            for i in range(periods, n):
+                new_data[i] = old_data[i] - old_data[i - periods]
+        return new_col
+
+    cdef IntColumn _diff_int(self, IntColumn col, int periods):
+        cdef Py_ssize_t n = col.length
+        cdef IntColumn new_col = IntColumn(col.capacity)
+        new_col.length = n
+
+        cdef int* old_data = col.data_c
+        cdef int* new_data = new_col.data_c
+        cdef Py_ssize_t i
+
+        with nogil:
+            for i in range(periods):
+                new_data[i] = 0
+            for i in range(periods, n):
+                new_data[i] = old_data[i] - old_data[i - periods]
+
+        return new_col
+
+    cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        if col.dtype == TYPE_INT:
+            if rem_len > 0:
+                memmove((<IntColumn>col).data_c + row_idx,
+                        (<IntColumn>col).data_c + row_idx + 1,
+                        rem_len * sizeof(int))
+            (<IntColumn>col).length -= 1
+        elif col.dtype == TYPE_DOUBLE:
+            if rem_len > 0:
+                memmove((<DoubleColumn>col).data_c + row_idx,
+                        (<DoubleColumn>col).data_c + row_idx + 1,
+                        rem_len * sizeof(double))
+            (<DoubleColumn>col).length -= 1
+        elif col.dtype == TYPE_CHAR256:
+            if rem_len > 0:
+                memmove((<Char256Column_SoA>col).data_c + (row_idx * 256),
+                        (<Char256Column_SoA>col).data_c + ((row_idx + 1) * 256),
+                        rem_len * 256)
+            (<Char256Column_SoA>col).length -= 1
+        elif col.dtype == TYPE_UCS2:
+            self._drop_row_ucs2(<UCS2Column_SoA>col, row_idx, rem_len)
+        elif col.dtype == TYPE_TIMESTAMP:
+            if rem_len > 0:
+                memmove((<TimestampColumn>col).data_c + row_idx,
+                        (<TimestampColumn>col).data_c + row_idx + 1,
+                        rem_len * sizeof(long long))
+            (<TimestampColumn>col).length -= 1
+
+    cdef void _drop_row_ucs2(self, UCS2Column_SoA col, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        cdef Py_ssize_t start_offset = col.offsets_c[row_idx]
+        cdef Py_ssize_t end_offset = col.offsets_c[row_idx + 1]
+        cdef Py_ssize_t char_len = end_offset - start_offset
+
+        cdef Py_ssize_t rem_chars = col.char_length - end_offset
+        if rem_chars > 0:
+            memmove(col.chars_c + start_offset,
+                    col.chars_c + end_offset,
+                    rem_chars * sizeof(Py_UCS2))
+        col.char_length -= char_len
+
+        cdef Py_ssize_t i
+        for i in range(row_idx, col.length):
+            col.offsets_c[i] = col.offsets_c[i + 1] - char_len
+        col.length -= 1
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __init__(self, dict schema=None):
@@ -357,22 +582,9 @@ cdef class FastDataFrame:
             result_df.df_length = n
 
         cdef str name
-        cdef BaseColumn col
-        cdef BaseColumn new_col
-
+        cdef BaseColumn col, new_col
         for name, col in self.columns.items():
-            if col.dtype == TYPE_INT:
-                new_col = self._reorder_int_column(<IntColumn>col, idx_c, n, inplace)
-            elif col.dtype == TYPE_DOUBLE:
-                new_col = self._reorder_double_column(<DoubleColumn>col, idx_c, n, inplace)
-            elif col.dtype == TYPE_CHAR256:
-                new_col = self._reorder_char256_column(<Char256Column_SoA>col, idx_c, n, inplace)
-            elif col.dtype == TYPE_UCS2:
-                new_col = self._reorder_ucs2_column(<UCS2Column_SoA>col, idx_c, n, inplace)
-            elif col.dtype == TYPE_TIMESTAMP:
-                new_col = self._reorder_timestamp_column(<TimestampColumn>col, idx_c, n, inplace)
-            else:
-                raise NotImplementedError()
+            new_col = self._reorder_column(col, idx_c, n, inplace)
             if not inplace:
                 result_df.columns[name] = new_col
 
@@ -382,97 +594,6 @@ cdef class FastDataFrame:
         free(idx_c)
         if not inplace:
             return result_df
-
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef IntColumn _reorder_int_column(self, IntColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef int* old_data = col.data_c
-        cdef int* new_data = <int*>malloc(col.capacity * sizeof(int))
-        if not new_data: raise MemoryError()
-
-        cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                new_data[i] = old_data[indices[i]]
-
-        if inplace:
-            free(col.data_c)
-            col.data_c = new_data
-            return col
-        else:
-            new_col = IntColumn(col.capacity)
-            free(new_col.data_c)
-            new_col.data_c = new_data
-            new_col.length = n
-            return new_col
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef DoubleColumn _reorder_double_column(self, DoubleColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef double* old_data = col.data_c
-        cdef double* new_data = <double*>malloc(col.capacity * sizeof(double))
-        if not new_data: raise MemoryError()
-
-        cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                new_data[i] = old_data[indices[i]]
-
-        if inplace:
-            free(col.data_c)
-            col.data_c = new_data
-            return col
-        else:
-            new_col = DoubleColumn(col.capacity)
-            free(new_col.data_c)
-            new_col.data_c = new_data
-            new_col.length = n
-            return new_col
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef Char256Column_SoA _reorder_char256_column(self, Char256Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef char* old_data = col.data_c
-        cdef char* new_data = <char*>malloc(col.capacity * 256)
-        if not new_data: raise MemoryError()
-
-        cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                memcpy(new_data + (i * 256), old_data + (indices[i] * 256), 256)
-
-        if inplace:
-            free(col.data_c)
-            col.data_c = new_data
-            return col
-        else:
-            new_col = Char256Column_SoA(col.capacity)
-            free(new_col.data_c)
-            new_col.data_c = new_data
-            new_col.length = n
-            return new_col
-
-    cdef TimestampColumn _reorder_timestamp_column(self, TimestampColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef long long* old_data = col.data_c
-        cdef long long* new_data = <long long*>aligned_malloc(n * sizeof(long long))
-        if not new_data: raise MemoryError()
-
-        cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                new_data[i] = old_data[indices[i]]
-
-        if inplace:
-            free(col.data_c)
-            col.data_c = new_data
-            return col
-        else:
-            new_col = TimestampColumn(col.capacity)
-            free(new_col.data_c)
-            new_col.data_c = new_data
-            new_col.length = n
-            return new_col
 
 
     @cython.binding(False)
@@ -495,57 +616,18 @@ cdef class FastDataFrame:
             raise TypeError(f"diff is only supported for numeric columns, got {type(col)}")
 
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef DoubleColumn _diff_double(self, DoubleColumn col, int periods):
-        cdef Py_ssize_t n = col.length
-        cdef DoubleColumn new_col = DoubleColumn(col.capacity)
-        new_col.length = n
-
-        cdef double* old_data = col.data_c
-        cdef double* new_data = new_col.data_c
-        cdef Py_ssize_t i
-
-        with nogil:
-            for i in range(n):
-                if i < periods:
-                    new_data[i] = NAN
-                else:
-                    new_data[i] = old_data[i] - old_data[i - periods]
-        return new_col
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef IntColumn _diff_int(self, IntColumn col, int periods):
-        cdef Py_ssize_t n = col.length
-        cdef IntColumn new_col = IntColumn(col.capacity)
-        new_col.length = n
-
-        cdef int* old_data = col.data_c
-        cdef int* new_data = new_col.data_c
-        cdef Py_ssize_t i
-
-        with nogil:
-            for i in range(n):
-                if i < periods:
-                    new_data[i] = 0
-                else:
-                    new_data[i] = old_data[i] - old_data[i - periods]
-
-        return new_col
-
-
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def reset_index(self):
         cdef IntColumn idx_col = IntColumn(self.df_length)
         cdef Py_ssize_t i
         cdef Py_ssize_t n_old = self.index.length if self.index is not None else 0
-        for i in range(self.df_length):
-            if i < n_old:
-                idx_col.data_c[i] = <int>(<list>self.index.values())[i]
-            else:
-                idx_col.data_c[i] = <int>i
+        cdef Py_ssize_t n_fill = self.df_length if n_old >= self.df_length else n_old
+        cdef list old_values = self.index.values() if n_old > 0 else None
+        for i in range(n_fill):
+            idx_col.data_c[i] = <int>old_values[i]
+        for i in range(n_fill, self.df_length):
+            idx_col.data_c[i] = <int>i
         idx_col.length = self.df_length
         self.columns['index'] = idx_col
         self.index = RangeIndex(0, self.df_length)
@@ -565,50 +647,6 @@ cdef class FastDataFrame:
         if 'index' not in self.columns:
             raise KeyError("No 'index' column found. Call reset_index() first.")
         return self.sort_values('index', reverse=not ascending, inplace=inplace)
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cdef UCS2Column_SoA _reorder_ucs2_column(self, UCS2Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
-        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(col.char_capacity * sizeof(Py_UCS2))
-        if not new_offsets or not new_chars: raise MemoryError()
-
-        new_offsets[0] = 0
-        cdef Py_ssize_t current_char_len = 0
-        cdef Py_ssize_t i, idx, start, end, str_len
-        cdef UCS2Column_SoA new_col
-
-        with nogil:
-            for i in range(n):
-                idx = indices[i]
-                start = col.offsets_c[idx]
-                end = col.offsets_c[idx + 1]
-                str_len = end - start
-
-                if str_len > 0:
-                    memcpy(new_chars + current_char_len, col.chars_c + start, str_len * sizeof(Py_UCS2))
-
-                current_char_len += str_len
-                new_offsets[i + 1] = current_char_len
-
-        if inplace:
-            free(col.offsets_c)
-            free(col.chars_c)
-            col.offsets_c = new_offsets
-            col.chars_c = new_chars
-            col.char_length = current_char_len
-            col.length = n
-            return col
-        else:
-            new_col = UCS2Column_SoA(col.capacity)
-            free(new_col.offsets_c)
-            free(new_col.chars_c)
-            new_col.offsets_c = new_offsets
-            new_col.chars_c = new_chars
-            new_col.char_length = current_char_len
-            new_col.char_capacity = col.char_capacity
-            new_col.length = n
-            return new_col
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
@@ -674,20 +712,7 @@ cdef class FastDataFrame:
         cdef str name
         cdef BaseColumn col, new_col
         for name, col in self.columns.items():
-            if col.dtype == TYPE_INT:
-                new_col = self._reorder_int_column(<IntColumn>col, keep_idx_c, keep_count, inplace)
-            elif col.dtype == TYPE_DOUBLE:
-                new_col = self._reorder_double_column(<DoubleColumn>col, keep_idx_c, keep_count, inplace)
-            elif col.dtype == TYPE_CHAR256:
-                new_col = self._reorder_char256_column(<Char256Column_SoA>col, keep_idx_c, keep_count, inplace)
-            elif col.dtype == TYPE_UCS2:
-                new_col = self._reorder_ucs2_column(<UCS2Column_SoA>col, keep_idx_c, keep_count, inplace)
-            elif col.dtype == TYPE_TIMESTAMP:
-                new_col = self._reorder_timestamp_column(<TimestampColumn>col, keep_idx_c, keep_count, inplace)
-            else:
-                free(keep_idx_c)
-                raise TypeError(f"Drop not supported for column {name}")
-
+            new_col = self._reorder_column(col, keep_idx_c, keep_count, inplace)
             if not inplace:
                 result_df.columns[name] = new_col
 
@@ -716,36 +741,7 @@ cdef class FastDataFrame:
         cdef RangeIndex ri
 
         for name, col in self.columns.items():
-            if col.dtype == TYPE_INT:
-                if rem_len > 0:
-                    memmove((<IntColumn>col).data_c + row_idx,
-                            (<IntColumn>col).data_c + row_idx + 1,
-                            rem_len * sizeof(int))
-                (<IntColumn>col).length -= 1
-
-            elif col.dtype == TYPE_DOUBLE:
-                if rem_len > 0:
-                    memmove((<DoubleColumn>col).data_c + row_idx,
-                            (<DoubleColumn>col).data_c + row_idx + 1,
-                            rem_len * sizeof(double))
-                (<DoubleColumn>col).length -= 1
-
-            elif col.dtype == TYPE_CHAR256:
-                if rem_len > 0:
-                    memmove((<Char256Column_SoA>col).data_c + (row_idx * 256),
-                            (<Char256Column_SoA>col).data_c + ((row_idx + 1) * 256),
-                            rem_len * 256)
-                (<Char256Column_SoA>col).length -= 1
-
-            elif col.dtype == TYPE_UCS2:
-                self._drop_row_ucs2(<UCS2Column_SoA>col, row_idx, rem_len)
-
-            elif col.dtype == TYPE_TIMESTAMP:
-                if rem_len > 0:
-                    memmove((<TimestampColumn>col).data_c + row_idx,
-                            (<TimestampColumn>col).data_c + row_idx + 1,
-                            rem_len * sizeof(long long))
-                (<TimestampColumn>col).length -= 1
+            self._drop_row_column(col, row_idx, rem_len)
 
         self.df_length -= 1
         if self.index is not None and self.index.length > 0:
@@ -776,23 +772,6 @@ cdef class FastDataFrame:
                 idx_col.length -= 1
             self.index.length -= 1
 
-    cdef void _drop_row_ucs2(self, UCS2Column_SoA col, Py_ssize_t row_idx, Py_ssize_t rem_len):
-        cdef Py_ssize_t start_offset = col.offsets_c[row_idx]
-        cdef Py_ssize_t end_offset = col.offsets_c[row_idx + 1]
-        cdef Py_ssize_t char_len = end_offset - start_offset
-
-        cdef Py_ssize_t rem_chars = col.char_length - end_offset
-        if rem_chars > 0:
-            memmove(col.chars_c + start_offset,
-                    col.chars_c + end_offset,
-                    rem_chars * sizeof(Py_UCS2))
-        col.char_length -= char_len
-
-        cdef Py_ssize_t i
-        for i in range(row_idx, col.length):
-            col.offsets_c[i] = col.offsets_c[i + 1] - char_len
-        col.length -= 1
-
     @cython.binding(False)
     def argmax(self, str col_name):
         return self.columns[col_name].idxmax()
@@ -809,20 +788,10 @@ cdef class FastDataFrame:
     def to_pickle(self, filename):
         import pickle
         cdef dict data = {'df_length': self.df_length, 'columns': {}}
-        cdef Py_ssize_t col_len
         for name, col_obj in self.columns.items():
             col_len = col_obj.length
             values = [col_obj[i] for i in range(col_len)]
-            if col_obj.dtype == TYPE_INT:
-                data['columns'][name] = ('int', values)
-            elif col_obj.dtype == TYPE_DOUBLE:
-                data['columns'][name] = ('float', values)
-            elif col_obj.dtype == TYPE_CHAR256:
-                data['columns'][name] = ('char256', values)
-            elif col_obj.dtype == TYPE_UCS2:
-                data['columns'][name] = ('ucs2', values)
-            elif col_obj.dtype == TYPE_TIMESTAMP:
-                data['columns'][name] = ('timestamp', values)
+            data['columns'][name] = (self._type_name(col_obj), values)
         with open(filename, 'wb') as f:
             pickle.dump(data, f)
 
@@ -853,16 +822,7 @@ cdef class FastDataFrame:
         cdef str name
         cdef BaseColumn col
         for name, col in self.columns.items():
-            if col.dtype == TYPE_INT:
-                result.columns[name] = self._reorder_int_column(<IntColumn>col, indices, n, False)
-            elif col.dtype == TYPE_DOUBLE:
-                result.columns[name] = self._reorder_double_column(<DoubleColumn>col, indices, n, False)
-            elif col.dtype == TYPE_CHAR256:
-                result.columns[name] = self._reorder_char256_column(<Char256Column_SoA>col, indices, n, False)
-            elif col.dtype == TYPE_UCS2:
-                result.columns[name] = self._reorder_ucs2_column(<UCS2Column_SoA>col, indices, n, False)
-            elif col.dtype == TYPE_TIMESTAMP:
-                result.columns[name] = self._reorder_timestamp_column(<TimestampColumn>col, indices, n, False)
+            result.columns[name] = self._reorder_column(col, indices, n, False)
 
         if self.index is not None:
             result.index = self.index._take(indices, n)
