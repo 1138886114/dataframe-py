@@ -15,7 +15,7 @@ from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.timestampcolumn cimport TimestampColumn
-from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex
+from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex, INDEX_RANGE, INDEX_INT, INDEX_MULTI
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
 
 
@@ -174,11 +174,11 @@ cdef class FastDataFrame:
             self.df_length += 1
 
             if self.index is not None:
-                if isinstance(self.index, RangeIndex):
+                if self.index.index_type == INDEX_RANGE:
                     self.index.length = self.df_length
-                elif isinstance(self.index, IntIndex):
+                elif self.index.index_type == INDEX_INT:
                     (<IntIndex>self.index).append(<int>(self.df_length - 1))
-                elif isinstance(self.index, MultiIndex):
+                elif self.index.index_type == INDEX_MULTI:
                     raise NotImplementedError("Appending rows to MultiIndex is not supported via append_row yet.")
         except Exception:
             self.df_length = original_df_length
@@ -188,9 +188,9 @@ cdef class FastDataFrame:
                     col_obj.pop_back()
 
             if self.index is not None:
-                if isinstance(self.index, RangeIndex):
+                if self.index.index_type == INDEX_RANGE:
                     self.index.length = original_index_length
-                elif isinstance(self.index, IntIndex):
+                elif self.index.index_type == INDEX_INT:
                     while (<IntIndex>self.index).length > original_index_length:
                         (<IntIndex>self.index).pop_back()
 
@@ -206,12 +206,12 @@ cdef class FastDataFrame:
         for col_name, col_obj in self.columns.items():
             new_df.columns[col_name] = col_obj.copy()
         if self.index is not None:
-            if isinstance(self.index, RangeIndex):
+            if self.index.index_type == INDEX_RANGE:
                 new_idx = RangeIndex((<RangeIndex>self.index).start,
                                      self.index.length,
                                      (<RangeIndex>self.index).step)
                 new_df.index = new_idx
-            elif isinstance(self.index, IntIndex):
+            elif self.index.index_type == INDEX_INT:
                 n = self.index.length
                 idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
                 if not idx_c: raise MemoryError()
@@ -234,9 +234,9 @@ cdef class FastDataFrame:
             row[col_name] = col_obj.pop_front()
         self.df_length -= 1
         if self.index is not None and self.index.length > 0:
-            if isinstance(self.index, RangeIndex):
+            if self.index.index_type == INDEX_RANGE:
                 (<RangeIndex>self.index).start += (<RangeIndex>self.index).step
-            elif isinstance(self.index, IntIndex):
+            elif self.index.index_type == INDEX_INT:
                 (<IntIndex>self.index).pop_back()
             self.index.length -= 1
         return row
@@ -250,7 +250,7 @@ cdef class FastDataFrame:
             row[col_name] = col_obj.pop_back()
         self.df_length -= 1
         if self.index is not None and self.index.length > 0:
-            if isinstance(self.index, IntIndex):
+            if self.index.index_type == INDEX_INT:
                 (<IntIndex>self.index).pop_back()
             self.index.length -= 1
         return row
@@ -748,7 +748,7 @@ cdef class FastDataFrame:
 
         self.df_length -= 1
         if self.index is not None and self.index.length > 0:
-            if isinstance(self.index, RangeIndex):
+            if self.index.index_type == INDEX_RANGE:
                 ri = <RangeIndex>self.index
                 if row_idx == 0:
                     ri.start += ri.step
@@ -766,7 +766,7 @@ cdef class FastDataFrame:
                     tmp_col.length = self.index.length - 1
                     self.index = IntIndex(tmp_col)
                     return
-            elif isinstance(self.index, IntIndex):
+            elif self.index.index_type == INDEX_INT:
                 idx_col = (<IntIndex>self.index).data
                 if rem_len > 0:
                     memmove(idx_col.data_c + row_idx,

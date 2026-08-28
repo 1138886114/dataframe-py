@@ -30,6 +30,7 @@ cdef class IntIndex(IndexBase):
     def __cinit__(self, IntColumn col):
         self.data = col
         self.length = col.length
+        self.index_type = INDEX_INT
 
     cpdef list values(self):
         cdef list result = []
@@ -64,11 +65,13 @@ cdef class IntIndex(IndexBase):
         return matches
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def append(self, int val):
         self.data.append(val)
         self.length = self.data.length
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pop_back(self):
         if self.length == 0:
             raise IndexError("pop from empty Index")
@@ -79,6 +82,7 @@ cdef class IntIndex(IndexBase):
 
 cdef class RangeIndex(IndexBase):
     def __cinit__(self, Py_ssize_t start, Py_ssize_t length, Py_ssize_t step=1):
+        self.index_type = INDEX_RANGE
         self.start = start
         self.length = length
         self.step = step
@@ -105,6 +109,7 @@ cdef class RangeIndex(IndexBase):
         if idx < 0 or idx >= self.length: raise KeyError(key)
         return idx
 
+    @cython.always_allow_keywords(False)
     cpdef list values(self):
         cdef list result = []
         cdef Py_ssize_t i
@@ -114,6 +119,7 @@ cdef class RangeIndex(IndexBase):
 
 cdef class MultiIndex(IndexBase):
     def __cinit__(self, list levels, list codes, list names=None):
+        self.index_type = INDEX_MULTI
         self.levels = levels
         self.codes = codes  # 这是包含多个 IntColumn 的列表
         self.nlevels = len(levels)
@@ -180,6 +186,7 @@ cdef class MultiIndex(IndexBase):
         if len(matches) == 1: return matches[0]
         return matches
 
+    @cython.always_allow_keywords(False)
     cpdef list values(self):
         cdef list result = []
         cdef Py_ssize_t i, j
