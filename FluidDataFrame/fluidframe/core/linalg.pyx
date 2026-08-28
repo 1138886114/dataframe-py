@@ -8,7 +8,7 @@ from libc.stdlib cimport malloc, free, calloc
 from libc.string cimport memcpy
 from libc.math cimport sqrt, fabs, NAN
 
-from fluidframe.core._base cimport BaseColumn, TYPE_INT, TYPE_DOUBLE
+from fluidframe.core._base cimport BaseColumn, TYPE_INT, TYPE_DOUBLE, aligned_malloc
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -20,14 +20,16 @@ from fluidframe.core.index cimport RangeIndex
 # ============================================================
 
 cdef double* _to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
-    """Convert DataFrame to a single contiguous row-major double* array."""
     cdef Py_ssize_t rows = df.df_length
-    cdef list col_names = list(df.columns.keys())
-    cdef Py_ssize_t cols = len(col_names)
+    cdef list cols_list = list(df.columns.values())
+    cdef list name_list = list(df.columns.keys())
+    cdef Py_ssize_t cols = len(cols_list)
 
-    cdef double* data = <double*>aligned_malloc(rows * cols * sizeof(double))
-    if not data:
-        raise MemoryError()
+    cdef Py_ssize_t num_elements = rows * cols
+    if num_elements == 0: num_elements = 1
+
+    cdef double* data = <double*>aligned_malloc(num_elements * sizeof(double))
+    if not data: raise MemoryError()
 
     cdef Py_ssize_t i, j
     cdef BaseColumn col
@@ -37,7 +39,7 @@ cdef double* _to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* 
 
     try:
         for j in range(cols):
-            col = df.columns[col_names[j]]
+            col = <BaseColumn>cols_list[j]
             col_dtype = col.dtype
 
             if col_dtype == TYPE_INT:
@@ -51,7 +53,7 @@ cdef double* _to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* 
                     for i in range(rows):
                         data[i * cols + j] = double_ptr[i]
             else:
-                raise TypeError(f"Cannot perform linear algebra on non-numeric column '{col_names[j]}'")
+                raise TypeError(f"Cannot perform linear algebra on non-numeric column '{name_list[j]}'")
     except Exception:
         free(data)
         raise
@@ -87,9 +89,9 @@ def dot(FastDataFrame a, FastDataFrame b):
     cdef Py_ssize_t a_rows, a_cols, b_rows, b_cols
     cdef Py_ssize_t i, j, k
     cdef double s
-    cdef list res_col_names
-    cdef DoubleColumn col
-    cdef FastDataFrame result
+    cdef double* A = NULL
+    cdef double* B = NULL
+    cdef double* C = NULL
 
     a_rows = a.df_length
     a_cols = len(list(a.columns.keys()))
@@ -99,78 +101,77 @@ def dot(FastDataFrame a, FastDataFrame b):
     if a_cols != b_rows:
         raise ValueError(f"Shape mismatch: ({a_rows}, {a_cols}) x ({b_rows}, {b_cols})")
 
-    cdef double* A = _to_contiguous(a, &a_rows, &a_cols)
-    cdef double* B = _to_contiguous(b, &b_rows, &b_cols)
-    cdef double* C = <double*>calloc(a_rows * b_cols, sizeof(double))
-    if not C:
-        free(A)
-        free(B)
-        raise MemoryError()
-
     try:
-        for i in range(a_rows):
-            for k in range(a_cols):
-                s = A[i * a_cols + k]
-                for j in range(b_cols):
-                    C[i * b_cols + j] += s * B[k * b_cols + j]
-    finally:
-        free(A)
-        free(B)
+        A = _to_contiguous(a, &a_rows, &a_cols)
+        B = _to_contiguous(b, &b_rows, &b_cols)
 
-    result = _from_contiguous(C, a_rows, b_cols)
-    free(C)
-    return result
+        cdef Py_ssize_t size_c = a_rows * b_cols
+        if size_c == 0: size_c = 1
+        C = <double*>calloc(size_c, sizeof(double))
+        if not C: raise MemoryError()
+
+        with nogil:
+            for i in range(a_rows):
+                for k in range(a_cols):
+                    s = A[i * a_cols + k]
+                    if s != 0:
+                        for j in range(b_cols):
+                            C[i * b_cols + j] += s * B[k * b_cols + j]
+
+        return _from_contiguous(C, a_rows, b_cols)
+    finally:
+        if A != NULL: free(A)
+        if B != NULL: free(B)
+        if C != NULL: free(C)
 
 
 def transpose(FastDataFrame df):
-    """Matrix transpose: B = A^T."""
-    cdef Py_ssize_t rows, cols
-    cdef Py_ssize_t i, j
-
-    cdef double* A = _to_contiguous(df, &rows, &cols)
-    cdef double* B = <double*>malloc(cols * rows * sizeof(double))
-    if not B:
-        free(A)
-        raise MemoryError()
+    cdef Py_ssize_t rows, cols, i, j
+    cdef double* A = NULL
+    cdef double* B = NULL
 
     try:
-        for i in range(rows):
-            for j in range(cols):
-                B[j * rows + i] = A[i * cols + j]
-    finally:
-        free(A)
+        A = _to_contiguous(df, &rows, &cols)
+        cdef Py_ssize_t size = rows * cols
+        if size == 0: size = 1
+        B = <double*>malloc(size * sizeof(double))
+        if not B: raise MemoryError()
 
-    cdef FastDataFrame result = _from_contiguous(B, cols, rows)
-    free(B)
-    return result
+        with nogil:
+            for i in range(rows):
+                for j in range(cols):
+                    B[j * rows + i] = A[i * cols + j]
+
+        return _from_contiguous(B, cols, rows)
+    finally:
+        if A != NULL: free(A)
+        if B != NULL: free(B)
 
 
 def det(FastDataFrame df):
     """Determinant via LU decomposition with Partial Pivoting."""
     cdef Py_ssize_t n = df.df_length
-    cdef list col_names = list(df.columns.keys())
-    if len(col_names) != n:
+    if len(list(df.columns.keys())) != n:
         raise ValueError("Matrix must be square")
 
-    cdef Py_ssize_t rows, cols
-    cdef double* A = _to_contiguous(df, &rows, &cols)
-
-    cdef double* LU = <double*>malloc(n * n * sizeof(double))
-    if not LU:
-        free(A)
-        raise MemoryError()
-
-    cdef Py_ssize_t i, j, k, pivot_row
+    cdef Py_ssize_t rows, cols, i, j, k, pivot_row
+    cdef double* A = NULL
+    cdef double* LU = NULL
     cdef double det_val = 1.0
     cdef double pivot, temp, max_val, abs_val
-    cdef int sign = 1  # 记录行交换导致的符号变化
+    cdef int sign = 1
 
     try:
+        A = _to_contiguous(df, &rows, &cols)
+        cdef Py_ssize_t size = n * n
+        if size == 0: size = 1
+        LU = <double*>malloc(size * sizeof(double))
+        if not LU: raise MemoryError()
+
         memcpy(LU, A, n * n * sizeof(double))
 
         with nogil:
             for i in range(n):
-                # 1. 寻找当前列的最大主元 (Partial Pivoting)
                 pivot_row = i
                 max_val = fabs(LU[i * n + i])
                 for k in range(i + 1, n):
@@ -179,140 +180,156 @@ def det(FastDataFrame df):
                         max_val = abs_val
                         pivot_row = k
 
-                # 2. 如果主元为 0 (奇异矩阵)，行列式必然为 0
                 if max_val < 1e-15:
                     det_val = 0.0
-                    break # 安全跳出，交给 finally 清理内存，杜绝 double free！
+                    break
 
-                # 3. 交换当前行与主元行
                 if pivot_row != i:
                     for j in range(i, n):
                         temp = LU[i * n + j]
                         LU[i * n + j] = LU[pivot_row * n + j]
                         LU[pivot_row * n + j] = temp
-                    sign = -sign  # 每次行交换，行列式反号
+                    sign = -sign
 
-                # 4. 常规高斯消元
                 pivot = LU[i * n + i]
                 for k in range(i + 1, n):
                     temp = LU[k * n + i] / pivot
                     for j in range(i + 1, n):
                         LU[k * n + j] -= temp * LU[i * n + j]
 
-            # 5. 计算主对角线乘积
             if det_val != 0.0:
                 for i in range(n):
                     det_val *= LU[i * n + i]
                 det_val *= sign
 
+        return det_val
     finally:
-        # 统一唯一的释放出口
-        free(LU)
-        free(A)
-
-    return det_val
+        if A != NULL: free(A)
+        if LU != NULL: free(LU)
 
 
 def inv(FastDataFrame df):
-    """Matrix inverse via Gauss-Jordan elimination."""
     cdef Py_ssize_t n = df.df_length
-    cdef list col_names = list(df.columns.keys())
-    cdef Py_ssize_t rows, cols
-    cdef Py_ssize_t i, j, k
-    cdef double pivot, temp
-    cdef double* result_data
-    cdef FastDataFrame result
-
-    if len(col_names) != n:
+    if len(list(df.columns.keys())) != n:
         raise ValueError("Matrix must be square")
 
-    cdef double* A = _to_contiguous(df, &rows, &cols)
-    cdef double* aug = <double*>malloc(n * 2 * n * sizeof(double))
-    if not aug:
-        free(A)
-        raise MemoryError()
+    cdef Py_ssize_t rows, cols, i, j, k, pivot_row
+    cdef double* A = NULL
+    cdef double* aug = NULL
+    cdef double* result_data = NULL
+    cdef double pivot, temp, max_val, abs_val
+    cdef int singular = 0
 
     try:
-        for i in range(n):
-            for j in range(n):
-                aug[i * 2 * n + j] = A[i * n + j]
-                aug[i * 2 * n + n + j] = 1.0 if i == j else 0.0
+        A = _to_contiguous(df, &rows, &cols)
+        cdef Py_ssize_t size_aug = n * 2 * n
+        if size_aug == 0: size_aug = 1
+        aug = <double*>malloc(size_aug * sizeof(double))
+        if not aug: raise MemoryError()
 
-        for i in range(n):
-            pivot = aug[i * 2 * n + i]
-            if fabs(pivot) < 1e-15:
-                free(aug)
-                free(A)
-                raise ValueError("Matrix is singular")
-            for j in range(2 * n):
-                aug[i * 2 * n + j] /= pivot
-            for k in range(n):
-                if k == i: continue
-                temp = aug[k * 2 * n + i]
-                for j in range(2 * n):
-                    aug[k * 2 * n + j] -= temp * aug[i * 2 * n + j]
+        with nogil:
+            for i in range(n):
+                for j in range(n):
+                    aug[i * 2 * n + j] = A[i * n + j]
+                    aug[i * 2 * n + n + j] = 1.0 if i == j else 0.0
 
-        result_data = <double*>malloc(n * n * sizeof(double))
-        if not result_data:
-            free(aug)
-            free(A)
-            raise MemoryError()
-        for i in range(n):
-            for j in range(n):
-                result_data[i * n + j] = aug[i * 2 * n + n + j]
+            # 引入 Partial Pivoting，彻底修复 inv 算法缺陷
+            for i in range(n):
+                pivot_row = i
+                max_val = fabs(aug[i * 2 * n + i])
+                for k in range(i + 1, n):
+                    abs_val = fabs(aug[k * 2 * n + i])
+                    if abs_val > max_val:
+                        max_val = abs_val
+                        pivot_row = k
 
-        result = _from_contiguous(result_data, n, n)
-        free(result_data)
+                if max_val < 1e-15:
+                    singular = 1
+                    break
+
+                # 行交换覆盖整个增广矩阵
+                if pivot_row != i:
+                    for j in range(i, 2 * n):
+                        temp = aug[i * 2 * n + j]
+                        aug[i * 2 * n + j] = aug[pivot_row * 2 * n + j]
+                        aug[pivot_row * 2 * n + j] = temp
+
+                pivot = aug[i * 2 * n + i]
+                for j in range(i, 2 * n):
+                    aug[i * 2 * n + j] /= pivot
+
+                for k in range(n):
+                    if k == i: continue
+                    temp = aug[k * 2 * n + i]
+                    for j in range(i, 2 * n):
+                        aug[k * 2 * n + j] -= temp * aug[i * 2 * n + j]
+
+        if singular:
+            raise ValueError("Matrix is singular")
+
+        cdef Py_ssize_t size_res = n * n
+        if size_res == 0: size_res = 1
+        result_data = <double*>malloc(size_res * sizeof(double))
+        if not result_data: raise MemoryError()
+
+        with nogil:
+            for i in range(n):
+                for j in range(n):
+                    result_data[i * n + j] = aug[i * 2 * n + n + j]
+
+        return _from_contiguous(result_data, n, n)
     finally:
-        free(aug)
-        free(A)
-
-    return result
+        if A != NULL: free(A)
+        if aug != NULL: free(aug)
+        if result_data != NULL: free(result_data)
 
 
 def solve(FastDataFrame A, FastDataFrame b):
-    """Solve linear system Ax = b."""
     if A.df_length != b.df_length:
         raise ValueError("Shape mismatch")
-    A_inv = inv(A)
-    return dot(A_inv, b)
+    return dot(inv(A), b)
 
 
 def matmul(FastDataFrame a, FastDataFrame b):
-    """Matrix multiplication (alias for dot)."""
     return dot(a, b)
 
 
 def norm(FastDataFrame df, str ord_type="frobenius"):
-    """Matrix norm.
-    ord_type='frobenius' or 'fro' — Frobenius norm (sqrt of sum of squares)
-    ord_type='max' or 'inf' — max absolute value
-    ord_type='count' or 'zero' — count of non-zero elements
-    """
-    cdef Py_ssize_t rows, cols
-    cdef double* A = _to_contiguous(df, &rows, &cols)
-    cdef Py_ssize_t n = rows * cols
-    cdef Py_ssize_t i
-    cdef double val, result
+    cdef Py_ssize_t rows, cols, n, i
+    cdef double* A = NULL
+    cdef double result = 0.0
+    cdef double val
+    cdef int mode = 0
+
+    # 分流计算逻辑，便于内部纯 C 执行
+    if ord_type in ('frobenius', 'fro', '2'):
+        mode = 1
+    elif ord_type in ('count', 'zero'):
+        mode = 2
+    else:
+        mode = 3
 
     try:
-        if ord_type in ('frobenius', 'fro', '2'):
-            result = 0
-            for i in range(n):
-                result += A[i] * A[i]
-            result = sqrt(result)
-        elif ord_type in ('count', 'zero'):
-            result = 0
-            for i in range(n):
-                if fabs(A[i]) > 1e-15:
-                    result += 1
-        else:
-            result = 0
-            for i in range(n):
-                val = fabs(A[i])
-                if val > result:
-                    result = val
-    finally:
-        free(A)
+        A = _to_contiguous(df, &rows, &cols)
+        n = rows * cols
 
-    return result
+        with nogil:
+            if mode == 1:
+                result = 0.0
+                for i in range(n):
+                    result += A[i] * A[i]
+                result = sqrt(result)
+            elif mode == 2:
+                result = 0.0
+                for i in range(n):
+                    if fabs(A[i]) > 1e-15:
+                        result += 1.0
+            else:
+                result = 0.0
+                for i in range(n):
+                    val = fabs(A[i])
+                    if val > result:
+                        result = val
+        return result
+    finally:
+        if A != NULL: free(A)
