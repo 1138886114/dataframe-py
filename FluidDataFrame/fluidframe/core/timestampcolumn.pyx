@@ -728,3 +728,32 @@ cdef class TimestampColumn(BaseColumn):
 
     def __len__(self):
         return self.length
+
+
+    cdef TimestampColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
+        cdef long long* old_data = self.data_c
+        cdef long long* new_data = <long long*>aligned_malloc(n * sizeof(long long))
+        if not new_data: raise MemoryError()
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                new_data[i] = old_data[indices[i]]
+        if inplace:
+            free(self.data_c)
+            self.data_c = new_data
+            self.length = n
+            return self
+        else:
+            new_col = TimestampColumn(self.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+
+    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        if rem_len > 0:
+            memmove(self.data_c + row_idx,
+                    self.data_c + row_idx + 1,
+                    rem_len * sizeof(long long))
+        self.length -= 1

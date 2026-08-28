@@ -20,3 +20,12 @@ cdef class IntColumn(BaseColumn):
     cdef Py_ssize_t _count_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
     cdef double _var_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
     cdef double _std_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
+    cdef IntColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
+    cpdef IntColumn clip(self, double lower, double upper, bint inplace=*)
+    cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=*)
+    cpdef IntColumn mask(self, IntColumn cond, int other, bint inplace=*)
+    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len)
+    cdef void to_double_buffer(self, double* out, Py_ssize_t n)
+    cdef IntColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, int sentinel)
+    cpdef Py_ssize_t count_nonzero(self)
+    cdef void gather_nonzero_to(self, Py_ssize_t* out)

@@ -661,3 +661,32 @@ cdef class Char256Column_SoA(BaseColumn):
 
     def __len__(self):
         return self.length
+
+
+    cdef Char256Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
+        cdef char* old_data = self.data_c
+        cdef char* new_data = <char*>malloc(self.capacity * 256)
+        if not new_data: raise MemoryError()
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                memcpy(new_data + (i * 256), old_data + (indices[i] * 256), 256)
+        if inplace:
+            free(self.data_c)
+            self.data_c = new_data
+            self.length = n
+            return self
+        else:
+            new_col = Char256Column_SoA(self.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+
+    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        if rem_len > 0:
+            memmove(self.data_c + (row_idx * 256),
+                    self.data_c + ((row_idx + 1) * 256),
+                    rem_len * 256)
+        self.length -= 1

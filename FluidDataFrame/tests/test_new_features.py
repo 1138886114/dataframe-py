@@ -1,0 +1,523 @@
+import sys
+sys.path.insert(0, '.')
+
+from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.intcolumn import IntColumn
+from fluidframe.core.doublecolumn import DoubleColumn
+from fluidframe.core.char256column import Char256Column_SoA
+
+passed = 0
+failed = 0
+
+def check(name, cond):
+    global passed, failed
+    if cond:
+        passed += 1
+    else:
+        failed += 1
+        print(f'  FAIL: {name}')
+
+# ============================================================
+#  __setitem__
+# ============================================================
+def test_setitem_list():
+    print('--- test_setitem_list ---')
+    df = FastDataFrame({'a': int, 'b': float})
+    df.append_row(a=1, b=1.0)
+    df.append_row(a=2, b=2.0)
+    df['c'] = [10, 20]
+    check('cols', set(df.columns.keys()) == {'a', 'b', 'c'})
+    check('c[0]', df['c'][0] == 10)
+    check('c[1]', df['c'][1] == 20)
+
+def test_setitem_scalar_int():
+    print('--- test_setitem_scalar_int ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df.append_row(a=2)
+    df['b'] = 99
+    check('b[0]', df['b'][0] == 99)
+    check('b[1]', df['b'][1] == 99)
+
+def test_setitem_scalar_float():
+    print('--- test_setitem_scalar_float ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df['b'] = 3.14
+    check('b[0]', df['b'][0] == 3.14)
+
+def test_setitem_column_obj():
+    print('--- test_setitem_column_obj ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    col = IntColumn(1)
+    col.append(42)
+    df['b'] = col
+    check('b[0]', df['b'][0] == 42)
+
+def test_setitem_length_mismatch():
+    print('--- test_setitem_length_mismatch ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    ok = False
+    try:
+        df['b'] = [1, 2, 3]
+    except ValueError:
+        ok = True
+    check('raises ValueError', ok)
+
+# ============================================================
+#  insert_column
+# ============================================================
+def test_insert_column_at_pos():
+    print('--- test_insert_column_at_pos ---')
+    df = FastDataFrame({'a': int, 'c': int})
+    df.append_row(a=1, c=3)
+    df.insert_column('b', [2], pos=1)
+    check('order', list(df.columns.keys()) == ['a', 'b', 'c'])
+    check('b[0]', df['b'][0] == 2)
+
+def test_insert_column_end():
+    print('--- test_insert_column_end ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df.insert_column('b', [10])
+    check('order', list(df.columns.keys()) == ['a', 'b'])
+    check('b[0]', df['b'][0] == 10)
+
+# ============================================================
+#  insert_row
+# ============================================================
+def test_insert_row_beginning():
+    print('--- test_insert_row_beginning ---')
+    df = FastDataFrame({'a': int, 'b': float})
+    df.append_row(a=2, b=2.0)
+    df.append_row(a=3, b=3.0)
+    df.insert_row(0, a=1, b=1.0)
+    check('length', df.df_length == 3)
+    check('a[0]', df['a'][0] == 1)
+    check('a[1]', df['a'][1] == 2)
+    check('a[2]', df['a'][2] == 3)
+
+def test_insert_row_middle():
+    print('--- test_insert_row_middle ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df.append_row(a=3)
+    df.insert_row(1, a=2)
+    check('a[0]', df['a'][0] == 1)
+    check('a[1]', df['a'][1] == 2)
+    check('a[2]', df['a'][2] == 3)
+
+def test_insert_row_end():
+    print('--- test_insert_row_end ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df.insert_row(1, a=2)
+    check('a[1]', df['a'][1] == 2)
+    check('length', df.df_length == 2)
+
+# ============================================================
+#  duplicate_column
+# ============================================================
+def test_duplicate_column():
+    print('--- test_duplicate_column ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=10)
+    df.duplicate_column('a', 'a_copy')
+    check('cols', 'a_copy' in df.columns)
+    check('val', df['a_copy'][0] == 10)
+
+def test_duplicate_column_auto_name():
+    print('--- test_duplicate_column_auto_name ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=10)
+    df.duplicate_column('a')
+    check('auto name', 'a_dup' in df.columns)
+
+# ============================================================
+#  duplicate_rows
+# ============================================================
+def test_duplicate_rows():
+    print('--- test_duplicate_rows ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df.append_row(a=2)
+    dup = df.duplicate_rows([0, 0, 1])
+    check('length', dup.df_length == 3)
+    check('val', [dup['a'][i] for i in range(3)] == [1, 1, 2])
+
+def test_duplicate_rows_all():
+    print('--- test_duplicate_rows_all ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    dup = df.duplicate_rows()
+    check('is copy', dup['a'][0] == 1)
+
+# ============================================================
+#  T (transpose)
+# ============================================================
+def test_transpose():
+    print('--- test_transpose ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=3)
+    df.append_row(a=2, b=4)
+    t = df.T
+    check('rows', t.df_length == 2)
+    check('cols', len(t.columns) == 2)
+    check('t[a][0]', t['a'][0] == 1.0)
+    check('t[a][1]', t['a'][1] == 3.0)
+    check('t[b][0]', t['b'][0] == 2.0)
+    check('t[b][1]', t['b'][1] == 4.0)
+
+# ============================================================
+#  reindex
+# ============================================================
+def test_reindex():
+    print('--- test_reindex ---')
+    df = FastDataFrame({'a': int, 'b': float})
+    df.append_row(a=10, b=1.0)
+    df.append_row(a=20, b=2.0)
+    df.append_row(a=30, b=3.0)
+    ri = df.reindex([0, 2])
+    check('length', ri.df_length == 2)
+    check('a[0]', ri['a'][0] == 10)
+    check('a[1]', ri['a'][1] == 30)
+
+# ============================================================
+#  duplicated / drop_duplicates
+# ============================================================
+def test_duplicated():
+    print('--- test_duplicated ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=10)
+    df.append_row(a=1, b=20)
+    df.append_row(a=2, b=10)
+    dup = df.duplicated()
+    check('dup[0]', dup[0] == 0)
+    check('dup[1]', dup[1] == 0)
+    check('dup[2]', dup[2] == 0)
+
+def test_duplicated_with_dupes():
+    print('--- test_duplicated_with_dupes ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df.append_row(a=1)
+    df.append_row(a=2)
+    dup = df.duplicated()
+    check('dup[0]', dup[0] == 0)
+    check('dup[1]', dup[1] == 1)
+    check('dup[2]', dup[2] == 0)
+
+def test_drop_duplicates():
+    print('--- test_drop_duplicates ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df.append_row(a=1)
+    df.append_row(a=2)
+    result = df.drop_duplicates()
+    check('length', result.df_length == 2)
+    check('val', [result['a'][i] for i in range(2)] == [1, 2])
+
+def test_drop_duplicates_subset():
+    print('--- test_drop_duplicates_subset ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=10)
+    df.append_row(a=1, b=20)
+    df.append_row(a=2, b=10)
+    result = df.drop_duplicates(subset=['a'])
+    check('length', result.df_length == 2)
+
+# ============================================================
+#  merge
+# ============================================================
+def test_merge_inner():
+    print('--- test_merge_inner ---')
+    left = FastDataFrame({'key': int, 'val_l': int})
+    left.append_row(key=1, val_l=10)
+    left.append_row(key=2, val_l=20)
+    left.append_row(key=3, val_l=30)
+    right = FastDataFrame({'key': int, 'val_r': int})
+    right.append_row(key=2, val_r=200)
+    right.append_row(key=3, val_r=300)
+    right.append_row(key=4, val_r=400)
+    result = left.merge(right, on='key', how='inner')
+    check('length', result.df_length == 2)
+    check('cols', set(result.columns.keys()) == {'key', 'val_l', 'val_r'})
+
+def test_merge_left():
+    print('--- test_merge_left ---')
+    left = FastDataFrame({'key': int, 'val_l': int})
+    left.append_row(key=1, val_l=10)
+    left.append_row(key=2, val_l=20)
+    right = FastDataFrame({'key': int, 'val_r': int})
+    right.append_row(key=2, val_r=200)
+    result = left.merge(right, on='key', how='left')
+    check('length', result.df_length == 2)
+
+def test_merge_outer():
+    print('--- test_merge_outer ---')
+    left = FastDataFrame({'key': int, 'val_l': int})
+    left.append_row(key=1, val_l=10)
+    left.append_row(key=2, val_l=20)
+    right = FastDataFrame({'key': int, 'val_r': int})
+    right.append_row(key=2, val_r=200)
+    right.append_row(key=3, val_r=300)
+    result = left.merge(right, on='key', how='outer')
+    check('length', result.df_length == 3)
+
+# ============================================================
+#  sample
+# ============================================================
+def test_sample_n():
+    print('--- test_sample_n ---')
+    df = FastDataFrame.arange(100)
+    s = df.sample(n=10, seed=42)
+    check('length', s.df_length == 10)
+
+def test_sample_frac():
+    print('--- test_sample_frac ---')
+    df = FastDataFrame.arange(100)
+    s = df.sample(frac=0.1, seed=42)
+    check('length', s.df_length == 10)
+
+def test_sample_replace():
+    print('--- test_sample_replace ---')
+    df = FastDataFrame.arange(5)
+    s = df.sample(n=10, replace=True, seed=42)
+    check('length', s.df_length == 10)
+
+# ============================================================
+#  nsmallest / nlargest
+# ============================================================
+def test_nsmallest():
+    print('--- test_nsmallest ---')
+    df = FastDataFrame({'a': int})
+    for v in [5, 3, 1, 4, 2]:
+        df.append_row(a=v)
+    result = df.nsmallest(3, 'a')
+    check('length', result.df_length == 3)
+    check('val', [result['a'][i] for i in range(3)] == [1, 2, 3])
+
+def test_nlargest():
+    print('--- test_nlargest ---')
+    df = FastDataFrame({'a': int})
+    for v in [5, 3, 1, 4, 2]:
+        df.append_row(a=v)
+    result = df.nlargest(3, 'a')
+    check('length', result.df_length == 3)
+    check('val', [result['a'][i] for i in range(3)] == [5, 4, 3])
+
+# ============================================================
+#  pipe / assign
+# ============================================================
+def test_pipe():
+    print('--- test_pipe ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    result = df.pipe(lambda d: d.head(1))
+    check('length', result.df_length == 1)
+
+def test_assign():
+    print('--- test_assign ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df.append_row(a=2)
+    result = df.assign(b=[10, 20])
+    check('cols', 'b' in result.columns)
+    check('b[0]', result['b'][0] == 10)
+    check('b[1]', result['b'][1] == 20)
+    check('original unchanged', 'b' not in df.columns)
+
+# ============================================================
+#  corr / cov
+# ============================================================
+def test_corr():
+    print('--- test_corr ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=2)
+    df.append_row(a=2, b=4)
+    df.append_row(a=3, b=6)
+    c = df.corr()
+    cols = list(c.columns.keys())
+    ai = cols.index('a')
+    bi = cols.index('b')
+    check('self corr', c['a'][ai] == 1.0)
+    check('perfect corr', c['a'][bi] == 1.0)
+
+def test_cov():
+    print('--- test_cov ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=2)
+    df.append_row(a=2, b=4)
+    df.append_row(a=3, b=6)
+    c = df.cov()
+    cols = list(c.columns.keys())
+    ai = cols.index('a')
+    check('self cov > 0', c['a'][ai] > 0)
+
+# ============================================================
+#  value_counts / nunique
+# ============================================================
+def test_value_counts():
+    print('--- test_value_counts ---')
+    df = FastDataFrame({'a': int})
+    for v in [1, 2, 1, 3, 1]:
+        df.append_row(a=v)
+    vc = df.value_counts('a')
+    check('length', vc.df_length == 3)
+    check('count col', 'count' in vc.columns)
+
+def test_nunique():
+    print('--- test_nunique ---')
+    df = FastDataFrame({'a': int})
+    for v in [1, 2, 1, 3, 1]:
+        df.append_row(a=v)
+    check('nunique', df.nunique('a') == 3)
+
+# ============================================================
+#  clip / where / mask
+# ============================================================
+def test_clip():
+    print('--- test_clip ---')
+    df = FastDataFrame({'a': int})
+    for v in [1, 5, 10, 15, 20]:
+        df.append_row(a=v)
+    df.clip_column('a', 5, 15)
+    check('clipped', [df['a'][i] for i in range(5)] == [5, 5, 10, 15, 15])
+
+def test_where():
+    print('--- test_where ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=1)
+    df.append_row(a=2, b=0)
+    df.append_row(a=3, b=1)
+    result = df.where_column('a', 'b', 0)
+    check('where', [result[i] for i in range(3)] == [1, 0, 3])
+
+def test_mask():
+    print('--- test_mask ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=1)
+    df.append_row(a=2, b=0)
+    df.append_row(a=3, b=1)
+    result = df.mask_column('a', 'b', 0)
+    check('mask', [result[i] for i in range(3)] == [0, 2, 0])
+
+# ============================================================
+#  sort convenience aliases
+# ============================================================
+def test_sort_values_by():
+    print('--- test_sort_values_by ---')
+    df = FastDataFrame({'a': int})
+    for v in [3, 1, 2]:
+        df.append_row(a=v)
+    result = df.sort_values_by('a')
+    check('sorted', [result['a'][i] for i in range(3)] == [1, 2, 3])
+
+def test_sort_values_inplace():
+    print('--- test_sort_values_inplace ---')
+    df = FastDataFrame({'a': int})
+    for v in [3, 1, 2]:
+        df.append_row(a=v)
+    df.sort_values_inplace('a')
+    check('sorted', [df['a'][i] for i in range(3)] == [1, 2, 3])
+
+# ============================================================
+#  info / memory_usage
+# ============================================================
+def test_info():
+    print('--- test_info ---')
+    df = FastDataFrame({'a': int, 'b': float})
+    df.append_row(a=1, b=1.0)
+    info = df.info()
+    check('has rows', '1 rows' in info)
+    check('has cols', '2 columns' in info)
+
+def test_memory_usage():
+    print('--- test_memory_usage ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    mu = df.memory_usage()
+    check('positive', mu > 0)
+
+# ============================================================
+#  apply
+# ============================================================
+def test_apply_columns():
+    print('--- test_apply_columns ---')
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df.append_row(a=2)
+    result = df.apply(lambda col: col)
+    check('length', result.df_length == 2)
+
+def test_apply_index():
+    print('--- test_apply_index ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=10)
+    result = df.apply(lambda row: row['a'] + row['b'], axis='index')
+    check('sum', result[0] == 11)
+
+# ============================================================
+#  select_dtypes
+# ============================================================
+def test_select_dtypes():
+    print('--- test_select_dtypes ---')
+    df = FastDataFrame({'a': int, 'b': float, 'c': int})
+    df.append_row(a=1, b=1.0, c=3)
+    result = df.select_dtypes(include_types=['int'])
+    check('cols', set(result.columns.keys()) == {'a', 'c'})
+
+def run_all():
+    test_setitem_list()
+    test_setitem_scalar_int()
+    test_setitem_scalar_float()
+    test_setitem_column_obj()
+    test_setitem_length_mismatch()
+    test_insert_column_at_pos()
+    test_insert_column_end()
+    test_insert_row_beginning()
+    test_insert_row_middle()
+    test_insert_row_end()
+    test_duplicate_column()
+    test_duplicate_column_auto_name()
+    test_duplicate_rows()
+    test_duplicate_rows_all()
+    test_transpose()
+    test_reindex()
+    test_duplicated()
+    test_duplicated_with_dupes()
+    test_drop_duplicates()
+    test_drop_duplicates_subset()
+    test_merge_inner()
+    test_merge_left()
+    test_merge_outer()
+    test_sample_n()
+    test_sample_frac()
+    test_sample_replace()
+    test_nsmallest()
+    test_nlargest()
+    test_pipe()
+    test_assign()
+    test_corr()
+    test_cov()
+    test_value_counts()
+    test_nunique()
+    test_clip()
+    test_where()
+    test_mask()
+    test_sort_values_by()
+    test_sort_values_inplace()
+    test_info()
+    test_memory_usage()
+    test_apply_columns()
+    test_apply_index()
+    test_select_dtypes()
+    print()
+    print(f'Results: {passed} passed, {failed} failed')
+    if failed > 0:
+        sys.exit(1)
+
+if __name__ == '__main__':
+    run_all()

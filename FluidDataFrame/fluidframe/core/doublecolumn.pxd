@@ -6,6 +6,9 @@ from libc.math cimport sqrt, fabs, NAN
 from fluidframe.core._base cimport BaseColumn
 from fluidframe.core.intcolumn cimport IntColumn
 
+cdef double _c_corr(double* a, double* b, Py_ssize_t n) noexcept nogil
+cdef double _c_cov(double* a, double* b, Py_ssize_t n) noexcept nogil
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -21,3 +24,12 @@ cdef class DoubleColumn(BaseColumn):
     cdef Py_ssize_t _count_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
     cdef double _var_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
     cdef double _std_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
+    cdef DoubleColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
+    cpdef DoubleColumn clip(self, double lower, double upper, bint inplace=*)
+    cpdef DoubleColumn where(self, IntColumn cond, double other, bint inplace=*)
+    cpdef DoubleColumn mask(self, IntColumn cond, double other, bint inplace=*)
+    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len)
+    cdef void to_double_buffer(self, double* out, Py_ssize_t n)
+    cdef double corr_with(self, double* other, Py_ssize_t n)
+    cdef double cov_with(self, double* other, Py_ssize_t n)
+    cdef DoubleColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, double sentinel)

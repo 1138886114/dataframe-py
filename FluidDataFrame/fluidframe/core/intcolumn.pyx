@@ -621,3 +621,113 @@ cdef class IntColumn(BaseColumn):
 
     def __len__(self):
         return self.length
+
+
+    cdef IntColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
+        cdef int* old_data = self.data_c
+        cdef int* new_data = <int*>malloc(self.capacity * sizeof(int))
+        if not new_data: raise MemoryError()
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                new_data[i] = old_data[indices[i]]
+        if inplace:
+            free(self.data_c)
+            self.data_c = new_data
+            self.length = n
+            return self
+        else:
+            new_col = IntColumn(self.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+
+    cpdef IntColumn clip(self, double lower, double upper, bint inplace=False):
+        cdef IntColumn col = self if inplace else self.copy()
+        cdef Py_ssize_t i
+        cdef int lo = <int>lower
+        cdef int hi = <int>upper
+        for i in range(col.length):
+            if col.data_c[i] < lo:
+                col.data_c[i] = lo
+            elif col.data_c[i] > hi:
+                col.data_c[i] = hi
+        return col
+
+
+    cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=False):
+        cdef Py_ssize_t n = self.length
+        cdef IntColumn col
+        if inplace:
+            col = self
+        else:
+            col = IntColumn(self.capacity)
+            col.length = n
+            memcpy(col.data_c, self.data_c, n * sizeof(int))
+        cdef Py_ssize_t i
+        for i in range(n):
+            if not cond.data_c[i]:
+                col.data_c[i] = other
+        return col
+
+    cpdef IntColumn mask(self, IntColumn cond, int other, bint inplace=False):
+        cdef Py_ssize_t n = self.length
+        cdef IntColumn col
+        if inplace:
+            col = self
+        else:
+            col = IntColumn(self.capacity)
+            col.length = n
+            memcpy(col.data_c, self.data_c, n * sizeof(int))
+        cdef Py_ssize_t i
+        for i in range(n):
+            if cond.data_c[i]:
+                col.data_c[i] = other
+        return col
+
+
+    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        if rem_len > 0:
+            memmove(self.data_c + row_idx,
+                    self.data_c + row_idx + 1,
+                    rem_len * sizeof(int))
+        self.length -= 1
+
+
+    cdef void to_double_buffer(self, double* out, Py_ssize_t n):
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                out[i] = <double>self.data_c[i]
+
+
+    cdef IntColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, int sentinel):
+        cdef IntColumn new_col = IntColumn(n)
+        new_col.length = n
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                if indices[i] >= 0:
+                    new_col.data_c[i] = self.data_c[indices[i]]
+                else:
+                    new_col.data_c[i] = sentinel
+        return new_col
+
+
+    cpdef Py_ssize_t count_nonzero(self):
+        cdef Py_ssize_t count = 0
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            if self.data_c[i] != 0:
+                count += 1
+        return count
+
+    cdef void gather_nonzero_to(self, Py_ssize_t* out):
+        cdef Py_ssize_t j = 0
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            if self.data_c[i] == 0:
+                out[j] = i
+                j += 1

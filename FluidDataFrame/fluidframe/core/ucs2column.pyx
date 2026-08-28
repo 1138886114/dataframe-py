@@ -477,3 +477,56 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     def __len__(self):
         return self.length
+
+
+    cdef UCS2Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
+        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
+        if not new_offsets or not new_chars: raise MemoryError()
+        new_offsets[0] = 0
+        cdef Py_ssize_t current_char_len = 0
+        cdef Py_ssize_t i, idx, start, end, str_len
+        with nogil:
+            for i in range(n):
+                idx = indices[i]
+                start = self.offsets_c[idx]
+                end = self.offsets_c[idx + 1]
+                str_len = end - start
+                if str_len > 0:
+                    memcpy(new_chars + current_char_len, self.chars_c + start, str_len * sizeof(Py_UCS2))
+                current_char_len += str_len
+                new_offsets[i + 1] = current_char_len
+        if inplace:
+            free(self.offsets_c)
+            free(self.chars_c)
+            self.offsets_c = new_offsets
+            self.chars_c = new_chars
+            self.char_length = current_char_len
+            self.length = n
+            return self
+        else:
+            new_col = UCS2Column_SoA(self.capacity)
+            free(new_col.offsets_c)
+            free(new_col.chars_c)
+            new_col.offsets_c = new_offsets
+            new_col.chars_c = new_chars
+            new_col.char_length = current_char_len
+            new_col.char_capacity = self.char_capacity
+            new_col.length = n
+            return new_col
+
+
+    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        cdef Py_ssize_t start_offset = self.offsets_c[row_idx]
+        cdef Py_ssize_t end_offset = self.offsets_c[row_idx + 1]
+        cdef Py_ssize_t char_len = end_offset - start_offset
+        cdef Py_ssize_t rem_chars = self.char_length - end_offset
+        if rem_chars > 0:
+            memmove(self.chars_c + start_offset,
+                    self.chars_c + end_offset,
+                    rem_chars * sizeof(Py_UCS2))
+        self.char_length -= char_len
+        cdef Py_ssize_t i
+        for i in range(row_idx, self.length):
+            self.offsets_c[i] = self.offsets_c[i + 1] - char_len
+        self.length -= 1

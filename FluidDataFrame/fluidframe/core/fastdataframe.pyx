@@ -4,14 +4,14 @@
 # cython: cdivision=True
 
 cimport cython
-from libc.string cimport memcpy, memmove, strncmp
+from libc.string cimport memcpy, memmove, strncmp, memset
 from libc.stdlib cimport free
 from libc.math cimport NAN
 from cpython.unicode cimport Py_UCS2
 
 from fluidframe.core._base cimport BaseColumn, NumericType, DataType, aligned_malloc
 from fluidframe.core.intcolumn cimport IntColumn
-from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core.doublecolumn cimport DoubleColumn, _c_corr, _c_cov
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.timestampcolumn cimport TimestampColumn
@@ -113,143 +113,17 @@ cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indic
 @cython.wraparound(False)
 cdef class FastDataFrame:
 
-    cdef IntColumn _reorder_int_column(self, IntColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef int* old_data = col.data_c
-        cdef int* new_data = <int*>malloc(col.capacity * sizeof(int))
-        if not new_data: raise MemoryError()
-
-        cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                new_data[i] = old_data[indices[i]]
-
-        if inplace:
-            free(col.data_c)
-            col.data_c = new_data
-            return col
-        else:
-            new_col = IntColumn(col.capacity)
-            free(new_col.data_c)
-            new_col.data_c = new_data
-            new_col.length = n
-            return new_col
-
-    cdef DoubleColumn _reorder_double_column(self, DoubleColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef double* old_data = col.data_c
-        cdef double* new_data = <double*>malloc(col.capacity * sizeof(double))
-        if not new_data: raise MemoryError()
-
-        cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                new_data[i] = old_data[indices[i]]
-
-        if inplace:
-            free(col.data_c)
-            col.data_c = new_data
-            return col
-        else:
-            new_col = DoubleColumn(col.capacity)
-            free(new_col.data_c)
-            new_col.data_c = new_data
-            new_col.length = n
-            return new_col
-
-    cdef Char256Column_SoA _reorder_char256_column(self, Char256Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef char* old_data = col.data_c
-        cdef char* new_data = <char*>malloc(col.capacity * 256)
-        if not new_data: raise MemoryError()
-
-        cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                memcpy(new_data + (i * 256), old_data + (indices[i] * 256), 256)
-
-        if inplace:
-            free(col.data_c)
-            col.data_c = new_data
-            return col
-        else:
-            new_col = Char256Column_SoA(col.capacity)
-            free(new_col.data_c)
-            new_col.data_c = new_data
-            new_col.length = n
-            return new_col
-
-    cdef UCS2Column_SoA _reorder_ucs2_column(self, UCS2Column_SoA col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
-        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(col.char_capacity * sizeof(Py_UCS2))
-        if not new_offsets or not new_chars: raise MemoryError()
-
-        new_offsets[0] = 0
-        cdef Py_ssize_t current_char_len = 0
-        cdef Py_ssize_t i, idx, start, end, str_len
-        cdef UCS2Column_SoA new_col
-
-        with nogil:
-            for i in range(n):
-                idx = indices[i]
-                start = col.offsets_c[idx]
-                end = col.offsets_c[idx + 1]
-                str_len = end - start
-
-                if str_len > 0:
-                    memcpy(new_chars + current_char_len, col.chars_c + start, str_len * sizeof(Py_UCS2))
-
-                current_char_len += str_len
-                new_offsets[i + 1] = current_char_len
-
-        if inplace:
-            free(col.offsets_c)
-            free(col.chars_c)
-            col.offsets_c = new_offsets
-            col.chars_c = new_chars
-            col.char_length = current_char_len
-            col.length = n
-            return col
-        else:
-            new_col = UCS2Column_SoA(col.capacity)
-            free(new_col.offsets_c)
-            free(new_col.chars_c)
-            new_col.offsets_c = new_offsets
-            new_col.chars_c = new_chars
-            new_col.char_length = current_char_len
-            new_col.char_capacity = col.char_capacity
-            new_col.length = n
-            return new_col
-
-    cdef TimestampColumn _reorder_timestamp_column(self, TimestampColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
-        cdef long long* old_data = col.data_c
-        cdef long long* new_data = <long long*>aligned_malloc(n * sizeof(long long))
-        if not new_data: raise MemoryError()
-
-        cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                new_data[i] = old_data[indices[i]]
-
-        if inplace:
-            free(col.data_c)
-            col.data_c = new_data
-            return col
-        else:
-            new_col = TimestampColumn(col.capacity)
-            free(new_col.data_c)
-            new_col.data_c = new_data
-            new_col.length = n
-            return new_col
-
     cdef BaseColumn _reorder_column(self, BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
         if col.dtype == TYPE_INT:
-            return self._reorder_int_column(<IntColumn>col, indices, n, inplace)
+            return (<IntColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_DOUBLE:
-            return self._reorder_double_column(<DoubleColumn>col, indices, n, inplace)
+            return (<DoubleColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_CHAR256:
-            return self._reorder_char256_column(<Char256Column_SoA>col, indices, n, inplace)
+            return (<Char256Column_SoA>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_UCS2:
-            return self._reorder_ucs2_column(<UCS2Column_SoA>col, indices, n, inplace)
+            return (<UCS2Column_SoA>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_TIMESTAMP:
-            return self._reorder_timestamp_column(<TimestampColumn>col, indices, n, inplace)
+            return (<TimestampColumn>col).take_by_indices(indices, n, inplace)
         raise TypeError(f"Unsupported column dtype: {col.dtype}")
 
     cdef str _type_name(self, BaseColumn col):
@@ -260,83 +134,24 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_TIMESTAMP: return 'timestamp'
         return 'unknown'
 
-    cdef DoubleColumn _diff_double(self, DoubleColumn col, int periods):
-        cdef Py_ssize_t n = col.length
-        cdef DoubleColumn new_col = DoubleColumn(col.capacity)
-        new_col.length = n
-
-        cdef double* old_data = col.data_c
-        cdef double* new_data = new_col.data_c
-        cdef Py_ssize_t i
-
-        with nogil:
-            for i in range(periods):
-                new_data[i] = NAN
-            for i in range(periods, n):
-                new_data[i] = old_data[i] - old_data[i - periods]
-        return new_col
-
-    cdef IntColumn _diff_int(self, IntColumn col, int periods):
-        cdef Py_ssize_t n = col.length
-        cdef IntColumn new_col = IntColumn(col.capacity)
-        new_col.length = n
-
-        cdef int* old_data = col.data_c
-        cdef int* new_data = new_col.data_c
-        cdef Py_ssize_t i
-
-        with nogil:
-            for i in range(periods):
-                new_data[i] = 0
-            for i in range(periods, n):
-                new_data[i] = old_data[i] - old_data[i - periods]
-
-        return new_col
+    cdef BaseColumn _diff_column(self, BaseColumn col, int periods):
+        if col.dtype == TYPE_INT:
+            return (<IntColumn>col).diff(periods)
+        elif col.dtype == TYPE_DOUBLE:
+            return (<DoubleColumn>col).diff(periods)
+        raise TypeError(f"diff not supported for column type {self._type_name(col)}")
 
     cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx, Py_ssize_t rem_len):
         if col.dtype == TYPE_INT:
-            if rem_len > 0:
-                memmove((<IntColumn>col).data_c + row_idx,
-                        (<IntColumn>col).data_c + row_idx + 1,
-                        rem_len * sizeof(int))
-            (<IntColumn>col).length -= 1
+            (<IntColumn>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_DOUBLE:
-            if rem_len > 0:
-                memmove((<DoubleColumn>col).data_c + row_idx,
-                        (<DoubleColumn>col).data_c + row_idx + 1,
-                        rem_len * sizeof(double))
-            (<DoubleColumn>col).length -= 1
+            (<DoubleColumn>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_CHAR256:
-            if rem_len > 0:
-                memmove((<Char256Column_SoA>col).data_c + (row_idx * 256),
-                        (<Char256Column_SoA>col).data_c + ((row_idx + 1) * 256),
-                        rem_len * 256)
-            (<Char256Column_SoA>col).length -= 1
+            (<Char256Column_SoA>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_UCS2:
-            self._drop_row_ucs2(<UCS2Column_SoA>col, row_idx, rem_len)
+            (<UCS2Column_SoA>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_TIMESTAMP:
-            if rem_len > 0:
-                memmove((<TimestampColumn>col).data_c + row_idx,
-                        (<TimestampColumn>col).data_c + row_idx + 1,
-                        rem_len * sizeof(long long))
-            (<TimestampColumn>col).length -= 1
-
-    cdef void _drop_row_ucs2(self, UCS2Column_SoA col, Py_ssize_t row_idx, Py_ssize_t rem_len):
-        cdef Py_ssize_t start_offset = col.offsets_c[row_idx]
-        cdef Py_ssize_t end_offset = col.offsets_c[row_idx + 1]
-        cdef Py_ssize_t char_len = end_offset - start_offset
-
-        cdef Py_ssize_t rem_chars = col.char_length - end_offset
-        if rem_chars > 0:
-            memmove(col.chars_c + start_offset,
-                    col.chars_c + end_offset,
-                    rem_chars * sizeof(Py_UCS2))
-        col.char_length -= char_len
-
-        cdef Py_ssize_t i
-        for i in range(row_idx, col.length):
-            col.offsets_c[i] = col.offsets_c[i + 1] - char_len
-        col.length -= 1
+            (<TimestampColumn>col).drop_row(row_idx, rem_len)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -608,10 +423,8 @@ cdef class FastDataFrame:
         if periods < 0:
             raise ValueError("periods must be >= 0")
 
-        if col.dtype == TYPE_DOUBLE:
-            return self._diff_double(<DoubleColumn>col, periods)
-        elif col.dtype == TYPE_INT:
-            return self._diff_int(<IntColumn>col, periods)
+        if col.dtype == TYPE_DOUBLE or col.dtype == TYPE_INT:
+            return self._diff_column(col, periods)
         else:
             raise TypeError(f"diff is only supported for numeric columns, got {type(col)}")
 
@@ -1220,4 +1033,775 @@ cdef class FastDataFrame:
             for j in range(num_cols):
                 row.append(col_objs[j][i])
             result.append(row)
+        return result
+
+    # ==========================================
+    #  New pandas-like API methods
+    # ==========================================
+
+    cdef BaseColumn _column_from_list(self, str name, list values):
+        cdef Py_ssize_t n = len(values)
+        cdef Py_ssize_t i
+        cdef IntColumn int_col
+        cdef DoubleColumn dbl_col
+        cdef Char256Column_SoA c256_col
+        cdef UCS2Column_SoA ucs2_col
+        if n == 0:
+            return IntColumn(0)
+
+        cdef object sample = None
+        for i in range(n):
+            if values[i] is not None:
+                sample = values[i]
+                break
+
+        if sample is None:
+            dbl_col = DoubleColumn(n)
+            dbl_col.length = n
+            for i in range(n):
+                dbl_col.data_c[i] = NAN
+            return dbl_col
+
+        if isinstance(sample, int):
+            int_col = IntColumn(n)
+            int_col.length = n
+            for i in range(n):
+                int_col.data_c[i] = <int>(values[i] if values[i] is not None else 0)
+            return int_col
+        elif isinstance(sample, float):
+            dbl_col = DoubleColumn(n)
+            dbl_col.length = n
+            for i in range(n):
+                if values[i] is not None:
+                    dbl_col.data_c[i] = <double>values[i]
+                else:
+                    dbl_col.data_c[i] = NAN
+            return dbl_col
+        elif isinstance(sample, str):
+            try:
+                (<str>sample).encode('ascii')
+                c256_col = Char256Column_SoA(n)
+                for i in range(n):
+                    c256_col.append(<str>(values[i] if values[i] is not None else ''))
+                return c256_col
+            except UnicodeEncodeError:
+                ucs2_col = UCS2Column_SoA(n)
+                for i in range(n):
+                    ucs2_col.append(<str>(values[i] if values[i] is not None else ''))
+                return ucs2_col
+        raise TypeError(f"Unsupported type: {type(sample)}")
+
+    cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos):
+        cdef Py_ssize_t rem, col_len
+        cdef Py_ssize_t start_offset, new_offsets_len, i
+        cdef UCS2Column_SoA ucs2_col
+        cdef Py_ssize_t* new_offsets
+        cdef IntColumn ic
+        cdef DoubleColumn dc
+        cdef Char256Column_SoA cc
+        cdef TimestampColumn tc
+        if col.dtype == TYPE_INT:
+            ic = <IntColumn>col
+            col_len = ic.length
+            rem = col_len - pos
+            if col_len >= ic.capacity:
+                ic._reserve(ic.capacity * 2)
+            if rem > 0:
+                memmove(ic.data_c + pos + 1,
+                        ic.data_c + pos,
+                        rem * sizeof(int))
+            ic.length = col_len + 1
+        elif col.dtype == TYPE_DOUBLE:
+            dc = <DoubleColumn>col
+            col_len = dc.length
+            rem = col_len - pos
+            if col_len >= dc.capacity:
+                dc._reserve(dc.capacity * 2)
+            if rem > 0:
+                memmove(dc.data_c + pos + 1,
+                        dc.data_c + pos,
+                        rem * sizeof(double))
+            dc.length = col_len + 1
+        elif col.dtype == TYPE_CHAR256:
+            cc = <Char256Column_SoA>col
+            col_len = cc.length
+            rem = col_len - pos
+            if col_len >= cc.capacity:
+                cc._reserve(cc.capacity * 2)
+            if rem > 0:
+                memmove(cc.data_c + ((pos + 1) * 256),
+                        cc.data_c + (pos * 256),
+                        rem * 256)
+            cc.length = col_len + 1
+        elif col.dtype == TYPE_UCS2:
+            ucs2_col = <UCS2Column_SoA>col
+            col_len = ucs2_col.length
+            if col_len >= ucs2_col.capacity:
+                ucs2_col._reserve_rows(ucs2_col.capacity * 2)
+            start_offset = ucs2_col.offsets_c[pos]
+            new_offsets_len = col_len + 2
+            new_offsets = <Py_ssize_t*>aligned_malloc(new_offsets_len * sizeof(Py_ssize_t))
+            if not new_offsets: raise MemoryError()
+            memcpy(new_offsets, ucs2_col.offsets_c, (pos + 1) * sizeof(Py_ssize_t))
+            new_offsets[pos + 1] = start_offset
+            for i in range(pos + 1, col_len + 1):
+                new_offsets[i + 1] = ucs2_col.offsets_c[i + 1]
+            free(ucs2_col.offsets_c)
+            ucs2_col.offsets_c = new_offsets
+            ucs2_col.length = col_len + 1
+        elif col.dtype == TYPE_TIMESTAMP:
+            tc = <TimestampColumn>col
+            col_len = tc.length
+            rem = col_len - pos
+            if col_len >= tc.capacity:
+                tc._reserve(tc.capacity * 2)
+            if rem > 0:
+                memmove(tc.data_c + pos + 1,
+                        tc.data_c + pos,
+                        rem * sizeof(long long))
+            tc.length = col_len + 1
+
+    cdef double _get_col_value_as_double(self, BaseColumn col, Py_ssize_t i):
+        if col.dtype == TYPE_INT:
+            return <double>(<IntColumn>col).data_c[i]
+        elif col.dtype == TYPE_DOUBLE:
+            return (<DoubleColumn>col).data_c[i]
+        return 0.0
+
+    cdef void _col_to_double_buffer(self, BaseColumn col, double* out, Py_ssize_t n):
+        if col.dtype == TYPE_INT:
+            (<IntColumn>col).to_double_buffer(out, n)
+        elif col.dtype == TYPE_DOUBLE:
+            (<DoubleColumn>col).to_double_buffer(out, n)
+
+
+    def __setitem__(self, str name, object value):
+        cdef Py_ssize_t i
+        cdef IntColumn int_col
+        cdef DoubleColumn dbl_col
+
+        if isinstance(value, BaseColumn):
+            if self.df_length > 0 and value.length != self.df_length:
+                raise ValueError(f"Column length {value.length} != df_length {self.df_length}")
+            self.columns[name] = value
+            if self.df_length == 0 and value.length > 0:
+                self.df_length = value.length
+                if self.index is None or self.index.length == 0:
+                    self.index = RangeIndex(0, self.df_length)
+        elif isinstance(value, list):
+            if self.df_length > 0 and len(value) != self.df_length:
+                raise ValueError(f"List length {len(value)} != df_length {self.df_length}")
+            self.columns[name] = self._column_from_list(name, value)
+            if self.df_length == 0 and len(value) > 0:
+                self.df_length = len(value)
+                if self.index is None or self.index.length == 0:
+                    self.index = RangeIndex(0, self.df_length)
+        elif isinstance(value, (int, float)):
+            if self.df_length == 0:
+                raise ValueError("Cannot fill scalar into empty DataFrame")
+            if isinstance(value, int):
+                int_col = IntColumn(self.df_length)
+                int_col.length = self.df_length
+                for i in range(self.df_length):
+                    int_col.data_c[i] = <int>value
+                self.columns[name] = int_col
+            else:
+                dbl_col = DoubleColumn(self.df_length)
+                dbl_col.length = self.df_length
+                for i in range(self.df_length):
+                    dbl_col.data_c[i] = <double>value
+                self.columns[name] = dbl_col
+        else:
+            raise TypeError(f"Cannot set column from {type(value)}")
+
+    def __setitem_with_colname__(self, str col_name, object value):
+        self[col_name] = value
+
+
+    def insert_column(self, str col_name, object col_data, Py_ssize_t pos=-1):
+        cdef BaseColumn col
+        if isinstance(col_data, BaseColumn):
+            col = col_data
+        elif isinstance(col_data, list):
+            col = self._column_from_list(col_name, col_data)
+        else:
+            raise TypeError(f"Cannot create column from {type(col_data)}")
+
+        if self.df_length == 0 and col.length > 0:
+            self.df_length = col.length
+
+        cdef list names = list(self.columns.keys())
+        cdef Py_ssize_t n = len(names)
+
+        if pos < 0 or pos >= n:
+            self.columns[col_name] = col
+        else:
+            new_cols = {}
+            for i in range(n):
+                if i == pos:
+                    new_cols[col_name] = col
+                new_cols[names[i]] = self.columns[names[i]]
+            self.columns = new_cols
+
+    def insert_row(self, Py_ssize_t pos, **kwargs):
+        if pos < 0 or pos > self.df_length:
+            raise IndexError(f"Position {pos} out of range [0, {self.df_length}]")
+
+        for col_name in self.columns:
+            if col_name not in kwargs:
+                raise ValueError(f"Missing value for column '{col_name}'")
+
+        cdef Py_ssize_t orig_len = self.df_length
+        try:
+            for col_name, col_obj in self.columns.items():
+                val = kwargs[col_name]
+                self._shift_right(col_obj, pos)
+                if col_obj.dtype == TYPE_INT:
+                    (<IntColumn>col_obj).data_c[pos] = <int>val
+                elif col_obj.dtype == TYPE_DOUBLE:
+                    (<DoubleColumn>col_obj).data_c[pos] = <double>val
+                elif col_obj.dtype == TYPE_CHAR256:
+                    bval = (<str>val).encode('utf-8')[:255] if isinstance(val, str) else str(val).encode('utf-8')[:255]
+                    memset((<Char256Column_SoA>col_obj).data_c + (pos * 256), 0, 256)
+                    memcpy((<Char256Column_SoA>col_obj).data_c + (pos * 256), <char*>bval, len(bval))
+                elif col_obj.dtype == TYPE_TIMESTAMP:
+                    (<TimestampColumn>col_obj).data_c[pos] = <long long>val
+            self.df_length += 1
+            if self.index is not None:
+                if self.index.index_type == INDEX_RANGE:
+                    self.index.length = self.df_length
+                elif self.index.index_type == INDEX_INT:
+                    self.index.length = self.df_length
+        except Exception:
+            self.df_length = orig_len
+            raise
+
+
+    def duplicate_column(self, str src_name, str new_name=None):
+        if src_name not in self.columns:
+            raise KeyError(f"Column '{src_name}' not found")
+        if new_name is None:
+            new_name = src_name + "_dup"
+        self.columns[new_name] = self.columns[src_name].copy()
+
+    def duplicate_rows(self, list indices=None):
+        if indices is None:
+            return self.copy()
+        cdef Py_ssize_t n = len(indices)
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        if not idx_c: raise MemoryError()
+        cdef Py_ssize_t i
+        for i in range(n):
+            idx_c[i] = indices[i]
+        cdef FastDataFrame result = self._take(idx_c, n)
+        free(idx_c)
+        return result
+
+
+    @property
+    def T(self):
+        cdef Py_ssize_t rows = self.df_length
+        cdef Py_ssize_t cols = len(self.columns)
+        if rows == 0 or cols == 0:
+            return FastDataFrame()
+
+        cdef list col_names = list(self.columns.keys())
+        cdef FastDataFrame result = FastDataFrame()
+        result.df_length = cols
+        result.index = RangeIndex(0, cols)
+
+        cdef Py_ssize_t i, j
+        for j in range(cols):
+            new_col = DoubleColumn(rows)
+            new_col.length = rows
+            for i in range(rows):
+                new_col.data_c[i] = self._get_col_value_as_double(self.columns[col_names[i]], j)
+            result.columns[col_names[j]] = new_col
+        return result
+
+
+    def reindex(self, list new_index):
+        cdef Py_ssize_t new_len = len(new_index)
+        cdef dict old_pos = {}
+        cdef Py_ssize_t i, old_idx
+        if self.index is not None and self.index.length > 0:
+            old_vals = self.index.values()
+            for i in range(len(old_vals)):
+                old_pos[old_vals[i]] = i
+
+        cdef FastDataFrame result = FastDataFrame()
+        result.df_length = new_len
+        result.index = RangeIndex(0, new_len)
+
+        for col_name, col_obj in self.columns.items():
+            new_col_list = []
+            for i in range(new_len):
+                if new_index[i] in old_pos:
+                    old_idx = old_pos[new_index[i]]
+                    new_col_list.append(col_obj[old_idx])
+                else:
+                    new_col_list.append(None if col_obj.dtype == TYPE_CHAR256 or col_obj.dtype == TYPE_UCS2 else (NAN if col_obj.dtype == TYPE_DOUBLE else 0))
+            result.columns[col_name] = self._column_from_list(col_name, new_col_list)
+        return result
+
+    def duplicated(self, list subset=None, str keep='first'):
+        cdef Py_ssize_t n = self.df_length
+        cdef IntColumn result = IntColumn(n)
+        result.length = n
+        if n == 0:
+            return result
+
+        if subset is None:
+            subset = list(self.columns.keys())
+
+        cdef dict seen = {}
+        cdef Py_ssize_t i
+        cdef tuple row_key
+
+        if keep == 'first':
+            for i in range(n):
+                row_key = tuple(self.columns[c][i] for c in subset)
+                if row_key in seen:
+                    result.data_c[i] = 1
+                else:
+                    seen[row_key] = i
+                    result.data_c[i] = 0
+        elif keep == 'last':
+            for i in range(n):
+                row_key = tuple(self.columns[c][i] for c in subset)
+                if row_key in seen:
+                    result.data_c[seen[row_key]] = 1
+                seen[row_key] = i
+            for i in range(n):
+                row_key = tuple(self.columns[c][i] for c in subset)
+                if seen[row_key] == i:
+                    result.data_c[i] = 0
+        else:
+            for i in range(n):
+                result.data_c[i] = 0
+        return result
+
+    def drop_duplicates(self, list subset=None, str keep='first', bint inplace=False):
+        cdef IntColumn mask = self.duplicated(subset, keep)
+        cdef Py_ssize_t n = self.df_length
+        cdef Py_ssize_t keep_count = n - mask.count_nonzero()
+
+        if keep_count == n:
+            return self if inplace else self.copy()
+
+        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
+        if not keep_idx: raise MemoryError()
+        mask.gather_nonzero_to(keep_idx)
+
+        cdef FastDataFrame result = self._take(keep_idx, keep_count)
+        free(keep_idx)
+        if inplace:
+            self.columns = result.columns
+            self.df_length = result.df_length
+            self.index = result.index
+            return self
+        return result
+
+
+    def merge(self, FastDataFrame other, str on=None, str how='inner'):
+        if on is not None:
+            if on not in self.columns:
+                raise KeyError(f"Column '{on}' not found in left DataFrame")
+            if on not in other.columns:
+                raise KeyError(f"Column '{on}' not found in right DataFrame")
+        else:
+            common = set(self.columns.keys()) & set(other.columns.keys())
+            if not common:
+                raise ValueError("No common columns to merge on")
+            on = sorted(common)[0]
+
+        cdef dict left_map = {}
+        cdef dict right_map = {}
+        cdef Py_ssize_t i, j
+
+        for i in range(self.df_length):
+            key = self.columns[on][i]
+            if key not in left_map:
+                left_map[key] = []
+            left_map[key].append(i)
+
+        for j in range(other.df_length):
+            key = other.columns[on][j]
+            if key not in right_map:
+                right_map[key] = []
+            right_map[key].append(j)
+
+        cdef list left_indices = []
+        cdef list right_indices = []
+
+        if how == 'inner':
+            for key in left_map:
+                if key in right_map:
+                    for li in left_map[key]:
+                        for ri in right_map[key]:
+                            left_indices.append(li)
+                            right_indices.append(ri)
+        elif how == 'left':
+            for key in left_map:
+                rights = right_map.get(key, [])
+                if not rights:
+                    for li in left_map[key]:
+                        left_indices.append(li)
+                        right_indices.append(-1)
+                else:
+                    for li in left_map[key]:
+                        for ri in rights:
+                            left_indices.append(li)
+                            right_indices.append(ri)
+        elif how == 'right':
+            for key in right_map:
+                lefts = left_map.get(key, [])
+                if not lefts:
+                    for ri in right_map[key]:
+                        left_indices.append(-1)
+                        right_indices.append(ri)
+                else:
+                    for li in lefts:
+                        for ri in right_map[key]:
+                            left_indices.append(li)
+                            right_indices.append(ri)
+        elif how == 'outer':
+            all_keys = set(left_map.keys()) | set(right_map.keys())
+            for key in all_keys:
+                lefts = left_map.get(key, [])
+                rights = right_map.get(key, [])
+                if not lefts:
+                    for ri in rights:
+                        left_indices.append(-1)
+                        right_indices.append(ri)
+                elif not rights:
+                    for li in lefts:
+                        left_indices.append(li)
+                        right_indices.append(-1)
+                else:
+                    for li in lefts:
+                        for ri in rights:
+                            left_indices.append(li)
+                            right_indices.append(ri)
+
+        cdef Py_ssize_t result_len = len(left_indices)
+        cdef FastDataFrame result = FastDataFrame()
+        result.df_length = result_len
+        result.index = RangeIndex(0, result_len)
+
+        cdef list left_col_names = [n for n in self.columns.keys() if n != on]
+        cdef list right_col_names = [n for n in other.columns.keys() if n != on]
+
+        cdef Py_ssize_t* left_idx_c = <Py_ssize_t*>malloc(result_len * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* right_idx_c = <Py_ssize_t*>malloc(result_len * sizeof(Py_ssize_t))
+        if not left_idx_c or not right_idx_c:
+            free(left_idx_c)
+            free(right_idx_c)
+            raise MemoryError()
+        for i in range(result_len):
+            left_idx_c[i] = left_indices[i]
+            right_idx_c[i] = right_indices[i]
+
+        cdef BaseColumn src_col, new_col
+        for cn in [on] + left_col_names:
+            src_col = self.columns[cn]
+            if src_col.dtype == TYPE_INT:
+                result.columns[cn] = (<IntColumn>src_col).gather_with_sentinel(left_idx_c, result_len, 0)
+            elif src_col.dtype == TYPE_DOUBLE:
+                result.columns[cn] = (<DoubleColumn>src_col).gather_with_sentinel(left_idx_c, result_len, NAN)
+            else:
+                result.columns[cn] = src_col.copy()
+
+        for cn in right_col_names:
+            src_col = other.columns[cn]
+            if cn in result.columns:
+                out_name = cn + '_y'
+            else:
+                out_name = cn
+            if src_col.dtype == TYPE_INT:
+                result.columns[out_name] = (<IntColumn>src_col).gather_with_sentinel(right_idx_c, result_len, 0)
+            elif src_col.dtype == TYPE_DOUBLE:
+                result.columns[out_name] = (<DoubleColumn>src_col).gather_with_sentinel(right_idx_c, result_len, NAN)
+            else:
+                result.columns[out_name] = src_col.copy()
+
+        free(left_idx_c)
+        free(right_idx_c)
+
+        if on in result.columns and on not in left_col_names:
+            pass
+        return result
+
+
+    def sample(self, Py_ssize_t n=0, double frac=0.0, bint replace=False, int seed=-1):
+        import random as _random
+        if seed >= 0:
+            _random.seed(seed)
+        cdef Py_ssize_t total = self.df_length
+        if total == 0:
+            return FastDataFrame()
+
+        cdef Py_ssize_t sample_size
+        if frac > 0:
+            sample_size = <Py_ssize_t>(total * frac)
+            if sample_size == 0: sample_size = 1
+        elif n > 0:
+            sample_size = n
+        else:
+            sample_size = 1
+
+        if not replace and sample_size > total:
+            raise ValueError(f"Sample size {sample_size} > population {total}")
+
+        cdef list indices
+        if replace:
+            indices = [_random.randint(0, total - 1) for _ in range(sample_size)]
+        else:
+            indices = _random.sample(range(total), sample_size)
+
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(sample_size * sizeof(Py_ssize_t))
+        if not idx_c: raise MemoryError()
+        cdef Py_ssize_t i
+        for i in range(sample_size):
+            idx_c[i] = indices[i]
+        cdef FastDataFrame result = self._take(idx_c, sample_size)
+        free(idx_c)
+        return result
+
+
+    def nsmallest(self, Py_ssize_t n, str col_name):
+        cdef FastDataFrame sorted_df = self.sort_values(col_name, reverse=False)
+        return sorted_df.head(n)
+
+    def nlargest(self, Py_ssize_t n, str col_name):
+        cdef FastDataFrame sorted_df = self.sort_values(col_name, reverse=True)
+        return sorted_df.head(n)
+
+
+    def pipe(self, object func, *args, **kwargs):
+        return func(self, *args, **kwargs)
+
+    def assign(self, **kwargs):
+        cdef FastDataFrame result = self.copy()
+        for name, value in kwargs.items():
+            result[name] = value
+        return result
+
+
+    def corr(self):
+        cdef list num_cols = []
+        for name, col in self.columns.items():
+            if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+                num_cols.append(name)
+
+        cdef Py_ssize_t n_cols = len(num_cols)
+        cdef Py_ssize_t n_rows = self.df_length
+        if n_cols == 0 or n_rows == 0:
+            return FastDataFrame()
+
+        cdef double** data = <double**>malloc(n_cols * sizeof(double*))
+        if not data: raise MemoryError()
+        cdef Py_ssize_t i, j, k
+        try:
+            for i in range(n_cols):
+                data[i] = <double*>malloc(n_rows * sizeof(double))
+                if not data[i]:
+                    for k in range(i): free(data[k])
+                    free(data)
+                    raise MemoryError()
+                self._col_to_double_buffer(self.columns[num_cols[i]], data[i], n_rows)
+
+            result = FastDataFrame()
+            result.df_length = n_cols
+            result.index = RangeIndex(0, n_cols)
+            for i in range(n_cols):
+                dbl_col = DoubleColumn(n_cols)
+                dbl_col.length = n_cols
+                result.columns[num_cols[i]] = dbl_col
+
+            for i in range(n_cols):
+                for j in range(n_cols):
+                    if i == j:
+                        (<DoubleColumn>result.columns[num_cols[i]]).data_c[j] = 1.0
+                    else:
+                        (<DoubleColumn>result.columns[num_cols[i]]).data_c[j] = _c_corr(data[i], data[j], n_rows)
+            return result
+        finally:
+            for i in range(n_cols):
+                free(data[i])
+            free(data)
+
+    def cov(self):
+        cdef list num_cols = []
+        for name, col in self.columns.items():
+            if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+                num_cols.append(name)
+
+        cdef Py_ssize_t n_cols = len(num_cols)
+        cdef Py_ssize_t n_rows = self.df_length
+        if n_cols == 0 or n_rows == 0:
+            return FastDataFrame()
+
+        cdef double** data = <double**>malloc(n_cols * sizeof(double*))
+        if not data: raise MemoryError()
+        cdef Py_ssize_t i, j, k
+        try:
+            for i in range(n_cols):
+                data[i] = <double*>malloc(n_rows * sizeof(double))
+                if not data[i]:
+                    for k in range(i): free(data[k])
+                    free(data)
+                    raise MemoryError()
+                self._col_to_double_buffer(self.columns[num_cols[i]], data[i], n_rows)
+
+            result = FastDataFrame()
+            result.df_length = n_cols
+            result.index = RangeIndex(0, n_cols)
+            for i in range(n_cols):
+                dbl_col = DoubleColumn(n_cols)
+                dbl_col.length = n_cols
+                result.columns[num_cols[i]] = dbl_col
+
+            for i in range(n_cols):
+                for j in range(n_cols):
+                    (<DoubleColumn>result.columns[num_cols[i]]).data_c[j] = _c_cov(data[i], data[j], n_rows)
+            return result
+        finally:
+            for i in range(n_cols):
+                free(data[i])
+            free(data)
+
+
+    def value_counts(self, str col_name):
+        if col_name not in self.columns:
+            raise KeyError(f"Column '{col_name}' not found")
+        cdef BaseColumn col = self.columns[col_name]
+        cdef dict counts = {}
+        cdef Py_ssize_t i
+        for i in range(self.df_length):
+            val = col[i]
+            counts[val] = counts.get(val, 0) + 1
+        sorted_items = sorted(counts.items(), key=lambda x: -x[1])
+        result = FastDataFrame()
+        result.df_length = len(sorted_items)
+        result.index = RangeIndex(0, len(sorted_items))
+        key_col = self._column_from_list(col_name, [k for k, v in sorted_items])
+        cnt_col = IntColumn(len(sorted_items))
+        cnt_col.length = len(sorted_items)
+        for i in range(len(sorted_items)):
+            cnt_col.data_c[i] = sorted_items[i][1]
+        result.columns[col_name] = key_col
+        result.columns['count'] = cnt_col
+        return result
+
+    def nunique(self, str col_name):
+        if col_name not in self.columns:
+            raise KeyError(f"Column '{col_name}' not found")
+        cdef set unique_vals = set()
+        cdef Py_ssize_t i
+        cdef BaseColumn col = self.columns[col_name]
+        for i in range(self.df_length):
+            unique_vals.add(col[i])
+        return len(unique_vals)
+
+
+    def clip_column(self, str col_name, double lower, double upper, bint inplace=False):
+        cdef BaseColumn col = self.columns[col_name]
+        if col.dtype == TYPE_INT:
+            new_col = (<IntColumn>col).clip(lower, upper, inplace)
+            if not inplace:
+                self.columns[col_name] = new_col
+        elif col.dtype == TYPE_DOUBLE:
+            new_col = (<DoubleColumn>col).clip(lower, upper, inplace)
+            if not inplace:
+                self.columns[col_name] = new_col
+        else:
+            raise TypeError(f"clip not supported for column type {self._type_name(col)}")
+        if inplace:
+            return self
+
+    def where_column(self, str col_name, str cond_col, object other):
+        cdef BaseColumn src = self.columns[col_name]
+        cdef BaseColumn cond = self.columns[cond_col]
+        if src.dtype == TYPE_DOUBLE and cond.dtype == TYPE_INT:
+            return (<DoubleColumn>src).where(<IntColumn>cond, <double>other)
+        elif src.dtype == TYPE_INT and cond.dtype == TYPE_INT:
+            return (<IntColumn>src).where(<IntColumn>cond, <int>other)
+        raise TypeError(f"where not supported for column type {self._type_name(src)}")
+
+    def mask_column(self, str col_name, str cond_col, object other):
+        cdef BaseColumn src = self.columns[col_name]
+        cdef BaseColumn cond = self.columns[cond_col]
+        if src.dtype == TYPE_DOUBLE and cond.dtype == TYPE_INT:
+            return (<DoubleColumn>src).mask(<IntColumn>cond, <double>other)
+        elif src.dtype == TYPE_INT and cond.dtype == TYPE_INT:
+            return (<IntColumn>src).mask(<IntColumn>cond, <int>other)
+        raise TypeError(f"mask not supported for column type {self._type_name(src)}")
+
+
+    def sort_values_by(self, str col_name, bint reverse=False):
+        return self.sort_values(col_name, reverse=reverse)
+
+    def sort_values_inplace(self, str col_name, bint reverse=False):
+        return self.sort_values(col_name, reverse=reverse, inplace=True)
+
+
+    def info(self):
+        cdef list lines = []
+        lines.append(f"FastDataFrame: {self.df_length} rows x {len(self.columns)} columns")
+        for name, col in self.columns.items():
+            lines.append(f"  {name}: {self._type_name(col)} ({col.length} values)")
+        return '\n'.join(lines)
+
+    def memory_usage(self):
+        cdef Py_ssize_t total = 0
+        for name, col in self.columns.items():
+            if col.dtype == TYPE_INT:
+                total += col.capacity * sizeof(int)
+            elif col.dtype == TYPE_DOUBLE:
+                total += col.capacity * sizeof(double)
+            elif col.dtype == TYPE_CHAR256:
+                total += col.capacity * 256
+            elif col.dtype == TYPE_TIMESTAMP:
+                total += col.capacity * sizeof(long long)
+            elif col.dtype == TYPE_UCS2:
+                total += col.capacity * sizeof(Py_UCS2) + (col.capacity + 1) * sizeof(Py_ssize_t)
+        return total
+
+
+    def apply(self, object func, str axis='columns'):
+        if axis == 'columns':
+            result = FastDataFrame()
+            result.df_length = self.df_length
+            result.index = RangeIndex(0, self.df_length)
+            for col_name, col_obj in self.columns.items():
+                new_vals = []
+                for i in range(self.df_length):
+                    new_vals.append(func(col_obj[i]))
+                result.columns[col_name] = self._column_from_list(col_name, new_vals)
+            return result
+        elif axis == 'index':
+            result_vals = []
+            for i in range(self.df_length):
+                row = {}
+                for col_name, col_obj in self.columns.items():
+                    row[col_name] = col_obj[i]
+                result_vals.append(func(row))
+            return result_vals
+        raise ValueError(f"axis must be 'columns' or 'index', got '{axis}'")
+
+
+    def select_dtypes(self, list include_types=None, list exclude_types=None):
+        cdef FastDataFrame result = FastDataFrame()
+        cdef dict dtype_map = {TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_CHAR256: 'char256',
+                               TYPE_UCS2: 'ucs2', TYPE_TIMESTAMP: 'timestamp'}
+        for name, col in self.columns.items():
+            tn = dtype_map.get(col.dtype, 'unknown')
+            if include_types is not None and tn not in include_types:
+                continue
+            if exclude_types is not None and tn in exclude_types:
+                continue
+            result.columns[name] = col
+        result.df_length = self.df_length
+        result.index = self.index
         return result

@@ -11,6 +11,41 @@ from libc.math cimport sqrt, fabs, NAN
 from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, TYPE_DOUBLE, TYPE_INT
 from fluidframe.core.intcolumn cimport IntColumn
 
+cdef double _c_corr(double* a, double* b, Py_ssize_t n) noexcept nogil:
+    if n == 0: return 0.0
+    cdef double mean_i = 0.0, mean_j = 0.0
+    cdef double cov = 0.0, std_i = 0.0, std_j = 0.0
+    cdef double xi, xj
+    cdef Py_ssize_t k
+    for k in range(n):
+        mean_i += a[k]
+        mean_j += b[k]
+    mean_i /= n
+    mean_j /= n
+    for k in range(n):
+        xi = a[k] - mean_i
+        xj = b[k] - mean_j
+        cov += xi * xj
+        std_i += xi * xi
+        std_j += xj * xj
+    if std_i > 0 and std_j > 0:
+        return cov / (std_i * std_j) ** 0.5
+    return 0.0
+
+cdef double _c_cov(double* a, double* b, Py_ssize_t n) noexcept nogil:
+    if n == 0: return 0.0
+    cdef double mean_i = 0.0, mean_j = 0.0
+    cdef double cov_val = 0.0
+    cdef Py_ssize_t k
+    for k in range(n):
+        mean_i += a[k]
+        mean_j += b[k]
+    mean_i /= n
+    mean_j /= n
+    for k in range(n):
+        cov_val += (a[k] - mean_i) * (b[k] - mean_j)
+    return cov_val / n
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -602,3 +637,101 @@ cdef class DoubleColumn(BaseColumn):
 
     def __len__(self):
         return self.length
+
+
+    cdef DoubleColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
+        cdef double* old_data = self.data_c
+        cdef double* new_data = <double*>malloc(self.capacity * sizeof(double))
+        if not new_data: raise MemoryError()
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                new_data[i] = old_data[indices[i]]
+        if inplace:
+            free(self.data_c)
+            self.data_c = new_data
+            self.length = n
+            return self
+        else:
+            new_col = DoubleColumn(self.capacity)
+            free(new_col.data_c)
+            new_col.data_c = new_data
+            new_col.length = n
+            return new_col
+
+
+    cpdef DoubleColumn clip(self, double lower, double upper, bint inplace=False):
+        cdef DoubleColumn col = self if inplace else self.copy()
+        cdef Py_ssize_t i
+        for i in range(col.length):
+            if col.data_c[i] < lower:
+                col.data_c[i] = lower
+            elif col.data_c[i] > upper:
+                col.data_c[i] = upper
+        return col
+
+
+    cpdef DoubleColumn where(self, IntColumn cond, double other, bint inplace=False):
+        cdef Py_ssize_t n = self.length
+        cdef DoubleColumn col
+        if inplace:
+            col = self
+        else:
+            col = DoubleColumn(self.capacity)
+            col.length = n
+            memcpy(col.data_c, self.data_c, n * sizeof(double))
+        cdef Py_ssize_t i
+        for i in range(n):
+            if not cond.data_c[i]:
+                col.data_c[i] = other
+        return col
+
+    cpdef DoubleColumn mask(self, IntColumn cond, double other, bint inplace=False):
+        cdef Py_ssize_t n = self.length
+        cdef DoubleColumn col
+        if inplace:
+            col = self
+        else:
+            col = DoubleColumn(self.capacity)
+            col.length = n
+            memcpy(col.data_c, self.data_c, n * sizeof(double))
+        cdef Py_ssize_t i
+        for i in range(n):
+            if cond.data_c[i]:
+                col.data_c[i] = other
+        return col
+
+
+    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        if rem_len > 0:
+            memmove(self.data_c + row_idx,
+                    self.data_c + row_idx + 1,
+                    rem_len * sizeof(double))
+        self.length -= 1
+
+
+    cdef void to_double_buffer(self, double* out, Py_ssize_t n):
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                out[i] = self.data_c[i]
+
+
+    cdef double corr_with(self, double* other, Py_ssize_t n):
+        return _c_corr(self.data_c, other, n)
+
+    cdef double cov_with(self, double* other, Py_ssize_t n):
+        return _c_cov(self.data_c, other, n)
+
+
+    cdef DoubleColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, double sentinel):
+        cdef DoubleColumn new_col = DoubleColumn(n)
+        new_col.length = n
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(n):
+                if indices[i] >= 0:
+                    new_col.data_c[i] = self.data_c[indices[i]]
+                else:
+                    new_col.data_c[i] = sentinel
+        return new_col
