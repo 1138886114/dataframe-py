@@ -4,11 +4,10 @@
 # cython: cdivision=True
 
 cimport cython
-from libc.stdlib cimport malloc, free, calloc
-from libc.string cimport memcpy
+from libc.string cimport memcpy, memset
 from libc.math cimport sqrt, fabs, NAN
 
-from fluidframe.core._base cimport BaseColumn, TYPE_INT, TYPE_DOUBLE, aligned_malloc
+from fluidframe.core._base cimport BaseColumn, TYPE_INT, TYPE_DOUBLE, aligned_malloc, os_aligned_free
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -55,7 +54,7 @@ cdef double* _to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* 
             else:
                 raise TypeError(f"Cannot perform linear algebra on non-numeric column '{name_list[j]}'")
     except Exception:
-        free(data)
+        os_aligned_free(data)
         raise
 
     out_rows[0] = rows
@@ -108,8 +107,10 @@ def dot(FastDataFrame a, FastDataFrame b):
 
         size_c = a_rows * b_cols
         if size_c == 0: size_c = 1
-        C = <double*>calloc(size_c, sizeof(double))
+
+        C = <double*>aligned_malloc(size_c * sizeof(double))
         if not C: raise MemoryError()
+        memset(C, 0, size_c * sizeof(double))
 
         with nogil:
             for i in range(a_rows):
@@ -121,9 +122,9 @@ def dot(FastDataFrame a, FastDataFrame b):
 
         return _from_contiguous(C, a_rows, b_cols)
     finally:
-        if A != NULL: free(A)
-        if B != NULL: free(B)
-        if C != NULL: free(C)
+        if A != NULL: os_aligned_free(A)
+        if B != NULL: os_aligned_free(B)
+        if C != NULL: os_aligned_free(C)
 
 
 def transpose(FastDataFrame df):
@@ -136,7 +137,7 @@ def transpose(FastDataFrame df):
         A = _to_contiguous(df, &rows, &cols)
         size = rows * cols
         if size == 0: size = 1
-        B = <double*>malloc(size * sizeof(double))
+        B = <double*>aligned_malloc(size * sizeof(double))
         if not B: raise MemoryError()
 
         with nogil:
@@ -146,8 +147,8 @@ def transpose(FastDataFrame df):
 
         return _from_contiguous(B, cols, rows)
     finally:
-        if A != NULL: free(A)
-        if B != NULL: free(B)
+        if A != NULL: os_aligned_free(A)
+        if B != NULL: os_aligned_free(B)
 
 
 def det(FastDataFrame df):
@@ -168,7 +169,7 @@ def det(FastDataFrame df):
         A = _to_contiguous(df, &rows, &cols)
         size = n * n
         if size == 0: size = 1
-        LU = <double*>malloc(size * sizeof(double))
+        LU = <double*>aligned_malloc(size * sizeof(double))
         if not LU: raise MemoryError()
 
         memcpy(LU, A, n * n * sizeof(double))
@@ -207,8 +208,8 @@ def det(FastDataFrame df):
 
         return det_val
     finally:
-        if A != NULL: free(A)
-        if LU != NULL: free(LU)
+        if A != NULL: os_aligned_free(A)
+        if LU != NULL: os_aligned_free(LU)
 
 
 def inv(FastDataFrame df):
@@ -228,7 +229,7 @@ def inv(FastDataFrame df):
         A = _to_contiguous(df, &rows, &cols)
         size_aug = n * 2 * n
         if size_aug == 0: size_aug = 1
-        aug = <double*>malloc(size_aug * sizeof(double))
+        aug = <double*>aligned_malloc(size_aug * sizeof(double))
         if not aug: raise MemoryError()
 
         with nogil:
@@ -271,7 +272,7 @@ def inv(FastDataFrame df):
 
         size_res = n * n
         if size_res == 0: size_res = 1
-        result_data = <double*>malloc(size_res * sizeof(double))
+        result_data = <double*>aligned_malloc(size_res * sizeof(double))
         if not result_data: raise MemoryError()
 
         with nogil:
@@ -281,9 +282,9 @@ def inv(FastDataFrame df):
 
         return _from_contiguous(result_data, n, n)
     finally:
-        if A != NULL: free(A)
-        if aug != NULL: free(aug)
-        if result_data != NULL: free(result_data)
+        if A != NULL: os_aligned_free(A)
+        if aug != NULL: os_aligned_free(aug)
+        if result_data != NULL: os_aligned_free(result_data)
 
 
 def solve(FastDataFrame A, FastDataFrame b):
@@ -333,4 +334,4 @@ def norm(FastDataFrame df, str ord_type="frobenius"):
                         result = val
         return result
     finally:
-        if A != NULL: free(A)
+        if A != NULL: os_aligned_free(A)
