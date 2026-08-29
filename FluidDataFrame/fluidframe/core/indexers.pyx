@@ -3,11 +3,11 @@
 # cython: wraparound=False
 
 cimport cython
-from libc.stdlib cimport malloc, free
-from fluidframe.core._base cimport aligned_malloc
+from fluidframe.core._base cimport aligned_malloc, os_aligned_free
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.index cimport IndexBase
+
 
 cdef class _ILocIndexer:
     def __cinit__(self, FastDataFrame frame):
@@ -44,7 +44,7 @@ cdef class _ILocIndexer:
                 try:
                     return self.frame._take(indices_c, 0)
                 finally:
-                    free(indices_c)
+                    os_aligned_free(indices_c)
 
             indices_c = <Py_ssize_t*>aligned_malloc(n_new * sizeof(Py_ssize_t))
             if not indices_c: raise MemoryError()
@@ -62,7 +62,8 @@ cdef class _ILocIndexer:
                 try:
                     return self.frame._take(indices_c, 0)
                 finally:
-                    free(indices_c)
+                    os_aligned_free(indices_c)
+
             indices_c = <Py_ssize_t*>aligned_malloc(n_new * sizeof(Py_ssize_t))
             if not indices_c: raise MemoryError()
 
@@ -73,7 +74,7 @@ cdef class _ILocIndexer:
                     if idx < 0 or idx >= n_orig: raise IndexError("Index out of bounds")
                     indices_c[i] = idx
             except Exception:
-                free(indices_c)
+                os_aligned_free(indices_c)
                 raise
         else:
             raise TypeError("iloc requires integer, slice, or list of integers")
@@ -83,7 +84,7 @@ cdef class _ILocIndexer:
             result = self.frame._take(indices_c, n_new)
             return result
         finally:
-            free(indices_c)
+            os_aligned_free(indices_c)
 
 
 cdef class _LocIndexer:
@@ -147,7 +148,7 @@ cdef class _LocIndexer:
         try:
             return self.frame._take(keep_idx, keep_count)
         finally:
-            free(keep_idx)
+            os_aligned_free(keep_idx)
 
     cdef FastDataFrame _apply_bool_list(self, list mask):
         cdef Py_ssize_t n_orig = self.frame.df_length
@@ -178,4 +179,4 @@ cdef class _LocIndexer:
         try:
             return self.frame._take(keep_idx, keep_count)
         finally:
-            free(keep_idx)
+            os_aligned_free(keep_idx)
