@@ -5,11 +5,11 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove, strncmp, memset
-from libc.stdlib cimport free, malloc
 from libc.math cimport NAN
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
 
-from fluidframe.core._base cimport BaseColumn, NumericType, DataType, aligned_malloc
+
+from fluidframe.core._base cimport BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn, _c_corr, _c_cov
 from fluidframe.core.char256column cimport Char256Column_SoA
@@ -19,9 +19,8 @@ from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex, 
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
 from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
 
-
 from fluidframe._schema_types import Char256, Timestamp, _parse_schema
-# from fluidframe._schema_types import TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
+
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return
@@ -182,7 +181,6 @@ cdef class FastDataFrame:
     def iloc(self):
         return _ILocIndexer(self)
 
-
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getattr__(self, name):
@@ -246,6 +244,7 @@ cdef class FastDataFrame:
         new_df.df_length = self.df_length
         for col_name, col_obj in self.columns.items():
             new_df.columns[col_name] = col_obj.copy()
+
         if self.index is not None:
             if self.index.index_type == INDEX_RANGE:
                 new_idx = RangeIndex((<RangeIndex>self.index).start,
@@ -254,14 +253,14 @@ cdef class FastDataFrame:
                 new_df.index = new_idx
             elif self.index.index_type == INDEX_INT:
                 n = self.index.length
-                idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+                idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
                 if not idx_c: raise MemoryError()
                 for i in range(n):
                     idx_c[i] = i
                 try:
                     new_df.index = self.index._take(idx_c, n)
                 finally:
-                    free(idx_c)
+                    os_aligned_free(idx_c)
             else:
                 new_df.index = self.index
         return new_df
@@ -325,7 +324,7 @@ cdef class FastDataFrame:
         if n == 0:
             return []
 
-        cdef Py_ssize_t* indices_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* indices_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
         if not indices_c:
             raise MemoryError()
 
@@ -353,7 +352,7 @@ cdef class FastDataFrame:
             with nogil:
                 _c_argsort_numeric((<TimestampColumn>col).data_c, indices_c, 0, n - 1)
         else:
-            free(indices_c)
+            os_aligned_free(indices_c)
             raise TypeError("Sorting not supported for this column type")
 
         cdef Py_ssize_t temp
@@ -364,7 +363,7 @@ cdef class FastDataFrame:
                 indices_c[n - 1 - i] = temp
 
         cdef list py_indices = [indices_c[j] for j in range(n)]
-        free(indices_c)
+        os_aligned_free(indices_c)
         return py_indices
 
 
@@ -383,7 +382,7 @@ cdef class FastDataFrame:
             return self.copy()
 
         cdef list py_indices = self.argsort_by(col_name, reverse=reverse)
-        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
         if not idx_c: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(n):
@@ -406,10 +405,9 @@ cdef class FastDataFrame:
         if not inplace and self.index is not None:
             result_df.index = self.index._take(idx_c, n)
 
-        free(idx_c)
+        os_aligned_free(idx_c)
         if not inplace:
             return result_df
-
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -427,7 +425,6 @@ cdef class FastDataFrame:
             return self._diff_column(col, periods)
         else:
             raise TypeError(f"diff is only supported for numeric columns, got {type(col)}")
-
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -450,7 +447,6 @@ cdef class FastDataFrame:
     def __repr__(self):
         return f"<FastDataFrame: {self.df_length} rows, columns: {list(self.columns.keys())}>"
 
-
     @cython.binding(False)
     def drop_col(self, str col_name):
         self.drop(col_name)
@@ -470,7 +466,7 @@ cdef class FastDataFrame:
         if n_orig == 0:
             return self if inplace else self.copy()
 
-        cdef char* drop_mask = <char*>malloc(n_orig * sizeof(char))
+        cdef char* drop_mask = <char*>aligned_malloc(n_orig * sizeof(char))
         if not drop_mask: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(n_orig):
@@ -481,7 +477,7 @@ cdef class FastDataFrame:
             idx = <Py_ssize_t>py_idx
             if idx < 0: idx += n_orig
             if idx < 0 or idx >= n_orig:
-                free(drop_mask)
+                os_aligned_free(drop_mask)
                 raise IndexError(f"Index {py_idx} out of bounds")
             drop_mask[idx] = 1
 
@@ -491,10 +487,11 @@ cdef class FastDataFrame:
                 keep_count += 1
 
         if keep_count == n_orig:
-            free(drop_mask)
+            os_aligned_free(drop_mask)
             return self if inplace else self.copy()
+
         if keep_count == 0:
-            free(drop_mask)
+            os_aligned_free(drop_mask)
             if inplace:
                 self.df_length = 0
                 for col_obj in self.columns.values(): col_obj.length = 0
@@ -502,9 +499,9 @@ cdef class FastDataFrame:
             else:
                 return FastDataFrame()
 
-        cdef Py_ssize_t* keep_idx_c = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* keep_idx_c = <Py_ssize_t*>aligned_malloc(keep_count * sizeof(Py_ssize_t))
         if not keep_idx_c:
-            free(drop_mask)
+            os_aligned_free(drop_mask)
             raise MemoryError()
 
         cdef Py_ssize_t j = 0
@@ -512,7 +509,7 @@ cdef class FastDataFrame:
             if drop_mask[i] == 0:
                 keep_idx_c[j] = i
                 j += 1
-        free(drop_mask)
+        os_aligned_free(drop_mask)
 
         cdef FastDataFrame result_df
         if inplace:
@@ -535,7 +532,7 @@ cdef class FastDataFrame:
             else:
                 result_df.index = self.index._take(keep_idx_c, keep_count)
 
-        free(keep_idx_c)
+        os_aligned_free(keep_idx_c)
         if not inplace:
             return result_df
 
@@ -652,7 +649,7 @@ cdef class FastDataFrame:
                 result.columns[col_name].length = 0
             return result
 
-        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
         if not idx_c: raise MemoryError()
         cdef Py_ssize_t i
         try:
@@ -660,7 +657,7 @@ cdef class FastDataFrame:
                 idx_c[i] = i
             return self._take(idx_c, n)
         finally:
-            free(idx_c)
+            os_aligned_free(idx_c)
 
     @cython.binding(False)
     def tail(self, Py_ssize_t n=5):
@@ -668,12 +665,12 @@ cdef class FastDataFrame:
         n = min(n, self.df_length)
         if n == 0: return FastDataFrame()
         cdef Py_ssize_t start = self.df_length - n
-        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
         if not idx_c: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(n): idx_c[i] = start + i
         cdef FastDataFrame result = self._take(idx_c, n)
-        free(idx_c)
+        os_aligned_free(idx_c)
         return result
 
     @property
@@ -779,7 +776,7 @@ cdef class FastDataFrame:
     def dropna(self):
         if self.df_length == 0: return self.copy()
         cdef Py_ssize_t n = self.df_length
-        cdef char* keep_mask = <char*>malloc(n * sizeof(char))
+        cdef char* keep_mask = <char*>aligned_malloc(n * sizeof(char))
         if not keep_mask: raise MemoryError()
         cdef Py_ssize_t i
         cdef double* d_data
@@ -801,22 +798,25 @@ cdef class FastDataFrame:
             if keep_mask[i]: keep_count += 1
 
         if keep_count == n:
-            free(keep_mask)
+            os_aligned_free(keep_mask)
             return self.copy()
         if keep_count == 0:
-            free(keep_mask)
+            os_aligned_free(keep_mask)
             return FastDataFrame()
 
-        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
-        if not keep_idx: raise MemoryError()
+        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>aligned_malloc(max(keep_count, 1) * sizeof(Py_ssize_t))
+        if not keep_idx:
+            os_aligned_free(keep_mask)
+            raise MemoryError()
+
         cdef Py_ssize_t j = 0
         for i in range(n):
             if keep_mask[i]:
                 keep_idx[j] = i
                 j += 1
-        free(keep_mask)
+        os_aligned_free(keep_mask)
         cdef FastDataFrame result = self._take(keep_idx, keep_count)
-        free(keep_idx)
+        os_aligned_free(keep_idx)
         return result
 
     @cython.binding(False)
@@ -830,9 +830,6 @@ cdef class FastDataFrame:
                 raise KeyError(f"Column '{cn}' not found")
         return FastDataFrameGroupBy(self, by_list)
 
-    # ==========================================
-    # Construction helpers
-    # ==========================================
     @staticmethod
     def from_dict(dict data, columns=None):
         cdef FastDataFrame df = FastDataFrame()
@@ -949,9 +946,6 @@ cdef class FastDataFrame:
 
         return result
 
-    # ==========================================
-    # Random namespace
-    # ==========================================
     @staticmethod
     def randn(Py_ssize_t rows, Py_ssize_t cols):
         import random as _random
@@ -1035,9 +1029,6 @@ cdef class FastDataFrame:
             result.append(row)
         return result
 
-    # ==========================================
-    #  New pandas-like API methods
-    # ==========================================
 
     cdef BaseColumn _column_from_list(self, str name, list values):
         cdef Py_ssize_t n = len(values)
@@ -1139,16 +1130,12 @@ cdef class FastDataFrame:
             if col_len >= ucs2_col.capacity:
                 ucs2_col._reserve_rows(ucs2_col.capacity * 2)
             start_offset = ucs2_col.offsets_c[pos]
-            new_offsets_len = col_len + 2
-            new_offsets = <Py_ssize_t*>aligned_malloc(new_offsets_len * sizeof(Py_ssize_t))
-            if not new_offsets: raise MemoryError()
-            memcpy(new_offsets, ucs2_col.offsets_c, (pos + 1) * sizeof(Py_ssize_t))
-            new_offsets[pos + 1] = start_offset
-            for i in range(pos + 1, col_len + 1):
-                new_offsets[i + 1] = ucs2_col.offsets_c[i + 1]
-            free(ucs2_col.offsets_c)
-            ucs2_col.offsets_c = new_offsets
+
+            for i in range(col_len, pos, -1):
+                ucs2_col.offsets_c[i + 1] = ucs2_col.offsets_c[i]
+            ucs2_col.offsets_c[pos + 1] = start_offset
             ucs2_col.length = col_len + 1
+
         elif col.dtype == TYPE_TIMESTAMP:
             tc = <TimestampColumn>col
             col_len = tc.length
@@ -1378,13 +1365,13 @@ cdef class FastDataFrame:
         if indices is None:
             return self.copy()
         cdef Py_ssize_t n = len(indices)
-        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(n * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
         if not idx_c: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(n):
             idx_c[i] = indices[i]
         cdef FastDataFrame result = self._take(idx_c, n)
-        free(idx_c)
+        os_aligned_free(idx_c)
         return result
 
 
@@ -1479,12 +1466,12 @@ cdef class FastDataFrame:
         if keep_count == n:
             return self if inplace else self.copy()
 
-        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>malloc(keep_count * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* keep_idx = <Py_ssize_t*>aligned_malloc(max(keep_count, 1) * sizeof(Py_ssize_t))
         if not keep_idx: raise MemoryError()
         mask.gather_zero_to(keep_idx)
 
         cdef FastDataFrame result = self._take(keep_idx, keep_count)
-        free(keep_idx)
+        os_aligned_free(keep_idx)
         if inplace:
             self.columns = result.columns
             self.df_length = result.df_length
@@ -1582,12 +1569,13 @@ cdef class FastDataFrame:
         cdef list left_col_names = [n for n in self.columns.keys() if n != on]
         cdef list right_col_names = [n for n in other.columns.keys() if n != on]
 
-        cdef Py_ssize_t* left_idx_c = <Py_ssize_t*>malloc(result_len * sizeof(Py_ssize_t))
-        cdef Py_ssize_t* right_idx_c = <Py_ssize_t*>malloc(result_len * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* left_idx_c = <Py_ssize_t*>aligned_malloc(max(result_len, 1) * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* right_idx_c = <Py_ssize_t*>aligned_malloc(max(result_len, 1) * sizeof(Py_ssize_t))
         if not left_idx_c or not right_idx_c:
-            free(left_idx_c)
-            free(right_idx_c)
+            if left_idx_c: os_aligned_free(left_idx_c)
+            if right_idx_c: os_aligned_free(right_idx_c)
             raise MemoryError()
+
         for i in range(result_len):
             left_idx_c[i] = left_indices[i]
             right_idx_c[i] = right_indices[i]
@@ -1615,8 +1603,8 @@ cdef class FastDataFrame:
             else:
                 result.columns[out_name] = src_col.copy()
 
-        free(left_idx_c)
-        free(right_idx_c)
+        os_aligned_free(left_idx_c)
+        os_aligned_free(right_idx_c)
 
         if on in result.columns and on not in left_col_names:
             pass
@@ -1649,13 +1637,13 @@ cdef class FastDataFrame:
         else:
             indices = _random.sample(range(total), sample_size)
 
-        cdef Py_ssize_t* idx_c = <Py_ssize_t*>malloc(sample_size * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(sample_size, 1) * sizeof(Py_ssize_t))
         if not idx_c: raise MemoryError()
         cdef Py_ssize_t i
         for i in range(sample_size):
             idx_c[i] = indices[i]
         cdef FastDataFrame result = self._take(idx_c, sample_size)
-        free(idx_c)
+        os_aligned_free(idx_c)
         return result
 
 
@@ -1689,15 +1677,17 @@ cdef class FastDataFrame:
         if n_cols == 0 or n_rows == 0:
             return FastDataFrame()
 
-        cdef double** data = <double**>malloc(n_cols * sizeof(double*))
+        cdef double** data = <double**>aligned_malloc(max(n_cols, 1) * sizeof(double*))
         if not data: raise MemoryError()
-        cdef Py_ssize_t i, j, k
+
+        cdef Py_ssize_t i, j
+        for i in range(n_cols):
+            data[i] = NULL
+
         try:
             for i in range(n_cols):
-                data[i] = <double*>malloc(n_rows * sizeof(double))
+                data[i] = <double*>aligned_malloc(max(n_rows, 1) * sizeof(double))
                 if not data[i]:
-                    for k in range(i): free(data[k])
-                    free(data)
                     raise MemoryError()
                 self._col_to_double_buffer(self.columns[num_cols[i]], data[i], n_rows)
 
@@ -1717,9 +1707,11 @@ cdef class FastDataFrame:
                         (<DoubleColumn>result.columns[num_cols[i]]).data_c[j] = _c_corr(data[i], data[j], n_rows)
             return result
         finally:
-            for i in range(n_cols):
-                free(data[i])
-            free(data)
+            if data != NULL:
+                for i in range(n_cols):
+                    if data[i] != NULL:
+                        os_aligned_free(data[i])
+                os_aligned_free(data)
 
     def cov(self):
         cdef list num_cols = []
@@ -1732,15 +1724,17 @@ cdef class FastDataFrame:
         if n_cols == 0 or n_rows == 0:
             return FastDataFrame()
 
-        cdef double** data = <double**>malloc(n_cols * sizeof(double*))
+        cdef double** data = <double**>aligned_malloc(max(n_cols, 1) * sizeof(double*))
         if not data: raise MemoryError()
-        cdef Py_ssize_t i, j, k
+
+        cdef Py_ssize_t i, j
+        for i in range(n_cols):
+            data[i] = NULL
+
         try:
             for i in range(n_cols):
-                data[i] = <double*>malloc(n_rows * sizeof(double))
+                data[i] = <double*>aligned_malloc(max(n_rows, 1) * sizeof(double))
                 if not data[i]:
-                    for k in range(i): free(data[k])
-                    free(data)
                     raise MemoryError()
                 self._col_to_double_buffer(self.columns[num_cols[i]], data[i], n_rows)
 
@@ -1757,9 +1751,11 @@ cdef class FastDataFrame:
                     (<DoubleColumn>result.columns[num_cols[i]]).data_c[j] = _c_cov(data[i], data[j], n_rows)
             return result
         finally:
-            for i in range(n_cols):
-                free(data[i])
-            free(data)
+            if data != NULL:
+                for i in range(n_cols):
+                    if data[i] != NULL:
+                        os_aligned_free(data[i])
+                os_aligned_free(data)
 
 
     def value_counts(self, str col_name):
