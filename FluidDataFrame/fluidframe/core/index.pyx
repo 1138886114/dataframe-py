@@ -4,8 +4,7 @@
 # cython: wraparound=False
 
 cimport cython
-from libc.stdlib cimport malloc, free
-from fluidframe.core._base cimport aligned_malloc
+from fluidframe.core._base cimport aligned_malloc, os_aligned_free
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.index cimport IndexBase, IntIndex, RangeIndex, MultiIndex
 from libcpp.unordered_map cimport unordered_map
@@ -119,10 +118,10 @@ cdef class MultiIndex(IndexBase):
     def __cinit__(self, list levels, list codes, list names=None):
         self.index_type = INDEX_MULTI
         self.levels = levels
-        self.codes = codes  # 这是包含多个 IntColumn 的列表
+        self.codes = codes
         self.nlevels = len(levels)
         self.names = names if names else [None] * self.nlevels
-        self.length = (<IntColumn>codes[0]).length if self.nlevels > 0 else 0
+        self.length = (<IntColumn>codes[0]).length if len(codes) > 0 else 0
 
     cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n):
         cdef list new_codes = []
@@ -152,14 +151,14 @@ cdef class MultiIndex(IndexBase):
             except ValueError:
                 raise KeyError(target[level_idx])
 
-        cdef int* c_target_codes = <int*>aligned_malloc(target_len * sizeof(int))
+        cdef int* c_target_codes = <int*>aligned_malloc(max(target_len, 1) * sizeof(int))
         if not c_target_codes: raise MemoryError()
         for level_idx in range(target_len):
             c_target_codes[level_idx] = target_codes[level_idx]
 
-        cdef int** code_ptrs = <int**>aligned_malloc(target_len * sizeof(int*))
+        cdef int** code_ptrs = <int**>aligned_malloc(max(target_len, 1) * sizeof(int*))
         if not code_ptrs:
-            free(c_target_codes)
+            os_aligned_free(c_target_codes)
             raise MemoryError()
         for level_idx in range(target_len):
             code_ptrs[level_idx] = (<IntColumn>self.codes[level_idx]).data_c
@@ -178,8 +177,8 @@ cdef class MultiIndex(IndexBase):
                 if match:
                     matches.append(i)
         finally:
-            free(c_target_codes)
-            free(code_ptrs)
+            os_aligned_free(c_target_codes)
+            os_aligned_free(code_ptrs)
 
         if not matches: raise KeyError(key)
         if len(matches) == 1: return matches[0]
