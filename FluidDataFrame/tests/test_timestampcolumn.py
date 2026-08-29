@@ -374,6 +374,118 @@ def test_edge_cases():
     r = col.add_months(12)
     check('Jan31+12m=20250131', r[0] == 20250131)
 
+def test_quarter():
+    col = TimestampColumn()
+    for d in [20240115, 20240415, 20240715, 20241015]:
+        col.append(d)
+    r = col.quarter()
+    check('quarter Q1', r[0] == 1)
+    check('quarter Q2', r[1] == 2)
+    check('quarter Q3', r[2] == 3)
+    check('quarter Q4', r[3] == 4)
+
+    col2 = TimestampColumn(); col2.append(20240331)
+    check('quarter Mar31=Q1', col2.quarter()[0] == 1)
+    col2.append(20240630)
+    check('quarter Jun30=Q2', col2.quarter()[1] == 2)
+
+def test_is_quarter_start_end():
+    col = TimestampColumn()
+    for d in [20240101, 20240401, 20240701, 20241001]:
+        col.append(d)
+    r = col.is_quarter_start()
+    check('quarter start 4 dates', r[0] == 1 and r[1] == 1 and r[2] == 1 and r[3] == 1)
+
+    col2 = TimestampColumn()
+    for d in [20240115, 20240331, 20240630, 20240930, 20241231]:
+        col2.append(d)
+    r2 = col2.is_quarter_end()
+    check('quarter end 01/15', r2[0] == 0)
+    check('quarter end 03/31', r2[1] == 1)
+    check('quarter end 06/30', r2[2] == 1)
+    check('quarter end 09/30', r2[3] == 1)
+    check('quarter end 12/31', r2[4] == 1)
+
+def test_week_of_year():
+    col = TimestampColumn()
+    col.append(20240101)  # Monday, week 1
+    col.append(20241231)  # Tuesday, week 1 of 2025
+    col.append(20230101)  # Sunday, week 52 of 2022
+    r = col.week_of_year()
+    check('week 2024-01-01', r[0] == 1)
+    check('week 2024-12-31', r[1] == 1)
+    check('week 2023-01-01', r[2] == 52)
+
+def test_day_name():
+    col = TimestampColumn()
+    col.append(20240101)  # Monday
+    col.append(20240102)  # Tuesday
+    col.append(20240103)  # Wednesday
+    col.append(20240104)  # Thursday
+    col.append(20240105)  # Friday
+    col.append(20240106)  # Saturday
+    col.append(20240107)  # Sunday
+    r = col.day_name()
+    check('day_name Mon', r[0] == 'Monday')
+    check('day_name Tue', r[1] == 'Tuesday')
+    check('day_name Wed', r[2] == 'Wednesday')
+    check('day_name Thu', r[3] == 'Thursday')
+    check('day_name Fri', r[4] == 'Friday')
+    check('day_name Sat', r[5] == 'Saturday')
+    check('day_name Sun', r[6] == 'Sunday')
+
+def test_month_name():
+    col = TimestampColumn()
+    for m in range(1, 13):
+        col.append(2024 * 10000 + m * 100 + 1)
+    r = col.month_name()
+    expected = ['January', 'February', 'March', 'April', 'May', 'June',
+                'July', 'August', 'September', 'October', 'November', 'December']
+    for i in range(12):
+        check(f'month_name {expected[i]}', r[i] == expected[i])
+
+def test_last_day_of_month():
+    col = TimestampColumn()
+    col.append(20240215)
+    col.append(20240101)
+    col.append(20230201)
+    r = col.last_day_of_month()
+    check('last_day Feb2024(leap)', r[0] == 20240229)
+    check('last_day Jan2024', r[1] == 20240131)
+    check('last_day Feb2023(non-leap)', r[2] == 20230228)
+
+def test_iso_calendar():
+    col = TimestampColumn()
+    col.append(20240101)
+    col.append(20241231)
+    r_y, r_w, r_d = col.iso_calendar()
+    check('iso_cal year', r_y[0] == 2024 and r_y[1] == 2024)
+    check('iso_cal week', r_w[0] == 1 and r_w[1] == 1)
+    check('iso_cal day Mon=1', r_d[0] == 1)
+    check('iso_cal day Tue=2', r_d[1] == 2)
+
+def test_diff_months():
+    col = TimestampColumn()
+    col.append(20240315)
+    col.append(20240101)
+    r = col.diff_months(20240101)
+    check('diff_months 2mo', r[0] == 2)
+    check('diff_months 0mo', r[1] == 0)
+
+    col2 = TimestampColumn(); col2.append(20230101)
+    r2 = col2.diff_months(20240101)
+    check('diff_months -12mo', r2[0] == -12)
+
+def test_diff_years():
+    col = TimestampColumn()
+    col.append(20260315)
+    col.append(20240315)
+    col.append(20230601)
+    r = col.diff_years(20240101)
+    check('diff_years 2yr', r[0] == 2)
+    check('diff_years 0yr (same year)', r[1] == 0)
+    check('diff_years -1yr', r[2] == -1)
+
 def run_all():
     print('=== TimestampColumn Tests ===')
     test_empty()
@@ -408,6 +520,15 @@ def run_all():
     test_is_year_start_end()
     test_diff_days()
     test_edge_cases()
+    test_quarter()
+    test_is_quarter_start_end()
+    test_week_of_year()
+    test_day_name()
+    test_month_name()
+    test_last_day_of_month()
+    test_iso_calendar()
+    test_diff_months()
+    test_diff_years()
     print(f'\nResults: {passed} passed, {failed} failed')
     if failed: sys.exit(1)
 

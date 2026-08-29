@@ -22,5 +22,7 @@ cdef class TimestampColumn(BaseColumn):
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef inline long long _parse(self, str s) noexcept
     cdef inline long long _resolve_date(self, date) except *
+    cdef inline int _week_of_year(self, int y, int m, int d) noexcept nogil
+    cdef inline int _week_of_year_impl(self, int y, int m, int d) noexcept nogil
     cdef TimestampColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len)
