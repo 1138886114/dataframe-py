@@ -59,8 +59,8 @@ cdef class UCS2Column_SoA(BaseColumn):
         self.offsets_c[0] = 0
 
     def __dealloc__(self):
-        if self.offsets_c is not NULL: free(self.offsets_c)
-        if self.chars_c is not NULL: free(self.chars_c)
+        if self.offsets_c is not NULL: os_aligned_free(self.offsets_c)
+        if self.chars_c is not NULL: os_aligned_free(self.chars_c)
 
     cdef void _reserve_rows(self, Py_ssize_t new_cap) except *:
         cdef Py_ssize_t* new_ptr
@@ -141,24 +141,35 @@ cdef class UCS2Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
-        cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t n = len(indices)
+        if n != self.length:
+            raise ValueError("Length of indices must match column length")
+
+        cdef Py_ssize_t req_char_len = 0
+        cdef Py_ssize_t i, idx
+        for i in range(n):
+            idx = <Py_ssize_t>indices[i]
+            if idx < 0: idx += self.length
+            if idx < 0 or idx >= self.length:
+                raise IndexError("Index out of bounds")
+            req_char_len += self.offsets_c[idx + 1] - self.offsets_c[idx]
+
+        cdef Py_ssize_t req_char_cap = max(req_char_len, 1024)
         cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
         if not new_offsets: raise MemoryError()
-        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
+        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(req_char_cap * sizeof(Py_UCS2))
         if not new_chars:
             os_aligned_free(new_offsets)
             raise MemoryError()
 
         new_offsets[0] = 0
         cdef Py_ssize_t current_char_len = 0
-        cdef Py_ssize_t idx, start, end, str_len
-        cdef Py_ssize_t i
+        cdef Py_ssize_t start, end, str_len
 
         try:
             for i in range(n):
                 idx = <Py_ssize_t>indices[i]
-                if idx < 0 or idx >= n:
-                    raise IndexError("Index out of bounds")
+                if idx < 0: idx += self.length
                 start = self.offsets_c[idx]
                 end = self.offsets_c[idx + 1]
                 str_len = end - start
@@ -173,15 +184,17 @@ cdef class UCS2Column_SoA(BaseColumn):
             os_aligned_free(new_chars)
             raise
 
-        free(self.offsets_c)
-        free(self.chars_c)
+        os_aligned_free(self.offsets_c)
+        os_aligned_free(self.chars_c)
         self.offsets_c = new_offsets
         self.chars_c = new_chars
         self.char_length = current_char_len
+        self.char_capacity = req_char_cap
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getitem__(self, Py_ssize_t idx):
+        if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError()
         cdef Py_ssize_t start = self.offsets_c[idx]
         cdef Py_ssize_t str_len = self.offsets_c[idx + 1] - start
@@ -293,7 +306,10 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef Py_ssize_t ci, diff, oi
 
         if new_len > old_len:
-            self._reserve_chars(self.char_capacity + (new_len - old_len))
+            diff = new_len - old_len
+            if self.char_length + diff > self.char_capacity:
+                self._reserve_chars(max(self.char_capacity * 2, self.char_length + diff + 1024))
+
             if self.char_length - (old_start + old_len) > 0:
                 memmove(self.chars_c + old_start + new_len,
                         self.chars_c + old_start + old_len,
@@ -532,17 +548,27 @@ cdef class UCS2Column_SoA(BaseColumn):
     def __len__(self):
         return self.length
 
-
     cdef UCS2Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
-        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
+        cdef Py_ssize_t req_cap = max(n, 1)
+
+        cdef Py_ssize_t req_char_len = 0
+        cdef Py_ssize_t i, idx
+        for i in range(n):
+            idx = indices[i]
+            req_char_len += self.offsets_c[idx + 1] - self.offsets_c[idx]
+
+        cdef Py_ssize_t req_char_cap = max(req_char_len, 1024)
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((req_cap + 1) * sizeof(Py_ssize_t))
+        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(req_char_cap * sizeof(Py_UCS2))
+
         if not new_offsets or not new_chars:
             if new_offsets: os_aligned_free(new_offsets)
             if new_chars: os_aligned_free(new_chars)
             raise MemoryError()
+
         new_offsets[0] = 0
         cdef Py_ssize_t current_char_len = 0
-        cdef Py_ssize_t i, idx, start, end, str_len
+        cdef Py_ssize_t start, end, str_len
         with nogil:
             for i in range(n):
                 idx = indices[i]
@@ -553,22 +579,25 @@ cdef class UCS2Column_SoA(BaseColumn):
                     memcpy(new_chars + current_char_len, self.chars_c + start, str_len * sizeof(Py_UCS2))
                 current_char_len += str_len
                 new_offsets[i + 1] = current_char_len
+
         if inplace:
-            free(self.offsets_c)
-            free(self.chars_c)
+            os_aligned_free(self.offsets_c)
+            os_aligned_free(self.chars_c)
             self.offsets_c = new_offsets
             self.chars_c = new_chars
+            self.char_capacity = req_char_cap
             self.char_length = current_char_len
+            self.capacity = req_cap
             self.length = n
             return self
         else:
-            new_col = UCS2Column_SoA(self.capacity)
-            free(new_col.offsets_c)
-            free(new_col.chars_c)
+            new_col = UCS2Column_SoA(req_cap)
+            os_aligned_free(new_col.offsets_c)
+            os_aligned_free(new_col.chars_c)
             new_col.offsets_c = new_offsets
             new_col.chars_c = new_chars
+            new_col.char_capacity = req_char_cap
             new_col.char_length = current_char_len
-            new_col.char_capacity = self.char_capacity
             new_col.length = n
             return new_col
 
