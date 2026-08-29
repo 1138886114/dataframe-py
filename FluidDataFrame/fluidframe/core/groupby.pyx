@@ -5,15 +5,16 @@
 # cython: cdivision=True
 
 cimport cython
-from libc.stdlib cimport malloc, free
 from libc.stdint cimport uint64_t
 from libc.math cimport NAN, INFINITY
 from libcpp.unordered_map cimport unordered_map
 from libcpp.vector cimport vector
 from cpython.unicode cimport Py_UCS2
 
+
 from fluidframe.core._base cimport (
-    BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
+    BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP,
+    aligned_malloc, os_aligned_free
 )
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
@@ -72,11 +73,17 @@ cdef class FastDataFrameGroupBy:
         if n == 0:
             return
         self._num_by_cols = n
-        self._by_col_data = <void**>malloc(n * sizeof(void*))
-        self._by_col_offsets = <void**>malloc(n * sizeof(void*))
-        self._by_col_types = <int*>malloc(n * sizeof(int))
+
+        self._by_col_data = <void**>aligned_malloc(max(n, 1) * sizeof(void*))
+        self._by_col_offsets = <void**>aligned_malloc(max(n, 1) * sizeof(void*))
+        self._by_col_types = <int*>aligned_malloc(max(n, 1) * sizeof(int))
+
         if not self._by_col_data or not self._by_col_offsets or not self._by_col_types:
-            raise MemoryError()
+            if self._by_col_data: os_aligned_free(self._by_col_data)
+            if self._by_col_offsets: os_aligned_free(self._by_col_offsets)
+            if self._by_col_types: os_aligned_free(self._by_col_types)
+            raise MemoryError("Failed to allocate memory for groupby columns")
+
         for idx in range(n):
             col_name = self.by_cols[idx]
             col = self.df.columns[col_name]
@@ -220,7 +227,7 @@ cdef class FastDataFrameGroupBy:
             elif func_name == 'count':
                 results.append(len(vals))
             else:
-                results.append(vals)
+                raise ValueError(f"Unsupported python aggregation function: {func_name}")
 
         cdef DoubleColumn res_col = DoubleColumn(self.num_groups)
         res_col.length = self.num_groups
@@ -252,12 +259,12 @@ cdef class FastDataFrameGroupBy:
                 res_dbl.data_c[i] = (<DoubleColumn>orig).data_c[row_idx]
             return res_dbl
         else:
-            fs = <Py_ssize_t*>malloc(self.num_groups * sizeof(Py_ssize_t))
+            fs = <Py_ssize_t*>aligned_malloc(max(self.num_groups, 1) * sizeof(Py_ssize_t))
             if not fs: raise MemoryError()
             for i in range(self.num_groups):
                 fs[i] = self.first_seen_rows[0][i]
             tmp = self.df._take(fs, self.num_groups)
-            free(fs)
+            os_aligned_free(fs)
             return tmp.columns[col_name]
 
     # ==========================================
@@ -284,9 +291,10 @@ cdef class FastDataFrameGroupBy:
         if self.hash_to_group_id is not NULL: del self.hash_to_group_id
         if self.group_rows is not NULL: del self.group_rows
         if self.first_seen_rows is not NULL: del self.first_seen_rows
-        if self._by_col_data is not NULL: free(self._by_col_data)
-        if self._by_col_offsets is not NULL: free(self._by_col_offsets)
-        if self._by_col_types is not NULL: free(self._by_col_types)
+
+        if self._by_col_data is not NULL: os_aligned_free(self._by_col_data)
+        if self._by_col_offsets is not NULL: os_aligned_free(self._by_col_offsets)
+        if self._by_col_types is not NULL: os_aligned_free(self._by_col_types)
 
     def size(self):
         return self.num_groups
@@ -296,12 +304,14 @@ cdef class FastDataFrameGroupBy:
         cdef FastDataFrame res = FastDataFrame()
         res.df_length = self.num_groups
 
-        cdef Py_ssize_t* fs_c = <Py_ssize_t*>malloc(self.num_groups * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* fs_c = <Py_ssize_t*>aligned_malloc(max(self.num_groups, 1) * sizeof(Py_ssize_t))
+        if not fs_c: raise MemoryError()
         cdef int i
         for i in range(self.num_groups):
             fs_c[i] = self.first_seen_rows[0][i]
+
         cdef FastDataFrame keys_df = self.df._take(fs_c, self.num_groups)
-        free(fs_c)
+        os_aligned_free(fs_c)
 
         cdef str col_name, func_name
         for col_name, func_name in agg_dict.items():
@@ -384,11 +394,15 @@ cdef class FastDataFrameGroupBy:
 
         for g_id in range(self.num_groups):
             sz = self.group_rows[0][g_id].size()
-            indices_c = <Py_ssize_t*>malloc(sz * sizeof(Py_ssize_t))
+
+            indices_c = <Py_ssize_t*>aligned_malloc(max(sz, 1) * sizeof(Py_ssize_t))
+            if not indices_c: raise MemoryError()
+
             for i in range(sz):
                 indices_c[i] = self.group_rows[0][g_id][i]
             sub_df = self.df._take(indices_c, sz)
-            free(indices_c)
+            os_aligned_free(indices_c)
+
             func_res = func(sub_df)
             sub_dfs.append(func_res)
 
