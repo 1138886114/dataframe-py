@@ -16,11 +16,35 @@ cdef extern from *:
     #include <time.h>
     #include <math.h>
 
-    static unsigned long long _xorshift128plus_state[2];
+    // 使用跨平台宏定义线程局部变量，防范 nogil 下的多线程数据竞争
+    #if defined(_MSC_VER) || defined(_WIN32)
+        #define THREAD_LOCAL __declspec(thread)
+    #else
+        #define THREAD_LOCAL __thread
+    #endif
+
+    // 赋予非零的默认状态，防止用户未调用 seed() 时产生全 0 死锁
+    static THREAD_LOCAL unsigned long long _xorshift128plus_state[2] = {
+        0x8a5cd789635d2dffULL,
+        0x121fd2155c472f96ULL
+    };
 
     static inline void _xorshift128plus_seed(unsigned long long seed) {
-        _xorshift128plus_state[0] = seed;
-        _xorshift128plus_state[1] = seed ^ 0x123456789ABCDEF0ULL;
+        // 使用 SplitMix64 算法处理种子，避免相近种子产生相近序列
+        unsigned long long z = (seed + 0x9e3779b97f4a7c15ULL);
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+        _xorshift128plus_state[0] = z ^ (z >> 31);
+
+        z = (seed + 0x2 * 0x9e3779b97f4a7c15ULL);
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+        _xorshift128plus_state[1] = z ^ (z >> 31);
+
+        // 确保状态绝对不全为 0
+        if (_xorshift128plus_state[0] == 0 && _xorshift128plus_state[1] == 0) {
+            _xorshift128plus_state[0] = 1ULL;
+        }
     }
 
     static inline unsigned long long _xorshift128plus_next(void) {
@@ -46,9 +70,15 @@ cdef extern from *:
         return sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265358979323846 * u2);
     }
 
-    static inline int _csv_write_field(char* dest, int pos, const char* field, int field_len, char sep) {
-        int i;
+    // 引入 dest_cap 容量参数，堵死缓冲区溢出漏洞
+    static inline size_t _csv_write_field(char* dest, size_t dest_cap, size_t pos, const char* field, size_t field_len, char sep) {
+        size_t i;
         int need_quote = 0;
+
+        if (pos + (field_len * 2) + 2 >= dest_cap) {
+            return (size_t)-1;  // 代表溢出错误
+        }
+
         for (i = 0; i < field_len; i++) {
             char c = field[i];
             if (c == sep || c == '\\n' || c == '\\r' || c == '"') {
@@ -56,6 +86,7 @@ cdef extern from *:
                 break;
             }
         }
+
         if (need_quote) {
             dest[pos++] = '"';
             for (i = 0; i < field_len; i++) {
@@ -78,7 +109,7 @@ cdef extern from *:
     void _xorshift128plus_seed(unsigned long long seed) nogil
     double _random_uniform() nogil
     double _random_gauss() nogil
-    int _csv_write_field(char* dest, int pos, const char* field, int field_len, char sep) nogil
+    size_t _csv_write_field(char* dest, size_t dest_cap, size_t pos, const char* field, size_t field_len, char sep) nogil
 
 
 from fluidframe.core._base cimport BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free
