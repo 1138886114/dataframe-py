@@ -30,3 +30,4 @@ cdef class FastDataFrameGroupBy:
     cdef object _python_agg(self, str col_name, str func_name)
     cdef object _extract_key_column(self, str col_name)
     cdef FastDataFrame _convenience_agg(self, str func_name, str col_name=*)
+    cdef IntColumn _native_idx(self, str col_name, bint find_max)

@@ -417,5 +417,69 @@ cdef class FastDataFrameGroupBy:
         return result
 
     @cython.binding(False)
+    def idxmax(self, str col_name=None):
+        cdef FastDataFrame res = FastDataFrame()
+        res.df_length = self.num_groups
+        cdef str cn
+        cdef BaseColumn c
+        if col_name is not None:
+            res.columns[col_name] = self._native_idx(col_name, True)
+        else:
+            for cn in self.df.columns:
+                if cn not in self.by_cols:
+                    c = self.df.columns[cn]
+                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
+                        res.columns[cn] = self._native_idx(cn, True)
+        for cn in self.by_cols:
+            res.columns[cn] = self._extract_key_column(cn)
+        return res
+
+    @cython.binding(False)
+    def idxmin(self, str col_name=None):
+        cdef FastDataFrame res = FastDataFrame()
+        res.df_length = self.num_groups
+        cdef str cn
+        cdef BaseColumn c
+        if col_name is not None:
+            res.columns[col_name] = self._native_idx(col_name, False)
+        else:
+            for cn in self.df.columns:
+                if cn not in self.by_cols:
+                    c = self.df.columns[cn]
+                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
+                        res.columns[cn] = self._native_idx(cn, False)
+        for cn in self.by_cols:
+            res.columns[cn] = self._extract_key_column(cn)
+        return res
+
+    cdef IntColumn _native_idx(self, str col_name, bint find_max):
+        cdef IntColumn res_col = IntColumn(self.num_groups)
+        res_col.length = self.num_groups
+        cdef BaseColumn orig_col = self.df.columns[col_name]
+        cdef int g_id
+        cdef Py_ssize_t sz, row_idx, best_row, i
+        cdef double best_val, cur_val
+        for g_id in range(self.num_groups):
+            sz = self.group_rows[0][g_id].size()
+            if sz == 0:
+                res_col.data_c[g_id] = 0
+                continue
+            best_row = self.group_rows[0][g_id][0]
+            best_val = self.df._get_col_value_as_double(orig_col, best_row)
+            for i in range(1, sz):
+                row_idx = self.group_rows[0][g_id][i]
+                cur_val = self.df._get_col_value_as_double(orig_col, row_idx)
+                if find_max:
+                    if cur_val > best_val:
+                        best_val = cur_val
+                        best_row = row_idx
+                else:
+                    if cur_val < best_val:
+                        best_val = cur_val
+                        best_row = row_idx
+            res_col.data_c[g_id] = <int>best_row
+        return res_col
+
+    @cython.binding(False)
     def __repr__(self):
         return f"<FastDataFrameGroupBy: {self.num_groups} groups, by={self.by_cols}>"

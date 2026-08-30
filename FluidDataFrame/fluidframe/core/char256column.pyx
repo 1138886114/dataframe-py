@@ -675,6 +675,26 @@ cdef class Char256Column_SoA(BaseColumn):
             res.data_c[i] = 1 if val in values else 0
         return res
 
+    def where_mask(self, IntColumn mask, object fill):
+        cdef Py_ssize_t n = self.length
+        if mask.length != n:
+            raise ValueError(f"Mask length {mask.length} != column length {n}")
+        cdef Char256Column_SoA col = Char256Column_SoA(n)
+        col.length = n
+        cdef bytes fill_bytes = str(fill).encode('ascii', errors='ignore')
+        cdef char* src
+        cdef char* dest
+        cdef Py_ssize_t i
+        for i in range(n):
+            dest = col.data_c + (i * 256)
+            if mask.data_c[i]:
+                src = self.data_c + (i * 256)
+                strncpy(dest, src, 255)
+            else:
+                strncpy(dest, fill_bytes, 255)
+            dest[255] = 0
+        return col
+
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i

@@ -4,7 +4,7 @@
 # cython: cdivision=True
 
 cimport cython
-from libc.string cimport memcpy, memmove, strncmp, memset
+from libc.string cimport memcpy, memmove, strncmp, memset, strncpy
 from libc.stdint cimport uint32_t
 from libc.time cimport time_t, time
 from libc.math cimport NAN, sqrt, log, cos
@@ -2184,6 +2184,25 @@ cdef class FastDataFrame:
         elif src.dtype == TYPE_INT and cond.dtype == TYPE_INT:
             return (<IntColumn>src).mask(<IntColumn>cond, <int>other)
         raise TypeError(f"mask not supported for column type {self._type_name(src)}")
+
+    def where_row(self, IntColumn mask, object fill=0):
+        cdef Py_ssize_t n = self.df_length
+        if mask.length != n:
+            raise ValueError(f"Mask length {mask.length} != DataFrame length {n}")
+        cdef FastDataFrame result = FastDataFrame()
+        result.df_length = n
+        result.index = self.index
+        cdef str name
+        cdef BaseColumn col
+        for name, col in self.columns.items():
+            result.columns[name] = col.where_mask(mask, fill)
+        return result
+
+    def where_index(self, IntColumn mask):
+        return self.loc[mask]
+
+    def where_all(self, IntColumn mask, object fill=0):
+        return self.where_row(mask, fill)
 
 
     def sort_values_by(self, str col_name, bint reverse=False):

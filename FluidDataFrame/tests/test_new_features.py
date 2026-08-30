@@ -582,6 +582,92 @@ def test_combined_query():
     check('combined shape', result.shape[1] == 3)
     check('combined all alice', all(result['name'][i] == 'alice' for i in range(result.shape[0])))
 
+# ============================================================
+#  where_row, where_index, where_all, groupby idxmax/idxmin
+# ============================================================
+def test_where_row_int():
+    print('--- test_where_row_int ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=10)
+    df.append_row(a=2, b=20)
+    df.append_row(a=3, b=30)
+    mask = df['a'] > 1
+    result = df.where_row(mask, fill=0)
+    check('where_row shape', result.shape == (3, 2))
+    check('where_row match', result['b'][0] == 0)
+    check('where_row keep', result['b'][1] == 20)
+    check('where_row keep2', result['b'][2] == 30)
+
+def test_where_row_float():
+    print('--- test_where_row_float ---')
+    df = FastDataFrame({'a': int, 'b': float})
+    df.append_row(a=1, b=1.5)
+    df.append_row(a=2, b=2.5)
+    mask = df['a'] > 1
+    result = df.where_row(mask, fill=-1.0)
+    check('where_row float', result['b'][0] == -1.0)
+    check('where_row float keep', result['b'][1] == 2.5)
+
+def test_where_index():
+    print('--- test_where_index ---')
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=10)
+    df.append_row(a=2, b=20)
+    df.append_row(a=3, b=30)
+    mask = df['a'] > 1
+    result = df.where_index(mask)
+    check('where_index shape', result.shape == (2, 2))
+    check('where_index val', result['a'][0] == 2)
+
+def test_where_all():
+    print('--- test_where_all ---')
+    df = FastDataFrame({'a': int, 'b': float})
+    df.append_row(a=1, b=10.0)
+    df.append_row(a=2, b=20.0)
+    df.append_row(a=3, b=30.0)
+    mask = df['a'] > 1
+    result = df.where_all(mask, fill=0)
+    check('where_all shape', result.shape == (3, 2))
+    check('where_all fill a', result['a'][0] == 0)
+    check('where_all fill b', result['b'][0] == 0.0)
+    check('where_all keep', result['a'][1] == 2)
+
+def test_groupby_idxmax():
+    print('--- test_groupby_idxmax ---')
+    df = FastDataFrame({'dept': str, 'age': int})
+    df.append_row(dept='IT', age=25)
+    df.append_row(dept='IT', age=30)
+    df.append_row(dept='HR', age=28)
+    df.append_row(dept='HR', age=35)
+    result = df.groupby('dept').idxmax('age')
+    check('idxmax shape', result.shape == (2, 2))
+    # idxmax returns row index of max value per group
+    ages = {result['dept'][i]: result['age'][i] for i in range(2)}
+    check('idxmax IT=1', ages['IT'] == 1)
+    check('idxmax HR=3', ages['HR'] == 3)
+
+def test_groupby_idxmin():
+    print('--- test_groupby_idxmin ---')
+    df = FastDataFrame({'dept': str, 'age': int})
+    df.append_row(dept='IT', age=25)
+    df.append_row(dept='IT', age=30)
+    df.append_row(dept='HR', age=28)
+    df.append_row(dept='HR', age=35)
+    result = df.groupby('dept').idxmin('age')
+    check('idxmin shape', result.shape == (2, 2))
+    ages = {result['dept'][i]: result['age'][i] for i in range(2)}
+    check('idxmin IT=0', ages['IT'] == 0)
+    check('idxmin HR=2', ages['HR'] == 2)
+
+def test_groupby_idxmax_all():
+    print('--- test_groupby_idxmax_all ---')
+    df = FastDataFrame({'dept': str, 'age': int, 'salary': float})
+    df.append_row(dept='IT', age=25, salary=50000.0)
+    df.append_row(dept='IT', age=30, salary=60000.0)
+    df.append_row(dept='HR', age=28, salary=55000.0)
+    result = df.groupby('dept').idxmax()
+    check('idxmax all cols', 'age' in result.columns and 'salary' in result.columns)
+
 def run_all():
     test_setitem_list()
     test_setitem_scalar_int()
@@ -637,6 +723,13 @@ def run_all():
     test_loc_rows_cols()
     test_loc_single_col()
     test_combined_query()
+    test_where_row_int()
+    test_where_row_float()
+    test_where_index()
+    test_where_all()
+    test_groupby_idxmax()
+    test_groupby_idxmin()
+    test_groupby_idxmax_all()
     print()
     print(f'Results: {passed} passed, {failed} failed')
     if failed > 0:

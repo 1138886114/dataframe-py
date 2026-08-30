@@ -543,6 +543,20 @@ cdef class UCS2Column_SoA(BaseColumn):
             res.data_c[i] = 1 if self[i] in values else 0
         return res
 
+    def where_mask(self, IntColumn mask, object fill):
+        cdef Py_ssize_t n = self.length
+        if mask.length != n:
+            raise ValueError(f"Mask length {mask.length} != column length {n}")
+        cdef UCS2Column_SoA col = UCS2Column_SoA(n)
+        cdef str fill_str = str(fill)
+        cdef Py_ssize_t i
+        for i in range(n):
+            if mask.data_c[i]:
+                col.append(self[i])
+            else:
+                col.append(fill_str)
+        return col
+
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i

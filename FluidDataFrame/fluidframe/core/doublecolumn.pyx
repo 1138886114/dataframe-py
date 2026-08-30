@@ -769,6 +769,18 @@ cdef class DoubleColumn(BaseColumn):
                 col.data_c[i] = other
         return col
 
+    def where_mask(self, IntColumn mask, object fill):
+        cdef Py_ssize_t n = self.length
+        if mask.length != n:
+            raise ValueError(f"Mask length {mask.length} != column length {n}")
+        cdef DoubleColumn col = DoubleColumn(self.capacity)
+        col.length = n
+        cdef double fill_val = <double>fill
+        cdef Py_ssize_t i
+        for i in range(n):
+            col.data_c[i] = self.data_c[i] if mask.data_c[i] else fill_val
+        return col
+
     cpdef DoubleColumn mask(self, IntColumn cond, double other, bint inplace=False):
         cdef Py_ssize_t n = self.length
         if cond.length != n:

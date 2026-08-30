@@ -375,6 +375,18 @@ cdef class TimestampColumn(BaseColumn):
                 res.data_c[i] = 1 if lo <= self.data_c[i] <= hi else 0
         return res
 
+    def where_mask(self, IntColumn mask, object fill):
+        cdef Py_ssize_t n = self.length
+        if mask.length != n:
+            raise ValueError(f"Mask length {mask.length} != column length {n}")
+        cdef TimestampColumn col = TimestampColumn(self.capacity)
+        col.length = n
+        cdef long long fill_val = <long long>fill
+        cdef Py_ssize_t i
+        for i in range(n):
+            col.data_c[i] = self.data_c[i] if mask.data_c[i] else fill_val
+        return col
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def add_days(self, int n):
