@@ -135,9 +135,11 @@ from fluidframe.core.doublecolumn cimport DoubleColumn, _c_corr, _c_cov
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.boolcolumn cimport BoolColumn
+from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex, INDEX_RANGE, INDEX_INT, INDEX_MULTI
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
-from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
+from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY
 
 from fluidframe._schema_types import Char256, Timestamp, _parse_schema
 
@@ -243,6 +245,10 @@ cdef class FastDataFrame:
             return (<UCS2Column_SoA>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_TIMESTAMP:
             return (<TimestampColumn>col).take_by_indices(indices, n, inplace)
+        elif col.dtype == TYPE_BOOL:
+            return (<BoolColumn>col).take_by_indices(indices, n, inplace)
+        elif col.dtype == TYPE_CATEGORY:
+            return (<CategoryColumn>col).take_by_indices(indices, n, inplace)
         raise TypeError(f"Unsupported column dtype: {col.dtype}")
 
     cdef str _type_name(self, BaseColumn col):
@@ -251,6 +257,8 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_CHAR256: return 'char256'
         elif col.dtype == TYPE_UCS2: return 'ucs2'
         elif col.dtype == TYPE_TIMESTAMP: return 'timestamp'
+        elif col.dtype == TYPE_BOOL: return 'bool'
+        elif col.dtype == TYPE_CATEGORY: return 'category'
         return 'unknown'
 
     cdef BaseColumn _diff_column(self, BaseColumn col, int periods):
@@ -271,6 +279,10 @@ cdef class FastDataFrame:
             (<UCS2Column_SoA>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_TIMESTAMP:
             (<TimestampColumn>col).drop_row(row_idx, rem_len)
+        elif col.dtype == TYPE_BOOL:
+            (<BoolColumn>col).drop_row(row_idx, rem_len)
+        elif col.dtype == TYPE_CATEGORY:
+            (<CategoryColumn>col).drop_row(row_idx, rem_len)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -292,6 +304,10 @@ cdef class FastDataFrame:
                     self.columns[col_name] = UCS2Column_SoA()
                 elif dtype == TYPE_TIMESTAMP:
                     self.columns[col_name] = TimestampColumn()
+                elif dtype == TYPE_BOOL:
+                    self.columns[col_name] = BoolColumn()
+                elif dtype == TYPE_CATEGORY:
+                    self.columns[col_name] = CategoryColumn()
 
     @property
     def loc(self):
@@ -674,6 +690,24 @@ cdef class FastDataFrame:
         os_aligned_free(keep_idx_c)
         if not inplace:
             return result_df
+
+    def drop_index(self, object labels, bint inplace=False):
+        if self.index is None:
+            raise ValueError("DataFrame has no index set")
+        cdef list drop_positions = []
+        cdef Py_ssize_t i
+        if isinstance(labels, list):
+            for label in labels:
+                try:
+                    drop_positions.append(self.index.get_loc(label))
+                except KeyError:
+                    raise KeyError(f"Label {label} not found in index")
+        else:
+            try:
+                drop_positions.append(self.index.get_loc(labels))
+            except KeyError:
+                raise KeyError(f"Label {labels} not found in index")
+        return self.drop_with_index(drop_positions, inplace=inplace)
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
@@ -1399,6 +1433,8 @@ cdef class FastDataFrame:
         cdef DoubleColumn dbl_col
         cdef Char256Column_SoA c256_col
         cdef UCS2Column_SoA ucs2_col
+        cdef BoolColumn bool_col
+        cdef CategoryColumn cat_col
         if n == 0:
             return IntColumn(0)
 
@@ -1415,7 +1451,13 @@ cdef class FastDataFrame:
                 dbl_col.data_c[i] = NAN
             return dbl_col
 
-        if isinstance(sample, int):
+        if isinstance(sample, bool):
+            bool_col = BoolColumn(n)
+            bool_col.length = n
+            for i in range(n):
+                bool_col.data_c[i] = 1 if values[i] else 0
+            return bool_col
+        elif isinstance(sample, int):
             int_col = IntColumn(n)
             int_col.length = n
             for i in range(n):
@@ -1589,6 +1631,7 @@ cdef class FastDataFrame:
         cdef Py_ssize_t i
         cdef IntColumn int_col
         cdef DoubleColumn dbl_col
+        cdef BoolColumn bool_col
 
         if isinstance(value, BaseColumn):
             if self.df_length > 0 and value.length != self.df_length:
@@ -1606,6 +1649,14 @@ cdef class FastDataFrame:
                 self.df_length = len(value)
                 if self.index is None or self.index.length == 0:
                     self.index = RangeIndex(0, self.df_length)
+        elif isinstance(value, bool):
+            if self.df_length == 0:
+                raise ValueError("Cannot fill scalar into empty DataFrame")
+            bool_col = BoolColumn(self.df_length)
+            bool_col.length = self.df_length
+            for i in range(self.df_length):
+                bool_col.data_c[i] = 1 if value else 0
+            self.columns[name] = bool_col
         elif isinstance(value, (int, float)):
             if self.df_length == 0:
                 raise ValueError("Cannot fill scalar into empty DataFrame")
@@ -2312,6 +2363,8 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_CHAR256: return 256
         elif col.dtype == TYPE_TIMESTAMP: return sizeof(long long)
         elif col.dtype == TYPE_UCS2: return 4
+        elif col.dtype == TYPE_BOOL: return 1
+        elif col.dtype == TYPE_CATEGORY: return sizeof(int)
         return 0
 
     cdef str _dtype_summary(self):

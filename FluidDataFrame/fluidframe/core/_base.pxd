@@ -11,6 +11,8 @@ cdef enum DataType:
     TYPE_CHAR256 = 3
     TYPE_UCS2 = 4
     TYPE_TIMESTAMP = 5
+    TYPE_BOOL = 6
+    TYPE_CATEGORY = 7
 
 cdef class BaseColumn:
     cdef public Py_ssize_t length

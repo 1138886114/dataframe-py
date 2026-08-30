@@ -6,6 +6,8 @@ TYPE_DOUBLE = 2
 TYPE_CHAR256 = 3
 TYPE_UCS2 = 4
 TYPE_TIMESTAMP = 5
+TYPE_BOOL = 6
+TYPE_CATEGORY = 7
 
 
 class Char256:
@@ -19,6 +21,32 @@ class Timestamp:
         pass
 
 
+class Bool:
+    """布尔类型，只能为 True/False"""
+    pass
+
+
+class Category:
+    """枚举/分类类型，内部按 int32 codes + 字符串字典存储"""
+    pass
+
+
+_STRING_TYPE_MAP = {
+    'int': TYPE_INT,
+    'float': TYPE_DOUBLE,
+    'double': TYPE_DOUBLE,
+    'char256': TYPE_CHAR256,
+    'ucs2': TYPE_UCS2,
+    'str': TYPE_UCS2,
+    'string': TYPE_UCS2,
+    'timestamp': TYPE_TIMESTAMP,
+    'bool': TYPE_BOOL,
+    'boolean': TYPE_BOOL,
+    'category': TYPE_CATEGORY,
+    'cat': TYPE_CATEGORY,
+}
+
+
 def _parse_schema(schema_dict):
     parsed = {}
     for k, v in schema_dict.items():
@@ -27,5 +55,14 @@ def _parse_schema(schema_dict):
         elif v is Char256: parsed[k] = TYPE_CHAR256
         elif v is str: parsed[k] = TYPE_UCS2
         elif v is Timestamp: parsed[k] = TYPE_TIMESTAMP
-        else: raise TypeError(f"Unsupported type: {v}")
+        elif v is Bool: parsed[k] = TYPE_BOOL
+        elif v is Category: parsed[k] = TYPE_CATEGORY
+        elif isinstance(v, str):
+            low = v.lower()
+            if low in _STRING_TYPE_MAP:
+                parsed[k] = _STRING_TYPE_MAP[low]
+            else:
+                raise TypeError(f"Unknown type string: '{v}'")
+        else:
+            raise TypeError(f"Unsupported type: {v}")
     return parsed

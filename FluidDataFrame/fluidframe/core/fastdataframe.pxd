@@ -10,6 +10,8 @@ from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.boolcolumn cimport BoolColumn
+from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.index cimport IndexBase
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil
