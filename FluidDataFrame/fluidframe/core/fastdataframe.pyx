@@ -720,6 +720,7 @@ cdef class FastDataFrame:
         cdef bytes b_field
         cdef const char* c_field
         cdef int field_len
+        cdef int buf_cap = 65536
 
         with open(filename, 'wb') as f:
             buf_pos = 0
@@ -730,7 +731,7 @@ cdef class FastDataFrame:
                 if j > 0:
                     line_buf[buf_pos] = sep_c
                     buf_pos += 1
-                buf_pos = _csv_write_field(line_buf, buf_pos, c_field, field_len, sep_c)
+                buf_pos = _csv_write_field(line_buf, buf_cap, buf_pos, c_field, field_len, sep_c)
             line_buf[buf_pos] = 10
             buf_pos += 1
             f.write(line_buf[:buf_pos])
@@ -745,7 +746,7 @@ cdef class FastDataFrame:
                     if j > 0:
                         line_buf[buf_pos] = sep_c
                         buf_pos += 1
-                    buf_pos = _csv_write_field(line_buf, buf_pos, c_field, field_len, sep_c)
+                    buf_pos = _csv_write_field(line_buf, buf_cap, buf_pos, c_field, field_len, sep_c)
                     if buf_pos > 65000:
                         f.write(line_buf[:buf_pos])
                         buf_pos = 0
