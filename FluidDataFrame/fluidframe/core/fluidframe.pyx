@@ -6,16 +6,21 @@
 cimport cython
 from libc.math cimport NAN
 
-from fluidframe.core._base cimport BaseColumn, DataType, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
+from fluidframe.core._base cimport BaseColumn, DataType, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY
 from fluidframe.core.fastdataframe cimport FastDataFrame
+from fluidframe.core.intcolumn cimport IntColumn
+from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core.timestampcolumn cimport TimestampColumn
 
-from fluidframe._schema_types import Char256, Timestamp, _parse_schema
+from fluidframe._schema_types import Char256, Timestamp, Bool, Category, _parse_schema
 
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.char256column import Char256Column_SoA
 from fluidframe.core.ucs2column import UCS2Column_SoA
 from fluidframe.core.timestampcolumn import TimestampColumn
+from fluidframe.core.boolcolumn import BoolColumn
+from fluidframe.core.categorycolumn import CategoryColumn
 from fluidframe.core.index import RangeIndex
 
 
@@ -333,3 +338,82 @@ cdef _build_merge_result(df1, df2, str left_on, str right_on, list pairs):
 
     result.df_length = n
     return result
+
+
+def to_numeric(column, errors='coerce'):
+    """Convert column to numeric values. Like pd.to_numeric.
+
+    Parameters
+    ----------
+    column : column-like
+        Input column (Char256, UCS2, or numeric).
+    errors : str, default 'coerce'
+        'raise' will throw on invalid values, 'coerce' will set them to 0.
+
+    Returns
+    -------
+    DoubleColumn with numeric values.
+    """
+    n = column.length
+    res = DoubleColumn(n)
+    res.length = n
+    for i in range(n):
+        s = str(column[i])
+        try:
+            val = float(s)
+            if val == int(val) and '.' not in s:
+                res.data_c[i] = <double>int(s)
+            else:
+                res.data_c[i] = val
+        except (ValueError, TypeError):
+            if errors == 'raise':
+                raise ValueError(f"Could not convert '{s}' to numeric")
+            res.data_c[i] = NAN
+    return res
+
+
+def to_datetime(column, str fmt='', errors='coerce'):
+    """Convert column to TimestampColumn. Like pd.to_datetime."""
+    n = column.length
+    res = TimestampColumn(n)
+    for i in range(n):
+        s = str(column[i])
+        try:
+            res.append(s)
+        except (ValueError, TypeError):
+            if errors == 'raise':
+                raise ValueError(f"Could not convert '{s}' to datetime")
+            res.append(0)
+    return res
+
+
+def to_timedelta(values, str unit='D'):
+    """Create a column of timedelta-like values (stored as int days). Like pd.to_timedelta.
+
+    Parameters
+    ----------
+    values : list or column-like
+        Input values (integers).
+    unit : str, default 'D'
+        Unit of the values: 'D' (days), 'h' (hours), 'm' (minutes), 's' (seconds).
+
+    Returns
+    -------
+    IntColumn with timedelta values converted to days.
+    """
+    n = len(values)
+    res = IntColumn(n)
+    res.length = n
+    if unit == 'D':
+        factor = 1.0
+    elif unit == 'h':
+        factor = 1.0 / 24.0
+    elif unit == 'm':
+        factor = 1.0 / 1440.0
+    elif unit == 's':
+        factor = 1.0 / 86400.0
+    else:
+        raise ValueError(f"Unsupported unit: '{unit}'")
+    for i in range(n):
+        res.data_c[i] = <int>(<double>values[i] * factor)
+    return res

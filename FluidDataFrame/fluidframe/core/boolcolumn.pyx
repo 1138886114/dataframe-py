@@ -7,8 +7,12 @@ cimport cython
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove
 from libc.math cimport NAN
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_CATEGORY
 from fluidframe.core.intcolumn cimport IntColumn
+from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core.char256column cimport Char256Column_SoA
+from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.categorycolumn cimport CategoryColumn
 
 
 cdef class BoolColumn(BaseColumn):
@@ -197,3 +201,45 @@ cdef class BoolColumn(BaseColumn):
         result = self.__eq__(other)
         if result is NotImplemented: return result
         return not result
+
+    def astype(self, object target):
+        cdef str tname
+        if isinstance(target, str):
+            tname = target.lower()
+        else:
+            tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
+        cdef Py_ssize_t i, n = self.length
+        cdef IntColumn ic
+        cdef DoubleColumn dc
+        cdef UCS2Column_SoA uc
+        cdef Char256Column_SoA cc
+        cdef CategoryColumn catc
+        if tname in ('int', 'i4'):
+            ic = IntColumn(n)
+            ic.length = n
+            for i in range(n):
+                ic.data_c[i] = <int>self.data_c[i]
+            return ic
+        elif tname in ('double', 'float'):
+            dc = DoubleColumn(n)
+            dc.length = n
+            for i in range(n):
+                dc.data_c[i] = <double>self.data_c[i]
+            return dc
+        elif tname in ('str', 'string', 'ucs2'):
+            uc = UCS2Column_SoA(n)
+            uc.length = n
+            for i in range(n):
+                uc._set_item(i, 'True' if self.data_c[i] else 'False')
+            return uc
+        elif tname in ('char256', 'ascii'):
+            cc = Char256Column_SoA(n)
+            for i in range(n):
+                cc.append('True' if self.data_c[i] else 'False')
+            return cc
+        elif tname == 'category':
+            catc = CategoryColumn(n)
+            for i in range(n):
+                catc.append('True' if self.data_c[i] else 'False')
+            return catc
+        raise TypeError(f"Cannot convert bool to '{tname}'")

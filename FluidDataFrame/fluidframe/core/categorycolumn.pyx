@@ -7,9 +7,13 @@ cimport cython
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove
 from libc.math cimport NAN
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CATEGORY
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CATEGORY, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP
 from fluidframe.core.intcolumn cimport IntColumn
+from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
+from fluidframe.core.char256column cimport Char256Column_SoA
+from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.timestampcolumn cimport TimestampColumn
 
 
 cdef class CategoryColumn(BaseColumn):
@@ -173,6 +177,64 @@ cdef class CategoryColumn(BaseColumn):
         result = self.__eq__(other)
         if result is NotImplemented: return result
         return not result
+
+    def astype(self, object target):
+        cdef str tname
+        if isinstance(target, str):
+            tname = target.lower()
+        else:
+            tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
+        cdef Py_ssize_t i, n = self.length
+        cdef str s
+        cdef IntColumn ic
+        cdef DoubleColumn dc
+        cdef UCS2Column_SoA uc
+        cdef Char256Column_SoA cc
+        cdef TimestampColumn tc
+        if tname in ('int', 'i4'):
+            ic = IntColumn(n)
+            ic.length = n
+            for i in range(n):
+                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                ic.data_c[i] = int(float(s)) if s else 0
+            return ic
+        elif tname in ('double', 'float'):
+            dc = DoubleColumn(n)
+            dc.length = n
+            for i in range(n):
+                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                dc.data_c[i] = float(s) if s else 0.0
+            return dc
+        elif tname == 'bool':
+            bc = BoolColumn(n)
+            bc.length = n
+            for i in range(n):
+                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                bc.data_c[i] = 1 if s.lower() in ('true', '1', 'yes') else 0
+            return bc
+        elif tname in ('str', 'string', 'ucs2'):
+            uc = UCS2Column_SoA(n)
+            uc.length = n
+            for i in range(n):
+                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                uc._set_item(i, s)
+            return uc
+        elif tname in ('char256', 'ascii'):
+            cc = Char256Column_SoA(n)
+            for i in range(n):
+                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                cc.append(s)
+            return cc
+        elif tname in ('timestamp', 'date', 'datetime'):
+            tc = TimestampColumn(n)
+            for i in range(n):
+                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                if s:
+                    tc.append(s)
+                else:
+                    tc.append(0)
+            return tc
+        raise TypeError(f"Cannot convert category to '{tname}'")
 
 
 cdef class _CategoryAccessor:

@@ -2427,3 +2427,25 @@ cdef class FastDataFrame:
         result.df_length = self.df_length
         result.index = self.index
         return result
+
+    def astype(self, dict dtype_dict):
+        """Batch convert column types. dtype_dict maps column names to target type strings."""
+        cdef FastDataFrame result = FastDataFrame()
+        cdef str col_name, target
+        for col_name, col_obj in self.columns.items():
+            if col_name in dtype_dict:
+                target = dtype_dict[col_name]
+                result.columns[col_name] = col_obj.astype(target)
+            else:
+                result.columns[col_name] = col_obj.copy() if hasattr(col_obj, 'copy') else col_obj
+        result.df_length = self.df_length
+        if self.index is not None:
+            if self.index.index_type == INDEX_RANGE:
+                result.index = RangeIndex((<RangeIndex>self.index).start,
+                                         self.index.length,
+                                         (<RangeIndex>self.index).step)
+            elif self.index.index_type == INDEX_INT:
+                result.index = self.index.copy()
+            else:
+                result.index = self.index.copy()
+        return result

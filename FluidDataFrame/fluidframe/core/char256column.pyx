@@ -18,8 +18,13 @@ cdef extern from "<ctype.h>" nogil:
 
 import re
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CHAR256, TYPE_INT
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CHAR256, TYPE_INT, TYPE_DOUBLE, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY
 from fluidframe.core.intcolumn cimport IntColumn
+from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core.boolcolumn cimport BoolColumn
+from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.categorycolumn cimport CategoryColumn
 
 cdef inline bint _c_str_contains(char* source, const char* target) noexcept nogil:
     return strstr(source, target) != NULL
@@ -736,3 +741,60 @@ cdef class Char256Column_SoA(BaseColumn):
                     self.data_c + ((row_idx + 1) * 256),
                     rem_len * 256)
         self.length -= 1
+
+    def astype(self, object target):
+        cdef str tname
+        if isinstance(target, str):
+            tname = target.lower()
+        else:
+            tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
+        cdef Py_ssize_t i, n = self.length
+        cdef str s
+        cdef IntColumn ic
+        cdef DoubleColumn dc
+        cdef BoolColumn bc
+        cdef UCS2Column_SoA uc
+        cdef TimestampColumn tc
+        cdef CategoryColumn catc
+        if tname in ('int', 'i4'):
+            ic = IntColumn(n)
+            ic.length = n
+            for i in range(n):
+                s = self[i]
+                ic.data_c[i] = int(float(s)) if s else 0
+            return ic
+        elif tname in ('double', 'float'):
+            dc = DoubleColumn(n)
+            dc.length = n
+            for i in range(n):
+                s = self[i]
+                dc.data_c[i] = float(s) if s else 0.0
+            return dc
+        elif tname == 'bool':
+            bc = BoolColumn(n)
+            bc.length = n
+            for i in range(n):
+                s = self[i].lower() if self[i] else ''
+                bc.data_c[i] = 1 if s in ('true', '1', 'yes') else 0
+            return bc
+        elif tname in ('ucs2', 'string'):
+            uc = UCS2Column_SoA(n)
+            uc.length = n
+            for i in range(n):
+                uc._set_item(i, self[i])
+            return uc
+        elif tname in ('timestamp', 'date', 'datetime'):
+            tc = TimestampColumn(n)
+            for i in range(n):
+                s = self[i]
+                if s:
+                    tc.append(s)
+                else:
+                    tc.append(0)
+            return tc
+        elif tname == 'category':
+            catc = CategoryColumn(n)
+            for i in range(n):
+                catc.append(self[i])
+            return catc
+        raise TypeError(f"Cannot convert char256 to '{tname}'")

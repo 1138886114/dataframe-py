@@ -6,8 +6,13 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 from libc.math cimport sqrt, fabs, NAN
-from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free
+from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free
 from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core.boolcolumn cimport BoolColumn
+from fluidframe.core.char256column cimport Char256Column_SoA
+from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.categorycolumn cimport CategoryColumn
 
 
 @cython.final
@@ -912,3 +917,52 @@ cdef class IntColumn(BaseColumn):
             if self.data_c[i] == 0:
                 out[j] = i
                 j += 1
+
+    def astype(self, object target):
+        cdef str tname
+        if isinstance(target, str):
+            tname = target.lower()
+        else:
+            tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
+        cdef Py_ssize_t i, n = self.length
+        cdef DoubleColumn dc
+        cdef BoolColumn bc
+        cdef UCS2Column_SoA uc
+        cdef Char256Column_SoA cc
+        cdef TimestampColumn tc
+        cdef CategoryColumn catc
+        if tname in ('double', 'float'):
+            dc = DoubleColumn(n)
+            dc.length = n
+            for i in range(n):
+                dc.data_c[i] = <double>self.data_c[i]
+            return dc
+        elif tname == 'bool':
+            bc = BoolColumn(n)
+            bc.length = n
+            for i in range(n):
+                bc.data_c[i] = 1 if self.data_c[i] != 0 else 0
+            return bc
+        elif tname in ('str', 'string', 'ucs2'):
+            uc = UCS2Column_SoA(n)
+            uc.length = n
+            for i in range(n):
+                uc._set_item(i, str(self.data_c[i]))
+            return uc
+        elif tname in ('char256', 'ascii'):
+            cc = Char256Column_SoA(n)
+            for i in range(n):
+                cc.append(str(self.data_c[i]))
+            return cc
+        elif tname in ('timestamp', 'date', 'datetime'):
+            tc = TimestampColumn(n)
+            tc.length = n
+            for i in range(n):
+                tc.data_c[i] = <long long>self.data_c[i]
+            return tc
+        elif tname == 'category':
+            catc = CategoryColumn(n)
+            for i in range(n):
+                catc.append(str(self.data_c[i]))
+            return catc
+        raise TypeError(f"Cannot convert int to '{tname}'")
