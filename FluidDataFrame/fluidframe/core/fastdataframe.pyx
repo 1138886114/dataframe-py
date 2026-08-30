@@ -963,22 +963,21 @@ cdef class FastDataFrame:
         return FastDataFrameGroupBy(self, by_list)
 
     @staticmethod
-    def from_dict(dict data, columns=None):
+    def from_dict(dict data, dict schema, columns=None):
+        cdef dict parsed = _parse_schema(schema) if schema else {}
         cdef FastDataFrame df = FastDataFrame()
         cdef str col_name
         cdef list values
         cdef Py_ssize_t n = 0
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, j
+        cdef int dtype
         cdef list col_names
         cdef list new_names
         cdef dict new_cols
-        cdef object sample
-        cdef IntColumn int_col
-        cdef DoubleColumn dbl_col
-        cdef Char256Column_SoA c256_col
-        cdef UCS2Column_SoA ucs2_col
 
         for col_name, values in data.items():
+            if col_name not in parsed:
+                raise ValueError(f"Column '{col_name}' not in schema")
             if n == 0:
                 n = len(values)
             if len(values) != n:
@@ -990,38 +989,205 @@ cdef class FastDataFrame:
         df.df_length = n
         df.index = RangeIndex(0, n)
 
-        for col_name, values in data.items():
-            if len(values) == 0:
-                continue
-            sample = values[0]
-            if isinstance(sample, int):
+        for col_name in data:
+            values = data[col_name]
+            dtype = parsed[col_name]
+            if dtype == TYPE_INT:
                 int_col = IntColumn(n)
                 int_col.length = n
                 for i in range(n):
                     int_col.data_c[i] = <int>values[i]
                 df.columns[col_name] = int_col
-            elif isinstance(sample, float):
+            elif dtype == TYPE_DOUBLE:
                 dbl_col = DoubleColumn(n)
                 dbl_col.length = n
                 for i in range(n):
                     dbl_col.data_c[i] = <double>values[i]
                 df.columns[col_name] = dbl_col
-            elif isinstance(sample, str):
-                try:
-                    sample.encode('ascii')
-                    c256_col = Char256Column_SoA(n)
-                    c256_col.length = n
-                    for i in range(n):
-                        c256_col.append(<str>values[i])
-                    df.columns[col_name] = c256_col
-                except UnicodeEncodeError:
-                    ucs2_col = UCS2Column_SoA(n)
-                    ucs2_col.length = n
-                    for i in range(n):
-                        ucs2_col.append(<str>values[i])
-                    df.columns[col_name] = ucs2_col
-            else:
-                raise TypeError(f"Unsupported type for column '{col_name}': {type(sample)}")
+            elif dtype == TYPE_CHAR256:
+                c256_col = Char256Column_SoA(n)
+                c256_col.length = n
+                for i in range(n):
+                    c256_col.append(<str>values[i])
+                df.columns[col_name] = c256_col
+            elif dtype == TYPE_UCS2:
+                ucs2_col = UCS2Column_SoA(n)
+                ucs2_col.length = n
+                for i in range(n):
+                    ucs2_col.append(<str>values[i])
+                df.columns[col_name] = ucs2_col
+            elif dtype == TYPE_TIMESTAMP:
+                ts_col = TimestampColumn(n)
+                ts_col.length = n
+                for i in range(n):
+                    ts_col.data_c[i] = <long long>values[i]
+                df.columns[col_name] = ts_col
+
+        if columns is not None:
+            col_names = list(df.columns.keys())
+            new_names = list(columns)
+            if len(new_names) != len(col_names):
+                raise ValueError(f"columns length {len(new_names)} != {len(col_names)}")
+            new_cols = {}
+            for i in range(len(new_names)):
+                new_cols[new_names[i]] = df.columns[col_names[i]]
+            df.columns = new_cols
+
+        return df
+
+    @staticmethod
+    def from_list(list rows, dict schema, columns=None):
+        if not schema:
+            raise ValueError("schema is required and must not be empty")
+        cdef dict parsed = _parse_schema(schema)
+        cdef FastDataFrame df = FastDataFrame()
+        cdef Py_ssize_t n_rows = len(rows)
+        cdef Py_ssize_t n_cols = len(parsed)
+        cdef Py_ssize_t i, j
+        cdef list col_order = list(parsed.keys())
+        cdef int dtype
+        cdef str col_name
+        cdef list new_names, col_names
+        cdef dict new_cols
+
+        if n_rows == 0:
+            for col_name in col_order:
+                dtype = parsed[col_name]
+                if dtype == TYPE_INT:
+                    df.columns[col_name] = IntColumn()
+                elif dtype == TYPE_DOUBLE:
+                    df.columns[col_name] = DoubleColumn()
+                elif dtype == TYPE_CHAR256:
+                    df.columns[col_name] = Char256Column_SoA()
+                elif dtype == TYPE_UCS2:
+                    df.columns[col_name] = UCS2Column_SoA()
+                elif dtype == TYPE_TIMESTAMP:
+                    df.columns[col_name] = TimestampColumn()
+            return df
+
+        df.df_length = n_rows
+        df.index = RangeIndex(0, n_rows)
+
+        for j in range(n_cols):
+            col_name = col_order[j]
+            dtype = parsed[col_name]
+            if dtype == TYPE_INT:
+                int_col = IntColumn(n_rows)
+                int_col.length = n_rows
+                for i in range(n_rows):
+                    int_col.data_c[i] = <int>rows[i][j]
+                df.columns[col_name] = int_col
+            elif dtype == TYPE_DOUBLE:
+                dbl_col = DoubleColumn(n_rows)
+                dbl_col.length = n_rows
+                for i in range(n_rows):
+                    dbl_col.data_c[i] = <double>rows[i][j]
+                df.columns[col_name] = dbl_col
+            elif dtype == TYPE_CHAR256:
+                c256_col = Char256Column_SoA(n_rows)
+                c256_col.length = n_rows
+                for i in range(n_rows):
+                    c256_col.append(<str>rows[i][j])
+                df.columns[col_name] = c256_col
+            elif dtype == TYPE_UCS2:
+                ucs2_col = UCS2Column_SoA(n_rows)
+                ucs2_col.length = n_rows
+                for i in range(n_rows):
+                    ucs2_col.append(<str>rows[i][j])
+                df.columns[col_name] = ucs2_col
+            elif dtype == TYPE_TIMESTAMP:
+                ts_col = TimestampColumn(n_rows)
+                ts_col.length = n_rows
+                for i in range(n_rows):
+                    ts_col.data_c[i] = <long long>rows[i][j]
+                df.columns[col_name] = ts_col
+
+        if columns is not None:
+            col_names = list(df.columns.keys())
+            new_names = list(columns)
+            if len(new_names) != len(col_names):
+                raise ValueError(f"columns length {len(new_names)} != {len(col_names)}")
+            new_cols = {}
+            for i in range(len(new_names)):
+                new_cols[new_names[i]] = df.columns[col_names[i]]
+            df.columns = new_cols
+
+        return df
+
+    @staticmethod
+    def from_arrays(list arrays, dict schema, columns=None):
+        if not schema:
+            raise ValueError("schema is required and must not be empty")
+        cdef dict parsed = _parse_schema(schema)
+        cdef FastDataFrame df = FastDataFrame()
+        cdef Py_ssize_t n_cols = len(arrays)
+        cdef Py_ssize_t n_rows = 0
+        cdef Py_ssize_t i, j
+        cdef list col_order = list(schema.keys())
+        cdef int dtype
+        cdef str col_name
+        cdef list new_names, col_names
+        cdef dict new_cols
+
+        if n_cols == 0:
+            return df
+
+        n_rows = len(arrays[0])
+        for j in range(n_cols):
+            if len(arrays[j]) != n_rows:
+                raise ValueError(f"Array {j} length {len(arrays[j])} != expected {n_rows}")
+
+        if n_rows == 0:
+            for col_name in col_order:
+                dtype = parsed[col_name]
+                if dtype == TYPE_INT:
+                    df.columns[col_name] = IntColumn()
+                elif dtype == TYPE_DOUBLE:
+                    df.columns[col_name] = DoubleColumn()
+                elif dtype == TYPE_CHAR256:
+                    df.columns[col_name] = Char256Column_SoA()
+                elif dtype == TYPE_UCS2:
+                    df.columns[col_name] = UCS2Column_SoA()
+                elif dtype == TYPE_TIMESTAMP:
+                    df.columns[col_name] = TimestampColumn()
+            return df
+
+        df.df_length = n_rows
+        df.index = RangeIndex(0, n_rows)
+
+        for j in range(n_cols):
+            col_name = col_order[j]
+            dtype = parsed[col_name]
+            if dtype == TYPE_INT:
+                int_col = IntColumn(n_rows)
+                int_col.length = n_rows
+                for i in range(n_rows):
+                    int_col.data_c[i] = <int>arrays[j][i]
+                df.columns[col_name] = int_col
+            elif dtype == TYPE_DOUBLE:
+                dbl_col = DoubleColumn(n_rows)
+                dbl_col.length = n_rows
+                for i in range(n_rows):
+                    dbl_col.data_c[i] = <double>arrays[j][i]
+                df.columns[col_name] = dbl_col
+            elif dtype == TYPE_CHAR256:
+                c256_col = Char256Column_SoA(n_rows)
+                c256_col.length = n_rows
+                for i in range(n_rows):
+                    c256_col.append(<str>arrays[j][i])
+                df.columns[col_name] = c256_col
+            elif dtype == TYPE_UCS2:
+                ucs2_col = UCS2Column_SoA(n_rows)
+                ucs2_col.length = n_rows
+                for i in range(n_rows):
+                    ucs2_col.append(<str>arrays[j][i])
+                df.columns[col_name] = ucs2_col
+            elif dtype == TYPE_TIMESTAMP:
+                ts_col = TimestampColumn(n_rows)
+                ts_col.length = n_rows
+                for i in range(n_rows):
+                    ts_col.data_c[i] = <long long>arrays[j][i]
+                df.columns[col_name] = ts_col
 
         if columns is not None:
             col_names = list(df.columns.keys())

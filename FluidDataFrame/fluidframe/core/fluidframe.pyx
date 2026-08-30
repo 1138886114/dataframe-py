@@ -79,8 +79,11 @@ def from_pickle(filename, bint allow_raw_pickle=False):
     return df
 
 
-def read_csv(filename, sep=',', schema=None):
-    """读取 CSV 文件，返回 FastDataFrame。自动推断列类型或由 schema 指定"""
+def read_csv(filename, dict schema, sep=','):
+    """读取 CSV 文件，返回 FastDataFrame。必须提供 schema 指定列类型"""
+    if not schema:
+        raise ValueError("schema is required and must not be empty")
+    cdef dict parsed = _parse_schema(schema)
     import csv
     with open(filename, 'r', encoding='utf-8') as f:
         reader = csv.reader(f, delimiter=sep)
@@ -94,77 +97,40 @@ def read_csv(filename, sep=',', schema=None):
 
     if n_rows == 0:
         for j in range(n_cols):
-            df.columns[headers[j]] = UCS2Column_SoA()
-        return df
-
-    if schema is not None:
-        parsed = _parse_schema(schema)
-        for j, name in enumerate(headers):
-            py_type = parsed.get(name, str)
-            if py_type == TYPE_INT:
-                col = IntColumn(n_rows)
-                for i in range(n_rows):
-                    val = rows[i][j].strip()
-                    col.append(int(val) if val else 0)
-            elif py_type == TYPE_DOUBLE:
-                col = DoubleColumn(n_rows)
-                for i in range(n_rows):
-                    val = rows[i][j].strip()
-                    col.append(float(val) if val else NAN)
-            elif py_type == TYPE_CHAR256:
-                col = Char256Column_SoA(n_rows)
-                for i in range(n_rows):
-                    col.append(rows[i][j])
-            elif py_type == TYPE_TIMESTAMP:
-                col = TimestampColumn(n_rows)
-                for i in range(n_rows):
-                    col.append(rows[i][j].strip())
+            name = headers[j]
+            dtype = parsed.get(name, str)
+            if dtype == TYPE_INT:
+                df.columns[name] = IntColumn()
+            elif dtype == TYPE_DOUBLE:
+                df.columns[name] = DoubleColumn()
+            elif dtype == TYPE_CHAR256:
+                df.columns[name] = Char256Column_SoA()
+            elif dtype == TYPE_TIMESTAMP:
+                df.columns[name] = TimestampColumn()
             else:
-                col = UCS2Column_SoA(n_rows)
-                for i in range(n_rows):
-                    col.append(rows[i][j])
-            df.columns[name] = col
-        df.df_length = n_rows
+                df.columns[name] = UCS2Column_SoA()
         return df
-
-    cdef list types = []
-    cdef bint all_int, all_float
-    for j in range(n_cols):
-        all_int = True
-        all_float = True
-        for i in range(n_rows):
-            val = rows[i][j].strip()
-            if val == '':
-                continue
-            if all_int:
-                try:
-                    int(val)
-                except ValueError:
-                    all_int = False
-            if all_float:
-                try:
-                    float(val)
-                except ValueError:
-                    all_float = False
-        if all_int:
-            types.append(int)
-        elif all_float:
-            types.append(float)
-        else:
-            types.append(str)
 
     for j, name in enumerate(headers):
-        dtype = types[j]
-        if dtype is int:
+        py_type = parsed.get(name, str)
+        if py_type == TYPE_INT:
             col = IntColumn(n_rows)
             for i in range(n_rows):
                 val = rows[i][j].strip()
                 col.append(int(val) if val else 0)
-        elif dtype is float:
+        elif py_type == TYPE_DOUBLE:
             col = DoubleColumn(n_rows)
             for i in range(n_rows):
                 val = rows[i][j].strip()
                 col.append(float(val) if val else NAN)
+        elif py_type == TYPE_CHAR256:
+            col = Char256Column_SoA(n_rows)
+            for i in range(n_rows):
+                col.append(rows[i][j])
+        elif py_type == TYPE_TIMESTAMP:
+            col = TimestampColumn(n_rows)
+            for i in range(n_rows):
+                col.append(rows[i][j].strip())
         else:
             col = UCS2Column_SoA(n_rows)
             for i in range(n_rows):
@@ -174,9 +140,9 @@ def read_csv(filename, sep=',', schema=None):
     return df
 
 
-def read_tsv(filename, schema=None):
+def read_tsv(filename, dict schema):
     """读取 TSV 文件（tab 分隔），返回 FastDataFrame"""
-    return read_csv(filename, sep='\t', schema=schema)
+    return read_csv(filename, schema=schema, sep='\t')
 
 
 cdef object _default_val(BaseColumn col):

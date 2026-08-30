@@ -371,7 +371,7 @@ def test_read_csv_auto():
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
         f.write(content); fname = f.name
     try:
-        df = read_csv(fname)
+        df = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': str, 'dt': int})
         check('auto shape', df.shape == (2, 5))
         check('auto id[0]', df['id'][0] == 1)
         check('auto name[1]', df['name'][1] == 'Bob')
@@ -684,7 +684,7 @@ def test_stress_csv_roundtrip():
         t0 = time.time()
         df.to_csv(fname)
         from fluidframe.core.fluidframe import read_csv
-        df2 = read_csv(fname)
+        df2 = read_csv(fname, schema={'id': int, 'val': float, 'name': str})
         elapsed = time.time() - t0
         check('stress csv shape', df2.shape == (N, 3))
         check('stress csv id[0]', df2['id'][0] == 0)

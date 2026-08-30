@@ -23,7 +23,8 @@ def near(a, b, eps=1e-9):
 # ============================================================
 def test_from_dict_int():
     print('--- test_from_dict_int ---')
-    df = FastDataFrame.from_dict({'a': [1, 2, 3], 'b': [4, 5, 6]})
+    df = FastDataFrame.from_dict({'a': [1, 2, 3], 'b': [4, 5, 6]},
+                                 schema={'a': int, 'b': int})
     check('length', df.df_length == 3)
     check('cols', set(df.columns.keys()) == {'a', 'b'})
     check('a[0]', df['a'][0] == 1)
@@ -32,35 +33,40 @@ def test_from_dict_int():
 
 def test_from_dict_float():
     print('--- test_from_dict_float ---')
-    df = FastDataFrame.from_dict({'x': [1.5, 2.5], 'y': [3.0, 4.0]})
+    df = FastDataFrame.from_dict({'x': [1.5, 2.5], 'y': [3.0, 4.0]},
+                                 schema={'x': float, 'y': float})
     check('length', df.df_length == 2)
     check('x[0]', df['x'][0] == 1.5)
     check('y[1]', df['y'][1] == 4.0)
 
 def test_from_dict_mixed():
     print('--- test_from_dict_mixed ---')
-    df = FastDataFrame.from_dict({'id': [1, 2], 'val': [10.0, 20.0]})
+    df = FastDataFrame.from_dict({'id': [1, 2], 'val': [10.0, 20.0]},
+                                 schema={'id': int, 'val': float})
     check('length', df.df_length == 2)
     check('id type', df['id'][0] == 1)
     check('val type', df['val'][0] == 10.0)
 
 def test_from_dict_rename():
     print('--- test_from_dict_rename ---')
-    df = FastDataFrame.from_dict({'a': [1], 'b': [2]}, columns=['X', 'Y'])
+    df = FastDataFrame.from_dict({'a': [1], 'b': [2]},
+                                 schema={'a': int, 'b': int},
+                                 columns=['X', 'Y'])
     check('renamed', set(df.columns.keys()) == {'X', 'Y'})
     check('X[0]', df['X'][0] == 1)
     check('Y[0]', df['Y'][0] == 2)
 
 def test_from_dict_empty():
     print('--- test_from_dict_empty ---')
-    df = FastDataFrame.from_dict({})
+    df = FastDataFrame.from_dict({}, schema={})
     check('empty', df.df_length == 0)
 
 def test_from_dict_length_mismatch():
     print('--- test_from_dict_length_mismatch ---')
     ok = False
     try:
-        FastDataFrame.from_dict({'a': [1, 2], 'b': [3]})
+        FastDataFrame.from_dict({'a': [1, 2], 'b': [3]},
+                                schema={'a': int, 'b': int})
     except ValueError:
         ok = True
     check('raises ValueError', ok)
@@ -154,7 +160,8 @@ def test_ones():
 # ============================================================
 def test_to_numpy():
     print('--- test_to_numpy ---')
-    df = FastDataFrame.from_dict({'a': [1, 2], 'b': [3.0, 4.0]})
+    df = FastDataFrame.from_dict({'a': [1, 2], 'b': [3.0, 4.0]},
+                                 schema={'a': int, 'b': float})
     mat = df.to_numpy()
     check('shape', len(mat) == 2 and len(mat[0]) == 2)
     check('val[0][0]', mat[0][0] == 1)
@@ -170,8 +177,8 @@ def test_to_numpy_empty():
 # ============================================================
 def test_dot_2x2():
     print('--- test_dot_2x2 ---')
-    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]})
-    B = FastDataFrame.from_dict({'0': [5, 6], '1': [7, 8]})
+    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
+    B = FastDataFrame.from_dict({'0': [5, 6], '1': [7, 8]}, schema={'0': int, '1': int})
     C = linalg.dot(A, B)
     check('C[0][0]', C['A'][0] == 23.0)
     check('C[0][1]', C['B'][0] == 31.0)
@@ -180,8 +187,8 @@ def test_dot_2x2():
 
 def test_dot_identity():
     print('--- test_dot_identity ---')
-    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]})
-    I = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 1]})
+    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
+    I = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 1]}, schema={'0': int, '1': int})
     C = linalg.dot(A, I)
     check('A*I[0][0]', C['A'][0] == 1.0)
     check('A*I[0][1]', C['B'][0] == 3.0)
@@ -190,8 +197,8 @@ def test_dot_identity():
 
 def test_dot_shape_mismatch():
     print('--- test_dot_shape_mismatch ---')
-    A = FastDataFrame.from_dict({'0': [1, 2, 3]})
-    B = FastDataFrame.from_dict({'0': [1, 2]})
+    A = FastDataFrame.from_dict({'0': [1, 2, 3]}, schema={'0': int})
+    B = FastDataFrame.from_dict({'0': [1, 2]}, schema={'0': int})
     ok = False
     try:
         linalg.dot(A, B)
@@ -201,8 +208,10 @@ def test_dot_shape_mismatch():
 
 def test_dot_3x3():
     print('--- test_dot_3x3 ---')
-    A = FastDataFrame.from_dict({'0': [1,0,0], '1': [0,2,0], '2': [0,0,3]})
-    B = FastDataFrame.from_dict({'0': [4,0,0], '1': [0,5,0], '2': [0,0,6]})
+    A = FastDataFrame.from_dict({'0': [1,0,0], '1': [0,2,0], '2': [0,0,3]},
+                                schema={'0': int, '1': int, '2': int})
+    B = FastDataFrame.from_dict({'0': [4,0,0], '1': [0,5,0], '2': [0,0,6]},
+                                schema={'0': int, '1': int, '2': int})
     C = linalg.dot(A, B)
     check('diag[0]', C['A'][0] == 4.0)
     check('diag[1]', C['B'][1] == 10.0)
@@ -214,7 +223,7 @@ def test_dot_3x3():
 # ============================================================
 def test_transpose():
     print('--- test_transpose ---')
-    A = FastDataFrame.from_dict({'0': [1, 2, 3], '1': [4, 5, 6]})
+    A = FastDataFrame.from_dict({'0': [1, 2, 3], '1': [4, 5, 6]}, schema={'0': int, '1': int})
     T = linalg.transpose(A)
     check('rows', T.df_length == 2)
     check('cols', len(T.columns) == 3)
@@ -225,7 +234,7 @@ def test_transpose():
 
 def test_transpose_square():
     print('--- test_transpose_square ---')
-    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]})
+    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
     T = linalg.transpose(A)
     check('T[0][0]', T['A'][0] == 1.0)
     check('T[0][1]', T['A'][1] == 3.0)
@@ -237,29 +246,31 @@ def test_transpose_square():
 # ============================================================
 def test_det_2x2():
     print('--- test_det_2x2 ---')
-    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]})
+    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
     check('det', linalg.det(A) == -2.0)
 
 def test_det_identity():
     print('--- test_det_identity ---')
-    I = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 1]})
+    I = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 1]}, schema={'0': int, '1': int})
     check('det(I)', linalg.det(I) == 1.0)
 
 def test_det_singular():
     print('--- test_det_singular ---')
-    S = FastDataFrame.from_dict({'0': [1, 2], '1': [2, 4]})
+    S = FastDataFrame.from_dict({'0': [1, 2], '1': [2, 4]}, schema={'0': int, '1': int})
     check('det(singular)', linalg.det(S) == 0.0)
 
 def test_det_3x3():
     print('--- test_det_3x3 ---')
-    M = FastDataFrame.from_dict({'0': [6,1,1], '1': [4,-2,5], '2': [2,8,7]})
+    M = FastDataFrame.from_dict({'0': [6,1,1], '1': [4,-2,5], '2': [2,8,7]},
+                                schema={'0': int, '1': int, '2': int})
     check('det(3x3)', linalg.det(M) == -306.0)
 
 def test_det_not_square():
     print('--- test_det_not_square ---')
     ok = False
     try:
-        linalg.det(FastDataFrame.from_dict({'0': [1,2], '1': [3,4], '2': [5,6]}))
+        linalg.det(FastDataFrame.from_dict({'0': [1,2], '1': [3,4], '2': [5,6]},
+                                           schema={'0': int, '1': int, '2': int}))
     except ValueError:
         ok = True
     check('raises ValueError', ok)
@@ -269,7 +280,7 @@ def test_det_not_square():
 # ============================================================
 def test_inv_2x2():
     print('--- test_inv_2x2 ---')
-    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]})
+    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
     A_inv = linalg.inv(A)
     check('inv[0][0]', near(A_inv['A'][0], -2.0))
     check('inv[0][1]', near(A_inv['B'][0], 1.5))
@@ -278,14 +289,14 @@ def test_inv_2x2():
 
 def test_inv_identity():
     print('--- test_inv_identity ---')
-    I = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 1]})
+    I = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 1]}, schema={'0': int, '1': int})
     I_inv = linalg.inv(I)
     check('inv(I)[0][0]', near(I_inv['A'][0], 1.0))
     check('inv(I)[0][1]', near(I_inv['B'][0], 0.0))
 
 def test_inv_times_self():
     print('--- test_inv_times_self ---')
-    A = FastDataFrame.from_dict({'0': [2, 1], '1': [5, 3]})
+    A = FastDataFrame.from_dict({'0': [2, 1], '1': [5, 3]}, schema={'0': int, '1': int})
     A_inv = linalg.inv(A)
     prod = linalg.dot(A, A_inv)
     check('A*A^-1~I[0][0]', near(prod['A'][0], 1.0))
@@ -297,7 +308,7 @@ def test_inv_singular():
     print('--- test_inv_singular ---')
     ok = False
     try:
-        linalg.inv(FastDataFrame.from_dict({'0': [1, 2], '1': [2, 4]}))
+        linalg.inv(FastDataFrame.from_dict({'0': [1, 2], '1': [2, 4]}, schema={'0': int, '1': int}))
     except ValueError:
         ok = True
     check('raises ValueError', ok)
@@ -307,16 +318,16 @@ def test_inv_singular():
 # ============================================================
 def test_solve():
     print('--- test_solve ---')
-    A = FastDataFrame.from_dict({'0': [1, 3], '1': [2, 4]})
-    b = FastDataFrame.from_dict({'0': [5, 11]})
+    A = FastDataFrame.from_dict({'0': [1, 3], '1': [2, 4]}, schema={'0': int, '1': int})
+    b = FastDataFrame.from_dict({'0': [5, 11]}, schema={'0': int})
     x = linalg.solve(A, b)
     check('x[0]', near(x['A'][0], 1.0))
     check('x[1]', near(x['A'][1], 2.0))
 
 def test_solve_diagonal():
     print('--- test_solve_diagonal ---')
-    A = FastDataFrame.from_dict({'0': [2, 0], '1': [0, 3]})
-    b = FastDataFrame.from_dict({'0': [4, 9]})
+    A = FastDataFrame.from_dict({'0': [2, 0], '1': [0, 3]}, schema={'0': int, '1': int})
+    b = FastDataFrame.from_dict({'0': [4, 9]}, schema={'0': int})
     x = linalg.solve(A, b)
     check('x[0]', near(x['A'][0], 2.0))
     check('x[1]', near(x['A'][1], 3.0))
@@ -326,8 +337,8 @@ def test_solve_diagonal():
 # ============================================================
 def test_matmul():
     print('--- test_matmul ---')
-    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]})
-    B = FastDataFrame.from_dict({'0': [5, 6], '1': [7, 8]})
+    A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
+    B = FastDataFrame.from_dict({'0': [5, 6], '1': [7, 8]}, schema={'0': int, '1': int})
     C = linalg.matmul(A, B)
     check('C[0][0]', C['A'][0] == 23.0)
     check('C[1][1]', C['B'][1] == 46.0)
@@ -337,17 +348,17 @@ def test_matmul():
 # ============================================================
 def test_norm_frobenius():
     print('--- test_norm_frobenius ---')
-    A = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 2]})
+    A = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 2]}, schema={'0': int, '1': int})
     check('frobenius', near(linalg.norm(A), math.sqrt(5)))
 
 def test_norm_max():
     print('--- test_norm_max ---')
-    A = FastDataFrame.from_dict({'0': [1, -5], '1': [3, 2]})
+    A = FastDataFrame.from_dict({'0': [1, -5], '1': [3, 2]}, schema={'0': int, '1': int})
     check('max', linalg.norm(A, 'max') == 5.0)
 
 def test_norm_count():
     print('--- test_norm_count ---')
-    A = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 4]})
+    A = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 4]}, schema={'0': int, '1': int})
     check('count', linalg.norm(A, 'count') == 2.0)
 
 # ============================================================
@@ -363,7 +374,8 @@ def test_integration_arange_linalg():
 
 def test_integration_from_dict_linalg():
     print('--- test_integration_from_dict_linalg ---')
-    A = FastDataFrame.from_dict({'0': [1, 2, 3], '1': [0, 1, 4], '2': [5, 6, 0]})
+    A = FastDataFrame.from_dict({'0': [1, 2, 3], '1': [0, 1, 4], '2': [5, 6, 0]},
+                                schema={'0': int, '1': int, '2': int})
     det = linalg.det(A)
     check('det != 0', abs(det) > 1e-10)
     A_inv = linalg.inv(A)
