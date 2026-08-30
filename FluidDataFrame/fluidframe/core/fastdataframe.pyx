@@ -227,12 +227,6 @@ cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indic
     _c_argsort_ucs2(chars, offsets, indices, i, right)
 
 
-cdef str _fmt_bytes(Py_ssize_t n):
-    cdef char buf[32]
-    _c_fmt_bytes(buf, sizeof(buf), n)
-    return buf.decode('ascii')
-
-
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -2198,21 +2192,32 @@ cdef class FastDataFrame:
 
 
     def info(self):
-        cdef list lines = []
+        cdef Py_ssize_t total_cols = len(self.columns)
         cdef Py_ssize_t mem = self.memory_usage()
-        lines.append(f"<class 'FastDataFrame'>")
-        lines.append(f"RangeIndex: {self.df_length} entries")
-        lines.append(f"Data columns (total {len(self.columns)} columns):")
-        lines.append(f" #   Column    Non-Null  Dtype     Mem Usage")
-        lines.append(f"---  ------    --------  ----     ---------")
+        cdef char bytes_buf[16]
+        cdef list lines = []
         cdef Py_ssize_t idx = 0
+        cdef Py_ssize_t col_bytes
         cdef str type_name
+        cdef str name
+        cdef object col
+
+        lines.append("<class 'FastDataFrame'>")
+        lines.append(f"RangeIndex: {self.df_length} entries")
+        lines.append(f"Data columns (total {total_cols} columns):")
+        lines.append(" #   Column    Non-Null  Dtype     Mem Usage")
+        lines.append("---  ------    --------  ----     ---------")
+
         for name, col in self.columns.items():
             type_name = self._type_name(col)
-            lines.append(f" {idx}   {name:<10}{col.length:<10}{type_name:<10}{_fmt_bytes(col.length * self._col_bytes(col))}")
+            col_bytes = col.length * self._col_bytes(col)
+            _c_fmt_bytes(bytes_buf, sizeof(bytes_buf), col_bytes)
+            lines.append(f" {idx}   {name:<10}{col.length:<10}{type_name:<10}{bytes_buf.decode('ascii')}")
             idx += 1
+
+        _c_fmt_bytes(bytes_buf, sizeof(bytes_buf), mem)
         lines.append(f"dtypes: {self._dtype_summary()}")
-        lines.append(f"memory usage: {_fmt_bytes(mem)}")
+        lines.append(f"memory usage: {bytes_buf.decode('ascii')}")
         return '\n'.join(lines)
 
     cdef Py_ssize_t _col_bytes(self, BaseColumn col):
