@@ -5,8 +5,80 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove, strncmp, memset
-from libc.math cimport NAN
+from libc.stdint cimport uint32_t
+from libc.time cimport time_t, time
+from libc.math cimport NAN, sqrt, log, cos
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
+
+cdef extern from *:
+    """
+    #include <stdlib.h>
+    #include <time.h>
+    #include <math.h>
+
+    static unsigned long long _xorshift128plus_state[2];
+
+    static inline void _xorshift128plus_seed(unsigned long long seed) {
+        _xorshift128plus_state[0] = seed;
+        _xorshift128plus_state[1] = seed ^ 0x123456789ABCDEF0ULL;
+    }
+
+    static inline unsigned long long _xorshift128plus_next(void) {
+        unsigned long long s1 = _xorshift128plus_state[0];
+        unsigned long long s0 = _xorshift128plus_state[1];
+        _xorshift128plus_state[0] = s0;
+        s1 ^= s1 << 23;
+        s1 ^= s1 >> 17;
+        s1 ^= s0;
+        s1 ^= s0 >> 26;
+        _xorshift128plus_state[1] = s1;
+        return _xorshift128plus_state[0] + _xorshift128plus_state[1];
+    }
+
+    static inline double _random_uniform(void) {
+        return (double)(_xorshift128plus_next() >> 11) / (double)(1ULL << 53);
+    }
+
+    static inline double _random_gauss(void) {
+        double u1 = _random_uniform();
+        double u2 = _random_uniform();
+        if (u1 < 1e-15) u1 = 1e-15;
+        return sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265358979323846 * u2);
+    }
+
+    static inline int _csv_write_field(char* dest, int pos, const char* field, int field_len, char sep) {
+        int i;
+        int need_quote = 0;
+        for (i = 0; i < field_len; i++) {
+            char c = field[i];
+            if (c == sep || c == '\\n' || c == '\\r' || c == '"') {
+                need_quote = 1;
+                break;
+            }
+        }
+        if (need_quote) {
+            dest[pos++] = '"';
+            for (i = 0; i < field_len; i++) {
+                if (field[i] == '"') {
+                    dest[pos++] = '"';
+                    dest[pos++] = '"';
+                } else {
+                    dest[pos++] = field[i];
+                }
+            }
+            dest[pos++] = '"';
+        } else {
+            for (i = 0; i < field_len; i++) {
+                dest[pos++] = field[i];
+            }
+        }
+        return pos;
+    }
+    """
+    void _xorshift128plus_seed(unsigned long long seed) nogil
+    double _random_uniform() nogil
+    double _random_gauss() nogil
+    int _csv_write_field(char* dest, int pos, const char* field, int field_len, char sep) nogil
 
 
 from fluidframe.core._base cimport BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free
@@ -607,20 +679,48 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     def to_csv(self, filename, sep=','):
-        import csv
         cdef list col_names = list(self.columns.keys())
         cdef list col_objs = [self.columns[name] for name in col_names]
         cdef Py_ssize_t i, j
         cdef Py_ssize_t num_cols = len(col_names)
+        cdef int buf_pos
+        cdef char sep_c = <char>ord(sep) if len(sep) == 1 else <char>ord(',')
+        cdef char line_buf[65536]
+        cdef bytes b_field
+        cdef const char* c_field
+        cdef int field_len
 
-        cdef list row
+        with open(filename, 'wb') as f:
+            buf_pos = 0
+            for j in range(num_cols):
+                b_name = col_names[j].encode('utf-8')
+                c_field = <const char*>b_name
+                field_len = len(b_name)
+                if j > 0:
+                    line_buf[buf_pos] = sep_c
+                    buf_pos += 1
+                buf_pos = _csv_write_field(line_buf, buf_pos, c_field, field_len, sep_c)
+            line_buf[buf_pos] = 10
+            buf_pos += 1
+            f.write(line_buf[:buf_pos])
 
-        with open(filename, 'w', encoding='utf-8', newline='') as f:
-            writer = csv.writer(f, delimiter=sep)
-            writer.writerow(col_names)
             for i in range(self.df_length):
-                row = [str(col_objs[j][i]) for j in range(num_cols)]
-                writer.writerow(row)
+                buf_pos = 0
+                for j in range(num_cols):
+                    val_str = str(col_objs[j][i])
+                    b_field = val_str.encode('utf-8')
+                    c_field = <const char*>b_field
+                    field_len = len(b_field)
+                    if j > 0:
+                        line_buf[buf_pos] = sep_c
+                        buf_pos += 1
+                    buf_pos = _csv_write_field(line_buf, buf_pos, c_field, field_len, sep_c)
+                    if buf_pos > 65000:
+                        f.write(line_buf[:buf_pos])
+                        buf_pos = 0
+                line_buf[buf_pos] = 10
+                buf_pos += 1
+                f.write(line_buf[:buf_pos])
 
     @cython.binding(False)
     def to_tsv(self, filename):
@@ -948,7 +1048,6 @@ cdef class FastDataFrame:
 
     @staticmethod
     def randn(Py_ssize_t rows, Py_ssize_t cols):
-        import random as _random
         cdef FastDataFrame df = FastDataFrame()
         if rows <= 0 or cols <= 0:
             return df
@@ -956,17 +1055,17 @@ cdef class FastDataFrame:
         df.index = RangeIndex(0, rows)
         cdef list col_names = [chr(65 + i) for i in range(cols)]
         cdef Py_ssize_t c_idx, r_idx
+        _xorshift128plus_seed(<unsigned long long>time(NULL) ^ 12345)
         for c_idx in range(cols):
             col = DoubleColumn(rows)
             col.length = rows
             for r_idx in range(rows):
-                col.data_c[r_idx] = _random.gauss(0, 1)
+                col.data_c[r_idx] = _random_gauss()
             df.columns[col_names[c_idx]] = col
         return df
 
     @staticmethod
     def rand(Py_ssize_t rows, Py_ssize_t cols):
-        import random as _random
         cdef FastDataFrame df = FastDataFrame()
         if rows <= 0 or cols <= 0:
             return df
@@ -974,11 +1073,12 @@ cdef class FastDataFrame:
         df.index = RangeIndex(0, rows)
         cdef list col_names = [chr(65 + i) for i in range(cols)]
         cdef Py_ssize_t c_idx, r_idx
+        _xorshift128plus_seed(<unsigned long long>time(NULL) ^ 54321)
         for c_idx in range(cols):
             col = DoubleColumn(rows)
             col.length = rows
             for r_idx in range(rows):
-                col.data_c[r_idx] = _random.random()
+                col.data_c[r_idx] = _random_uniform()
             df.columns[col_names[c_idx]] = col
         return df
 
@@ -1612,9 +1712,10 @@ cdef class FastDataFrame:
 
 
     def sample(self, Py_ssize_t n=0, double frac=0.0, bint replace=False, int seed=-1):
-        import random as _random
         if seed >= 0:
-            _random.seed(seed)
+            _xorshift128plus_seed(<unsigned long long>seed)
+        else:
+            _xorshift128plus_seed(<unsigned long long>time(NULL) ^ <unsigned long long>id(self))
         cdef Py_ssize_t total = self.df_length
         if total == 0:
             return FastDataFrame()
@@ -1631,17 +1732,32 @@ cdef class FastDataFrame:
         if not replace and sample_size > total:
             raise ValueError(f"Sample size {sample_size} > population {total}")
 
-        cdef list indices
-        if replace:
-            indices = [_random.randint(0, total - 1) for _ in range(sample_size)]
-        else:
-            indices = _random.sample(range(total), sample_size)
-
         cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(sample_size, 1) * sizeof(Py_ssize_t))
         if not idx_c: raise MemoryError()
-        cdef Py_ssize_t i
-        for i in range(sample_size):
-            idx_c[i] = indices[i]
+        cdef Py_ssize_t i, j, tmp
+        cdef Py_ssize_t* shuffle_buf
+
+        if replace:
+            for i in range(sample_size):
+                idx_c[i] = <Py_ssize_t>(_random_uniform() * total)
+                if idx_c[i] >= total:
+                    idx_c[i] = total - 1
+        else:
+            shuffle_buf = <Py_ssize_t*>aligned_malloc(total * sizeof(Py_ssize_t))
+            if not shuffle_buf:
+                os_aligned_free(idx_c)
+                raise MemoryError()
+            for i in range(total):
+                shuffle_buf[i] = i
+            for i in range(sample_size):
+                j = i + <Py_ssize_t>(_random_uniform() * (total - i))
+                if j >= total: j = total - 1
+                tmp = shuffle_buf[i]
+                shuffle_buf[i] = shuffle_buf[j]
+                shuffle_buf[j] = tmp
+                idx_c[i] = shuffle_buf[i]
+            os_aligned_free(shuffle_buf)
+
         cdef FastDataFrame result = self._take(idx_c, sample_size)
         os_aligned_free(idx_c)
         return result
