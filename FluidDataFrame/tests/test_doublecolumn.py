@@ -151,26 +151,26 @@ def test_mad():
 
 def test_add():
     col = DoubleColumn(); col.append(1.5)
-    res = col.add(2.5)
+    res = col.add_val(2.5)
     check('add', res[0] == 4.0)
 
 def test_sub():
     col = DoubleColumn(); col.append(5.5)
-    res = col.sub(2.5)
+    res = col.sub_val(2.5)
     check('sub', res[0] == 3.0)
 
 def test_mul():
     col = DoubleColumn(); col.append(3.0)
-    res = col.mul(2.0)
+    res = col.mul_val(2.0)
     check('mul', res[0] == 6.0)
 
 def test_div():
     col = DoubleColumn(); col.append(10.0)
-    res = col.div(2.0)
+    res = col.div_val(2.0)
     check('div', res[0] == 5.0)
 
     col = DoubleColumn(); col.append(10.0)
-    res = col.div(0.0)
+    res = col.div_val(0.0)
     check('div by zero', math.isnan(res[0]))
 
 def test_unique():

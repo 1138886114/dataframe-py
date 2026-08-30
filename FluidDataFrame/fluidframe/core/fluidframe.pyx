@@ -16,6 +16,7 @@ from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.char256column import Char256Column_SoA
 from fluidframe.core.ucs2column import UCS2Column_SoA
 from fluidframe.core.timestampcolumn import TimestampColumn
+from fluidframe.core.index import RangeIndex
 
 
 def from_pickle(filename, bint allow_raw_pickle=False):
@@ -212,6 +213,13 @@ def concat_inner(list dfs):
         result.df_length += df.df_length
 
     result.reset_index()
+    return result
+
+
+def concat(list dfs, bint ignore_index=False):
+    cdef FastDataFrame result = concat_outer(dfs)
+    if ignore_index:
+        result.index = RangeIndex(0, result.df_length)
     return result
 
 

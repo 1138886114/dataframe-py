@@ -668,6 +668,162 @@ def test_groupby_idxmax_all():
     result = df.groupby('dept').idxmax()
     check('idxmax all cols', 'age' in result.columns and 'salary' in result.columns)
 
+# ============================================================
+#  Column arithmetic (add_cols / sub_cols / mul_cols / div_cols)
+# ============================================================
+def test_add_cols_int():
+    print('--- test_add_cols_int ---')
+    df = FastDataFrame({'A': int, 'B': int})
+    df.append_row(A=1, B=10)
+    df.append_row(A=2, B=20)
+    df.append_row(A=3, B=30)
+    result = df.add(('A', 'B'))
+    check('dtype', result.dtype == 0)
+    check('len', result.length == 3)
+    check('val0', result[0] == 11)
+    check('val1', result[1] == 22)
+    check('val2', result[2] == 33)
+    df['C'] = result
+    check('assign', df['C'][1] == 22)
+
+def test_sub_cols_int():
+    print('--- test_sub_cols_int ---')
+    df = FastDataFrame({'A': int, 'B': int})
+    df.append_row(A=10, B=3)
+    df.append_row(A=20, B=7)
+    result = df.sub(('A', 'B'))
+    check('dtype', result.dtype == 0)
+    check('val0', result[0] == 7)
+    check('val1', result[1] == 13)
+
+def test_mul_cols_int():
+    print('--- test_mul_cols_int ---')
+    df = FastDataFrame({'A': int, 'B': int})
+    df.append_row(A=3, B=4)
+    df.append_row(A=5, B=6)
+    result = df.mul(('A', 'B'))
+    check('dtype', result.dtype == 0)
+    check('val0', result[0] == 12)
+    check('val1', result[1] == 30)
+
+def test_div_cols_int():
+    print('--- test_div_cols_int ---')
+    df = FastDataFrame({'A': int, 'B': int})
+    df.append_row(A=10, B=2)
+    df.append_row(A=20, B=4)
+    result = df.div(('A', 'B'))
+    check('dtype', result.dtype == 2)
+    check('val0', result[0] == 5.0)
+    check('val1', result[1] == 5.0)
+
+def test_add_cols_mixed():
+    print('--- test_add_cols_mixed ---')
+    df = FastDataFrame({'A': int, 'B': float})
+    df.append_row(A=1, B=2.5)
+    df.append_row(A=2, B=3.5)
+    result = df.add(('A', 'B'))
+    check('dtype', result.dtype == 2)
+    check('val0', result[0] == 3.5)
+    check('val1', result[1] == 5.5)
+
+def test_add_cols_three():
+    print('--- test_add_cols_three ---')
+    df = FastDataFrame({'A': int, 'B': int, 'C': int})
+    df.append_row(A=1, B=10, C=100)
+    df.append_row(A=2, B=20, C=200)
+    result = df.add(('A', 'B', 'C'))
+    check('val0', result[0] == 111)
+    check('val1', result[1] == 222)
+
+# ============================================================
+#  _LocIndexer.__setitem__
+# ============================================================
+def test_loc_setitem_int():
+    print('--- test_loc_setitem_int ---')
+    df = FastDataFrame({'A': int, 'B': int})
+    df.append_row(A=1, B=10)
+    df.append_row(A=2, B=20)
+    df.append_row(A=3, B=30)
+    df.loc[1] = [99, 88]
+    check('A', df['A'][1] == 99)
+    check('B', df['B'][1] == 88)
+    check('unchanged_A', df['A'][0] == 1)
+    check('unchanged_B', df['B'][2] == 30)
+
+def test_loc_setitem_dict():
+    print('--- test_loc_setitem_dict ---')
+    df = FastDataFrame({'A': int, 'B': int})
+    df.append_row(A=1, B=10)
+    df.append_row(A=2, B=20)
+    df.loc[0] = {'A': 77}
+    check('A', df['A'][0] == 77)
+    check('B_unchanged', df['B'][0] == 10)
+
+# ============================================================
+#  append
+# ============================================================
+def test_append_dict():
+    print('--- test_append_dict ---')
+    df = FastDataFrame({'A': int, 'B': int})
+    df.append_row(A=1, B=10)
+    df2 = df.append({'A': 2, 'B': 20})
+    check('len', df2.df_length == 2)
+    check('orig_len', df.df_length == 1)
+    check('val0_A', df2['A'][0] == 1)
+    check('val1_A', df2['A'][1] == 2)
+    check('val1_B', df2['B'][1] == 20)
+
+def test_append_list():
+    print('--- test_append_list ---')
+    df = FastDataFrame({'A': int, 'B': int})
+    df.append_row(A=1, B=10)
+    df2 = df.append([2, 20])
+    check('len', df2.df_length == 2)
+    check('val1_A', df2['A'][1] == 2)
+    check('val1_B', df2['B'][1] == 20)
+
+def test_append_ignore_index():
+    print('--- test_append_ignore_index ---')
+    df = FastDataFrame({'A': int, 'B': int})
+    df.append_row(A=1, B=10)
+    df.append_row(A=2, B=20)
+    df2 = df.append({'A': 3, 'B': 30}, ignore_index=True)
+    idx_vals = df2.index.values()
+    check('idx0', idx_vals[0] == 0)
+    check('idx1', idx_vals[1] == 1)
+    check('idx2', idx_vals[2] == 2)
+
+# ============================================================
+#  concat
+# ============================================================
+def test_concat_basic():
+    print('--- test_concat_basic ---')
+    from fluidframe.core.fluidframe import concat
+    df1 = FastDataFrame({'A': int, 'B': int})
+    df1.append_row(A=1, B=10)
+    df1.append_row(A=2, B=20)
+    df2 = FastDataFrame({'A': int, 'B': int})
+    df2.append_row(A=3, B=30)
+    result = concat([df1, df2])
+    check('len', result.df_length == 3)
+    check('val0', result['A'][0] == 1)
+    check('val2', result['A'][2] == 3)
+    check('orig1_len', df1.df_length == 2)
+    check('orig2_len', df2.df_length == 1)
+
+def test_concat_ignore_index():
+    print('--- test_concat_ignore_index ---')
+    from fluidframe.core.fluidframe import concat
+    df1 = FastDataFrame({'A': int, 'B': int})
+    df1.append_row(A=1, B=10)
+    df2 = FastDataFrame({'A': int, 'B': int})
+    df2.append_row(A=2, B=20)
+    result = concat([df1, df2], ignore_index=True)
+    check('len', result.df_length == 2)
+    idx_vals = result.index.values()
+    check('idx0', idx_vals[0] == 0)
+    check('idx1', idx_vals[1] == 1)
+
 def run_all():
     test_setitem_list()
     test_setitem_scalar_int()
@@ -730,6 +886,19 @@ def run_all():
     test_groupby_idxmax()
     test_groupby_idxmin()
     test_groupby_idxmax_all()
+    test_add_cols_int()
+    test_sub_cols_int()
+    test_mul_cols_int()
+    test_div_cols_int()
+    test_add_cols_mixed()
+    test_add_cols_three()
+    test_loc_setitem_int()
+    test_loc_setitem_dict()
+    test_append_dict()
+    test_append_list()
+    test_append_ignore_index()
+    test_concat_basic()
+    test_concat_ignore_index()
     print()
     print(f'Results: {passed} passed, {failed} failed')
     if failed > 0:

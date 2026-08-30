@@ -357,6 +357,23 @@ cdef class FastDataFrame:
 
             raise
 
+    def append(self, object row, bint ignore_index=False):
+        cdef FastDataFrame new_df = self.copy()
+        cdef list col_names
+        if isinstance(row, dict):
+            new_df.append_row(**row)
+        elif isinstance(row, list):
+            col_names = list(new_df.columns.keys())
+            if len(row) != len(col_names):
+                raise ValueError(f"Length of row {len(row)} != number of columns {len(col_names)}")
+            kwargs = {col_names[i]: row[i] for i in range(len(col_names))}
+            new_df.append_row(**kwargs)
+        else:
+            raise TypeError(f"Cannot append row from {type(row)}")
+        if ignore_index:
+            new_df.index = RangeIndex(0, new_df.df_length)
+        return new_df
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
@@ -2204,6 +2221,54 @@ cdef class FastDataFrame:
     def where_all(self, IntColumn mask, object fill=0):
         return self.where_row(mask, fill)
 
+    def _resolve_cols(self, tuple col_names):
+        cdef list cols = []
+        cdef str name
+        for name in col_names:
+            if name not in self.columns:
+                raise KeyError(f"Column '{name}' not found")
+            cols.append(self.columns[name])
+        return cols
+
+    def add(self, tuple col_names):
+        if len(col_names) < 2:
+            raise ValueError("Need at least 2 column names")
+        cdef list cols = self._resolve_cols(col_names)
+        cdef BaseColumn result = cols[0].add(cols[1])
+        cdef Py_ssize_t j
+        for j in range(2, len(cols)):
+            result = result.add(cols[j])
+        return result
+
+    def sub(self, tuple col_names):
+        if len(col_names) < 2:
+            raise ValueError("Need at least 2 column names")
+        cdef list cols = self._resolve_cols(col_names)
+        cdef BaseColumn result = cols[0].sub(cols[1])
+        cdef Py_ssize_t j
+        for j in range(2, len(cols)):
+            result = result.sub(cols[j])
+        return result
+
+    def mul(self, tuple col_names):
+        if len(col_names) < 2:
+            raise ValueError("Need at least 2 column names")
+        cdef list cols = self._resolve_cols(col_names)
+        cdef BaseColumn result = cols[0].mul(cols[1])
+        cdef Py_ssize_t j
+        for j in range(2, len(cols)):
+            result = result.mul(cols[j])
+        return result
+
+    def div(self, tuple col_names):
+        if len(col_names) < 2:
+            raise ValueError("Need at least 2 column names")
+        cdef list cols = self._resolve_cols(col_names)
+        cdef BaseColumn result = cols[0].div(cols[1])
+        cdef Py_ssize_t j
+        for j in range(2, len(cols)):
+            result = result.div(cols[j])
+        return result
 
     def sort_values_by(self, str col_name, bint reverse=False):
         return self.sort_values(col_name, reverse=reverse)

@@ -183,30 +183,30 @@ def test_mad():
 
 def test_add():
     col = IntColumn(); col.append(1); col.append(2)
-    res = col.add(10)
+    res = col.add_val(10)
     check('add [0]', res[0] == 11)
     check('add [1]', res[1] == 12)
 
 def test_sub():
     col = IntColumn(); col.append(10); col.append(20)
-    res = col.sub(5)
+    res = col.sub_val(5)
     check('sub [0]', res[0] == 5)
     check('sub [1]', res[1] == 15)
 
 def test_mul():
     col = IntColumn(); col.append(3); col.append(4)
-    res = col.mul(2)
+    res = col.mul_val(2)
     check('mul [0]', res[0] == 6)
     check('mul [1]', res[1] == 8)
 
 def test_div():
     col = IntColumn(); col.append(10); col.append(20)
-    res = col.div(5)
+    res = col.div_val(5)
     check('div [0]', res[0] == 2.0)
     check('div [1]', res[1] == 4.0)
 
     col = IntColumn(); col.append(10)
-    res = col.div(0)
+    res = col.div_val(0)
     check('div by zero', math.isnan(res[0]))
 
 def test_diff():

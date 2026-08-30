@@ -6,7 +6,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 from libc.math cimport sqrt, fabs, NAN
-from fluidframe.core._base cimport TYPE_INT, BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free
+from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free
 from fluidframe.core.doublecolumn cimport DoubleColumn
 
 
@@ -518,7 +518,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def add(self, int val):
+    def add_val(self, int val):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -528,7 +528,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def sub(self, int val):
+    def sub_val(self, int val):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -538,7 +538,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def mul(self, int val):
+    def mul_val(self, int val):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
@@ -548,13 +548,93 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def div(self, int val):
+    def div_val(self, int val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
         with nogil:
             for i in range(self.length):
                 res.data_c[i] = <double>self.data_c[i] / val if val != 0 else NAN
+        return res
+
+    def add(self, object other):
+        cdef Py_ssize_t n = self.length
+        if other.length != n:
+            raise ValueError(f"Column length {other.length} != {n}")
+        cdef IntColumn res
+        cdef DoubleColumn dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            res = IntColumn(self.capacity)
+            res.length = n
+            for i in range(n):
+                res.data_c[i] = self.data_c[i] + (<IntColumn>other).data_c[i]
+            return res
+        elif isinstance(other, DoubleColumn):
+            dbl = DoubleColumn(n)
+            dbl.length = n
+            for i in range(n):
+                dbl.data_c[i] = <double>self.data_c[i] + (<DoubleColumn>other).data_c[i]
+            return dbl
+        raise TypeError(f"Unsupported type for add: {type(other)}")
+
+    def sub(self, object other):
+        cdef Py_ssize_t n = self.length
+        if other.length != n:
+            raise ValueError(f"Column length {other.length} != {n}")
+        cdef IntColumn res
+        cdef DoubleColumn dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            res = IntColumn(self.capacity)
+            res.length = n
+            for i in range(n):
+                res.data_c[i] = self.data_c[i] - (<IntColumn>other).data_c[i]
+            return res
+        elif isinstance(other, DoubleColumn):
+            dbl = DoubleColumn(n)
+            dbl.length = n
+            for i in range(n):
+                dbl.data_c[i] = <double>self.data_c[i] - (<DoubleColumn>other).data_c[i]
+            return dbl
+        raise TypeError(f"Unsupported type for sub: {type(other)}")
+
+    def mul(self, object other):
+        cdef Py_ssize_t n = self.length
+        if other.length != n:
+            raise ValueError(f"Column length {other.length} != {n}")
+        cdef IntColumn res
+        cdef DoubleColumn dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            res = IntColumn(self.capacity)
+            res.length = n
+            for i in range(n):
+                res.data_c[i] = self.data_c[i] * (<IntColumn>other).data_c[i]
+            return res
+        elif isinstance(other, DoubleColumn):
+            dbl = DoubleColumn(n)
+            dbl.length = n
+            for i in range(n):
+                dbl.data_c[i] = <double>self.data_c[i] * (<DoubleColumn>other).data_c[i]
+            return dbl
+        raise TypeError(f"Unsupported type for mul: {type(other)}")
+
+    def div(self, object other):
+        cdef Py_ssize_t n = self.length
+        if other.length != n:
+            raise ValueError(f"Column length {other.length} != {n}")
+        cdef DoubleColumn res = DoubleColumn(self.capacity)
+        res.length = n
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            for i in range(n):
+                res.data_c[i] = <double>self.data_c[i] / (<IntColumn>other).data_c[i] if (<IntColumn>other).data_c[i] != 0 else NAN
+        elif isinstance(other, DoubleColumn):
+            for i in range(n):
+                res.data_c[i] = <double>self.data_c[i] / (<DoubleColumn>other).data_c[i] if (<DoubleColumn>other).data_c[i] != 0 else NAN
+        else:
+            raise TypeError(f"Unsupported type for div: {type(other)}")
         return res
 
     @cython.binding(False)

@@ -3,9 +3,14 @@
 # cython: wraparound=False
 
 cimport cython
-from fluidframe.core._base cimport aligned_malloc, os_aligned_free
+from libc.string cimport memcpy, strncpy
+from fluidframe.core._base cimport aligned_malloc, os_aligned_free, BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
+from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core.char256column cimport Char256Column_SoA
+from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.timestampcolumn cimport TimestampColumn
 from fluidframe.core.index cimport IndexBase
 
 
@@ -90,6 +95,65 @@ cdef class _ILocIndexer:
 cdef class _LocIndexer:
     def __cinit__(self, FastDataFrame frame):
         self.frame = frame
+
+    def __setitem__(self, key, object values):
+        cdef Py_ssize_t n_orig = self.frame.df_length
+        if n_orig == 0:
+            raise IndexError("Cannot setitem on empty DataFrame")
+
+        cdef Py_ssize_t idx
+        cdef list col_names = list(self.frame.columns.keys())
+        cdef Py_ssize_t n_cols = len(col_names)
+        cdef str col_name
+        cdef BaseColumn col
+
+        if isinstance(key, int):
+            idx = <Py_ssize_t>key
+            if idx < 0: idx += n_orig
+            if idx < 0 or idx >= n_orig:
+                raise IndexError("Index out of bounds")
+
+            if isinstance(values, list):
+                if len(values) != n_cols:
+                    raise ValueError(f"Length of values {len(values)} != number of columns {n_cols}")
+                for i in range(n_cols):
+                    col_name = col_names[i]
+                    col = self.frame.columns[col_name]
+                    if col.dtype == TYPE_INT:
+                        (<IntColumn>col).data_c[idx] = <int>values[i]
+                    elif col.dtype == TYPE_DOUBLE:
+                        (<DoubleColumn>col).data_c[idx] = <double>values[i]
+                    elif col.dtype == TYPE_CHAR256:
+                        fill_bytes = str(values[i]).encode('ascii', errors='ignore')
+                        dest = (<Char256Column_SoA>col).data_c + (idx * 256)
+                        strncpy(dest, fill_bytes, 255)
+                        dest[255] = 0
+                    elif col.dtype == TYPE_UCS2:
+                        (<UCS2Column_SoA>col)._set_item(idx, str(values[i]))
+                    elif col.dtype == TYPE_TIMESTAMP:
+                        (<TimestampColumn>col).data_c[idx] = <long long>values[i]
+            elif isinstance(values, dict):
+                for col_name, val in values.items():
+                    if col_name not in self.frame.columns:
+                        raise KeyError(f"Column '{col_name}' not found")
+                    col = self.frame.columns[col_name]
+                    if col.dtype == TYPE_INT:
+                        (<IntColumn>col).data_c[idx] = <int>val
+                    elif col.dtype == TYPE_DOUBLE:
+                        (<DoubleColumn>col).data_c[idx] = <double>val
+                    elif col.dtype == TYPE_CHAR256:
+                        fill_bytes = str(val).encode('ascii', errors='ignore')
+                        dest = (<Char256Column_SoA>col).data_c + (idx * 256)
+                        strncpy(dest, fill_bytes, 255)
+                        dest[255] = 0
+                    elif col.dtype == TYPE_UCS2:
+                        (<UCS2Column_SoA>col)._set_item(idx, str(val))
+                    elif col.dtype == TYPE_TIMESTAMP:
+                        (<TimestampColumn>col).data_c[idx] = <long long>val
+            else:
+                raise TypeError(f"Cannot set row from {type(values)}")
+        else:
+            raise TypeError(f"Unsupported loc key type for setitem: {type(key).__name__}")
 
     def __getitem__(self, key):
         cdef Py_ssize_t n_orig = self.frame.df_length
