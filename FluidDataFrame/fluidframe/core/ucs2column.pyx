@@ -535,6 +535,14 @@ cdef class UCS2Column_SoA(BaseColumn):
             res.data_c[i] = 0 if self[i] != '' else 1
         return res
 
+    def isin(self, set values):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 1 if self[i] in values else 0
+        return res
+
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i

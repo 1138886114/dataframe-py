@@ -469,6 +469,119 @@ def test_select_dtypes():
     result = df.select_dtypes(include_types=['int'])
     check('cols', set(result.columns.keys()) == {'a', 'c'})
 
+# ============================================================
+#  P0/P1: df[mask], isin, between, loc[rows, cols]
+# ============================================================
+def test_df_boolean_indexing():
+    print('--- test_df_boolean_indexing ---')
+    df = FastDataFrame({'id': int, 'score': float})
+    for i in range(10):
+        df.append_row(id=i, score=50.0 + i * 5)
+    mask = df['id'] > 5
+    result = df[mask]
+    check('df[mask] shape', result.shape == (4, 2))
+    check('df[mask] first', result['id'][0] == 6)
+    check('df[mask] last', result['id'][3] == 9)
+
+def test_df_multi_condition():
+    print('--- test_df_multi_condition ---')
+    df = FastDataFrame({'id': int, 'score': float})
+    for i in range(10):
+        df.append_row(id=i, score=50.0 + i * 5)
+    mask = (df['id'] > 3) & (df['score'] < 80.0)
+    result = df[mask]
+    check('multi cond shape', result.shape == (2, 2))
+    check('multi cond val', result['id'][0] == 4)
+
+def test_isin_int():
+    print('--- test_isin_int ---')
+    df = FastDataFrame({'a': int})
+    for i in range(5):
+        df.append_row(a=i)
+    mask = df['a'].isin({1, 3})
+    result = df[mask]
+    check('isin int shape', result.shape == (2, 1))
+    check('isin int val', result['a'][0] == 1)
+
+def test_isin_double():
+    print('--- test_isin_double ---')
+    df = FastDataFrame({'a': float})
+    df.append_row(a=1.0)
+    df.append_row(a=2.5)
+    df.append_row(a=3.0)
+    mask = df['a'].isin({1.0, 3.0})
+    result = df[mask]
+    check('isin double shape', result.shape == (2, 1))
+    check('isin double val', result['a'][0] == 1.0)
+
+def test_isin_string():
+    print('--- test_isin_string ---')
+    df = FastDataFrame({'a': str})
+    df.append_row(a='alice')
+    df.append_row(a='bob')
+    df.append_row(a='carol')
+    mask = df['a'].isin({'alice', 'carol'})
+    result = df[mask]
+    check('isin str shape', result.shape == (2, 1))
+    check('isin str val', result['a'][0] == 'alice')
+
+def test_between_int():
+    print('--- test_between_int ---')
+    df = FastDataFrame({'a': int})
+    for i in range(10):
+        df.append_row(a=i)
+    mask = df['a'].between(3, 7)
+    result = df[mask]
+    check('between int shape', result.shape == (5, 1))
+    check('between int first', result['a'][0] == 3)
+    check('between int last', result['a'][4] == 7)
+
+def test_between_double():
+    print('--- test_between_double ---')
+    df = FastDataFrame({'a': float})
+    df.append_row(a=1.0)
+    df.append_row(a=2.5)
+    df.append_row(a=3.0)
+    df.append_row(a=4.5)
+    mask = df['a'].between(2.0, 4.0)
+    result = df[mask]
+    check('between double shape', result.shape == (2, 1))
+    check('between double val', result['a'][0] == 2.5)
+
+def test_loc_rows_cols():
+    print('--- test_loc_rows_cols ---')
+    df = FastDataFrame({'name': str, 'age': int, 'score': float})
+    df.append_row(name='alice', age=25, score=90.0)
+    df.append_row(name='bob', age=30, score=85.0)
+    df.append_row(name='carol', age=35, score=95.0)
+    mask = df['age'] > 25
+    result = df.loc[mask, ['name', 'score']]
+    check('loc rows+cols shape', result.shape == (2, 2))
+    check('loc rows+cols has name', 'name' in result.columns)
+    check('loc rows+cols has score', 'score' in result.columns)
+    check('loc rows+cols no age', 'age' not in result.columns)
+    check('loc rows+cols val', result['name'][0] == 'bob')
+
+def test_loc_single_col():
+    print('--- test_loc_single_col ---')
+    df = FastDataFrame({'name': str, 'age': int})
+    df.append_row(name='alice', age=25)
+    df.append_row(name='bob', age=30)
+    mask = df['age'] > 25
+    col = df.loc[mask, 'age']
+    check('loc single col type', col.length == 1)
+    check('loc single col val', col[0] == 30)
+
+def test_combined_query():
+    print('--- test_combined_query ---')
+    df = FastDataFrame({'id': int, 'score': float, 'name': str})
+    for i in range(10):
+        df.append_row(id=i, score=50.0 + i * 5, name='alice' if i % 2 == 0 else 'bob')
+    mask = (df['id'].between(2, 7)) & (df['name'].isin({'alice'}))
+    result = df[mask]
+    check('combined shape', result.shape[1] == 3)
+    check('combined all alice', all(result['name'][i] == 'alice' for i in range(result.shape[0])))
+
 def run_all():
     test_setitem_list()
     test_setitem_scalar_int()
@@ -514,6 +627,16 @@ def run_all():
     test_apply_columns()
     test_apply_index()
     test_select_dtypes()
+    test_df_boolean_indexing()
+    test_df_multi_condition()
+    test_isin_int()
+    test_isin_double()
+    test_isin_string()
+    test_between_int()
+    test_between_double()
+    test_loc_rows_cols()
+    test_loc_single_col()
+    test_combined_query()
     print()
     print(f'Results: {passed} passed, {failed} failed')
     if failed > 0:

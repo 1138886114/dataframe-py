@@ -665,6 +665,16 @@ cdef class Char256Column_SoA(BaseColumn):
             res.data_c[i] = 0 if (self.data_c + i * 256)[0] != 0 else 1
         return res
 
+    def isin(self, set values):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        cdef str val
+        for i in range(self.length):
+            val = (self.data_c + i * 256).decode('ascii') if (self.data_c + i * 256)[0] != 0 else ''
+            res.data_c[i] = 1 if val in values else 0
+        return res
+
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i

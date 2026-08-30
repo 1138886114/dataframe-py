@@ -681,6 +681,22 @@ cdef class IntColumn(BaseColumn):
             res.data_c[i] = 0 if self.data_c[i] != 0 else 1
         return res
 
+    def isin(self, set values):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 1 if self.data_c[i] in values else 0
+        return res
+
+    def between(self, int low, int high):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.data_c[i] = 1 if low <= self.data_c[i] <= high else 0
+        return res
+
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i

@@ -316,6 +316,8 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getitem__(self, name):
+        if isinstance(name, IntColumn):
+            return self.loc[name]
         return self.columns[name]
 
     @cython.binding(False)

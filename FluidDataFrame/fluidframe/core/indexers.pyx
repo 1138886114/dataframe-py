@@ -94,21 +94,50 @@ cdef class _LocIndexer:
     def __getitem__(self, key):
         cdef Py_ssize_t n_orig = self.frame.df_length
         cdef object loc_res
+        cdef FastDataFrame row_result
+        cdef FastDataFrame result
+        cdef list col_names
+        cdef str col_name
 
-        # Case 1: Callable filter — df.loc[lambda df: df.col > 5]
+        # Case 0: tuple (rows, cols) — df.loc[mask, ['name', 'age']]
+        if isinstance(key, tuple) and len(key) == 2:
+            row_key, col_key = key
+            row_result = self._get_rows(row_key)
+            if isinstance(col_key, list):
+                result = FastDataFrame()
+                result.df_length = row_result.df_length
+                result.index = row_result.index
+                for col_name in col_key:
+                    if col_name not in row_result.columns:
+                        raise KeyError(f"Column '{col_name}' not found")
+                    result.columns[col_name] = row_result.columns[col_name]
+                return result
+            elif isinstance(col_key, str):
+                if col_key not in row_result.columns:
+                    raise KeyError(f"Column '{col_key}' not found")
+                return row_result.columns[col_key]
+            raise TypeError(f"Unsupported column key type: {type(col_key).__name__}")
+
+        return self._get_rows(key)
+
+    cdef FastDataFrame _get_rows(self, key):
+        cdef Py_ssize_t n_orig = self.frame.df_length
+        cdef object loc_res
+
+        # Callable filter — df.loc[lambda df: df.col > 5]
         if callable(key):
             mask = key(self.frame)
             return self._apply_mask(mask)
 
-        # Case 2: IntColumn boolean mask — df.loc[mask_col]
+        # IntColumn boolean mask — df.loc[mask_col]
         if isinstance(key, IntColumn):
             return self._apply_mask(key)
 
-        # Case 3: list of booleans — df.loc[[True, False, True]]
+        # list of booleans — df.loc[[True, False, True]]
         if isinstance(key, list):
             return self._apply_bool_list(key)
 
-        # Case 4: tuple key — index-based lookup via index.get_loc()
+        # tuple key — index-based lookup via index.get_loc()
         if self.frame.index is not None:
             loc_res = self.frame.index.get_loc(key)
             return self.frame.iloc[loc_res]

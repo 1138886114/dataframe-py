@@ -9,3 +9,4 @@ cdef class _LocIndexer:
     cdef FastDataFrame frame
     cdef FastDataFrame _apply_mask(self, IntColumn mask)
     cdef FastDataFrame _apply_bool_list(self, list mask)
+    cdef FastDataFrame _get_rows(self, key)
