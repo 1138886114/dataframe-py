@@ -431,7 +431,7 @@ def test_info():
     df = FastDataFrame({'a': int, 'b': float})
     df.append_row(a=1, b=1.0)
     info = df.info()
-    check('has rows', '1 rows' in info)
+    check('has rows', '1 entries' in info)
     check('has cols', '2 columns' in info)
 
 def test_memory_usage():

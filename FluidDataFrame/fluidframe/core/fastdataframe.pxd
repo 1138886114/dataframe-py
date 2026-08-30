@@ -33,3 +33,5 @@ cdef class FastDataFrame:
     cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos)
     cdef double _get_col_value_as_double(self, BaseColumn col, Py_ssize_t i)
     cdef void _col_to_double_buffer(self, BaseColumn col, double* out, Py_ssize_t n)
+    cdef Py_ssize_t _col_bytes(self, BaseColumn col)
+    cdef str _dtype_summary(self)

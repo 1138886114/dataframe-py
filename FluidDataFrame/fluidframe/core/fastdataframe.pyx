@@ -105,11 +105,28 @@ cdef extern from *:
         }
         return pos;
     }
+
+    #define _FMT_KB 1024LL
+    #define _FMT_MB (1024LL * 1024LL)
+    #define _FMT_GB (1024LL * 1024LL * 1024LL)
+
+    static inline void _c_fmt_bytes(char *buf, size_t cap, Py_ssize_t n) {
+        if (n < _FMT_KB) {
+            snprintf(buf, cap, "%zd B", n);
+        } else if (n < _FMT_MB) {
+            snprintf(buf, cap, "%.1f KiB", (double)n / _FMT_KB);
+        } else if (n < _FMT_GB) {
+            snprintf(buf, cap, "%.1f MiB", (double)n / _FMT_MB);
+        } else {
+            snprintf(buf, cap, "%.1f GiB", (double)n / _FMT_GB);
+        }
+    }
     """
     void _xorshift128plus_seed(unsigned long long seed) nogil
     double _random_uniform() nogil
     double _random_gauss() nogil
     size_t _csv_write_field(char* dest, size_t dest_cap, size_t pos, const char* field, size_t field_len, char sep) nogil
+    void _c_fmt_bytes(char* buf, size_t cap, Py_ssize_t n) nogil
 
 
 from fluidframe.core._base cimport BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free
@@ -208,6 +225,12 @@ cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indic
 
     _c_argsort_ucs2(chars, offsets, indices, left, j)
     _c_argsort_ucs2(chars, offsets, indices, i, right)
+
+
+cdef str _fmt_bytes(Py_ssize_t n):
+    cdef char buf[32]
+    _c_fmt_bytes(buf, sizeof(buf), n)
+    return buf.decode('ascii')
 
 
 @cython.final
@@ -843,8 +866,10 @@ cdef class FastDataFrame:
     @cython.binding(False)
     def describe(self):
         cdef dict stats = {}
-        cdef str name
-        cdef Py_ssize_t col_len
+        cdef str name, val, top_val
+        cdef Py_ssize_t col_len, i, max_freq, freq_val
+        cdef long long ts_min, ts_max
+        cdef dict freq_map
         for name, col_obj in self.columns.items():
             col_len = col_obj.length
             if col_obj.dtype == TYPE_INT or col_obj.dtype == TYPE_DOUBLE:
@@ -857,7 +882,33 @@ cdef class FastDataFrame:
                     'max': col_obj.max(),
                 }
             elif col_obj.dtype == TYPE_CHAR256 or col_obj.dtype == TYPE_UCS2:
-                stats[name] = {'count': col_len}
+                freq_map = {}
+                for i in range(col_len):
+                    val = str(col_obj[i])
+                    freq_map[val] = freq_map.get(val, 0) + 1
+                top_val = ''
+                max_freq = 0
+                for val, freq_val in freq_map.items():
+                    if freq_val > max_freq:
+                        max_freq = freq_val
+                        top_val = val
+                stats[name] = {
+                    'count': col_len,
+                    'unique': len(freq_map),
+                    'top': top_val,
+                    'freq': max_freq,
+                }
+            elif col_obj.dtype == TYPE_TIMESTAMP:
+                if col_len > 0:
+                    ts_min = col_obj.min()
+                    ts_max = col_obj.max()
+                else:
+                    ts_min = ts_max = 0
+                stats[name] = {
+                    'count': col_len,
+                    'min': ts_min,
+                    'max': ts_max,
+                }
         return stats
 
     @cython.binding(False)
@@ -2148,10 +2199,37 @@ cdef class FastDataFrame:
 
     def info(self):
         cdef list lines = []
-        lines.append(f"FastDataFrame: {self.df_length} rows x {len(self.columns)} columns")
+        cdef Py_ssize_t mem = self.memory_usage()
+        lines.append(f"<class 'FastDataFrame'>")
+        lines.append(f"RangeIndex: {self.df_length} entries")
+        lines.append(f"Data columns (total {len(self.columns)} columns):")
+        lines.append(f" #   Column    Non-Null  Dtype     Mem Usage")
+        lines.append(f"---  ------    --------  ----     ---------")
+        cdef Py_ssize_t idx = 0
+        cdef str type_name
         for name, col in self.columns.items():
-            lines.append(f"  {name}: {self._type_name(col)} ({col.length} values)")
+            type_name = self._type_name(col)
+            lines.append(f" {idx}   {name:<10}{col.length:<10}{type_name:<10}{_fmt_bytes(col.length * self._col_bytes(col))}")
+            idx += 1
+        lines.append(f"dtypes: {self._dtype_summary()}")
+        lines.append(f"memory usage: {_fmt_bytes(mem)}")
         return '\n'.join(lines)
+
+    cdef Py_ssize_t _col_bytes(self, BaseColumn col):
+        if col.dtype == TYPE_INT: return sizeof(int)
+        elif col.dtype == TYPE_DOUBLE: return sizeof(double)
+        elif col.dtype == TYPE_CHAR256: return 256
+        elif col.dtype == TYPE_TIMESTAMP: return sizeof(long long)
+        elif col.dtype == TYPE_UCS2: return 4
+        return 0
+
+    cdef str _dtype_summary(self):
+        cdef dict counts = {}
+        cdef str name, tname
+        for name, col in self.columns.items():
+            tname = self._type_name(col)
+            counts[tname] = counts.get(tname, 0) + 1
+        return ', '.join(f'{v} {k}' for k, v in counts.items())
 
     def memory_usage(self):
         cdef Py_ssize_t total = 0
