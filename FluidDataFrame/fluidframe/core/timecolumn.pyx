@@ -149,7 +149,8 @@ cdef class TimeColumn(BaseColumn):
         cdef Py_ssize_t n = len(indices)
         if n != self.length:
             raise ValueError("Length of indices must match column length")
-        cdef int* new_data = <int*>aligned_malloc(n * sizeof(int))
+
+        cdef int* new_data = <int*>aligned_malloc(max(n, 1) * sizeof(int))
         if not new_data: raise MemoryError()
         cdef Py_ssize_t i, idx
         try:
@@ -220,7 +221,7 @@ cdef class TimeColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
-        cdef TimeColumn col = TimeColumn(n)
+        cdef TimeColumn col = TimeColumn(max(n, 1))
         col.length = n
         cdef int fill_val = 0
         if isinstance(fill, str):
@@ -233,26 +234,26 @@ cdef class TimeColumn(BaseColumn):
         return col
 
     def isin(self, set values):
+        # 安全性能修复：前置集合解析，消除 O(N*M) 的性能灾难
+        cdef set parsed_vals = set()
+        for v in values:
+            if isinstance(v, str):
+                parsed_vals.add(_parse_time_str(v))
+            elif v is not None:
+                parsed_vals.add(<int>v)
+
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t i
-        cdef bint found
         from fluidframe.core.boolcolumn import BoolColumn as PyBoolColumn
-        res = PyBoolColumn(n)
+        res = PyBoolColumn(max(n, 1))
         res.length = n
         for i in range(n):
-            found = False
-            for v in values:
-                if isinstance(v, str):
-                    if self.data_c[i] == _parse_time_str(v):
-                        found = True
-                        break
-                elif self.data_c[i] == <int>v:
-                    found = True
-                    break
-            res.data_c[i] = 1 if found else 0
+            res.data_c[i] = 1 if self.data_c[i] in parsed_vals else 0
         return res
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        if row_idx < 0:
+            row_idx += self.length
         if rem_len > 0:
             memmove(self.data_c + row_idx,
                     self.data_c + row_idx + 1,
@@ -268,7 +269,7 @@ cdef class TimeColumn(BaseColumn):
                 new_col.data_c[i] = self.data_c[indices[i]]
             return new_col
         else:
-            new_data = <int*>aligned_malloc(max(n, self.capacity) * sizeof(int))
+            new_data = <int*>aligned_malloc(max(max(n, self.capacity), 1) * sizeof(int))
             if not new_data: raise MemoryError()
             for i in range(n):
                 new_data[i] = self.data_c[indices[i]]
@@ -293,41 +294,41 @@ cdef class TimeColumn(BaseColumn):
         cdef CategoryColumn catc
         cdef DateColumn tc
         if tname in ('int', 'i4'):
-            ic = IntColumn(n)
+            ic = IntColumn(max(n, 1))
             ic.length = n
             for i in range(n):
                 ic.data_c[i] = self.data_c[i]
             return ic
         elif tname in ('double', 'float'):
-            dc = DoubleColumn(n)
+            dc = DoubleColumn(max(n, 1))
             dc.length = n
             for i in range(n):
                 dc.data_c[i] = <double>self.data_c[i]
             return dc
         elif tname == 'bool':
-            bc = BoolColumn(n)
+            bc = BoolColumn(max(n, 1))
             bc.length = n
             for i in range(n):
                 bc.data_c[i] = 1 if self.data_c[i] != 0 else 0
             return bc
         elif tname in ('str', 'string', 'ucs2'):
-            uc = UCS2Column_SoA(n)
+            uc = UCS2Column_SoA(max(n, 1))
             uc.length = n
             for i in range(n):
                 uc._set_item(i, _time_to_str(self.data_c[i]))
             return uc
         elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(n)
+            cc = Char256Column_SoA(max(n, 1))
             for i in range(n):
                 cc.append(_time_to_str(self.data_c[i]))
             return cc
         elif tname == 'category':
-            catc = CategoryColumn(n)
+            catc = CategoryColumn(max(n, 1))
             for i in range(n):
                 catc.append(_time_to_str(self.data_c[i]))
             return catc
         elif tname in ('timestamp', 'date'):
-            tc = DateColumn(n)
+            tc = DateColumn(max(n, 1))
             tc.length = n
             for i in range(n):
                 tc.data_c[i] = 0
