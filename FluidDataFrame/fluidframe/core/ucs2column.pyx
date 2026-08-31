@@ -6,7 +6,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -696,13 +696,11 @@ cdef class UCS2Column_SoA(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def astype(self, object target):
-        cdef str tname
-        if isinstance(target, str):
-            tname = target.lower()
-        else:
-            tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
+        cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
         cdef str s
+        cdef Py_ssize_t safe_cap = max(n, 1)
+
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef BoolColumn bc
@@ -711,34 +709,41 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
-        if tname in ('int', 'i4'):
-            ic = IntColumn(n)
+        if target_type == TYPE_INT:
+            ic = IntColumn(safe_cap)
             ic.length = n
             for i in range(n):
                 s = self[i]
                 ic.data_c[i] = int(float(s)) if s else 0
             return ic
-        elif tname in ('double', 'float'):
-            dc = DoubleColumn(n)
+
+        elif target_type == TYPE_DOUBLE:
+            dc = DoubleColumn(safe_cap)
             dc.length = n
             for i in range(n):
                 s = self[i]
                 dc.data_c[i] = float(s) if s else 0.0
             return dc
-        elif tname == 'bool':
-            bc = BoolColumn(n)
+
+        elif target_type == TYPE_BOOL:
+            bc = BoolColumn(safe_cap)
             bc.length = n
             for i in range(n):
-                s = self[i].lower() if self[i] else ''
-                bc.data_c[i] = 1 if s in ('true', '1', 'yes') else 0
+                s = self[i]
+                if s and (s == 'true' or s == 'True' or s == '1' or s == 'yes' or s == 'Yes'):
+                    bc.data_c[i] = 1
+                else:
+                    bc.data_c[i] = 0
             return bc
-        elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(n)
+
+        elif target_type == TYPE_CHAR256:
+            cc = Char256Column_SoA(safe_cap)
             for i in range(n):
                 cc.append(self[i])
             return cc
-        elif tname in ('timestamp', 'date'):
-            tc = DateColumn(n)
+
+        elif target_type == TYPE_TIMESTAMP:
+            tc = DateColumn(safe_cap)
             for i in range(n):
                 s = self[i]
                 if s:
@@ -746,13 +751,15 @@ cdef class UCS2Column_SoA(BaseColumn):
                 else:
                     tc.append(0)
             return tc
-        elif tname == 'category':
-            catc = CategoryColumn(n)
+
+        elif target_type == TYPE_CATEGORY:
+            catc = CategoryColumn(safe_cap)
             for i in range(n):
                 catc.append(self[i])
             return catc
-        elif tname == 'datetime':
-            dtc = DateTimeColumn(n)
+
+        elif target_type == TYPE_DATETIME:
+            dtc = DateTimeColumn(safe_cap)
             for i in range(n):
                 s = self[i]
                 if s:
@@ -760,8 +767,9 @@ cdef class UCS2Column_SoA(BaseColumn):
                 else:
                     dtc.append('')
             return dtc
-        elif tname == 'time':
-            tmc = TimeColumn(n)
+
+        elif target_type == TYPE_TIME:
+            tmc = TimeColumn(safe_cap)
             for i in range(n):
                 s = self[i]
                 if s:
@@ -769,4 +777,8 @@ cdef class UCS2Column_SoA(BaseColumn):
                 else:
                     tmc.append(0)
             return tmc
-        raise TypeError(f"Cannot convert ucs2 to '{tname}'")
+
+        elif target_type == TYPE_UCS2:
+            return self.copy()
+
+        raise TypeError(f"Failed to cast UCS2 column to internal type id: {target_type}")

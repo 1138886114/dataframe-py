@@ -66,3 +66,25 @@ cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t a
 
 cdef class BaseColumn:
     pass
+
+
+cdef inline int _resolve_astype_target(object target) except -1:
+    cdef str tname
+    if isinstance(target, str):
+        tname = target.lower()
+        if tname in ('int', 'i4', 'i8', 'int32', 'int64', 'integer'): return TYPE_INT
+        if tname in ('double', 'float', 'f8', 'f4', 'float64'): return TYPE_DOUBLE
+        if tname in ('bool', 'boolean'): return TYPE_BOOL
+        if tname in ('str', 'string', 'ucs2', 'unicode'): return TYPE_UCS2
+        if tname in ('char256', 'ascii'): return TYPE_CHAR256
+        if tname in ('timestamp', 'date'): return TYPE_TIMESTAMP
+        if tname == 'datetime': return TYPE_DATETIME
+        if tname == 'time': return TYPE_TIME
+        if tname in ('cat', 'category'): return TYPE_CATEGORY
+    else:
+        if target is int: return TYPE_INT
+        if target is float: return TYPE_DOUBLE
+        if target is bool: return TYPE_BOOL
+        if target is str: return TYPE_UCS2
+
+    raise TypeError(f"Cannot cast to unsupported target type: {target}")
