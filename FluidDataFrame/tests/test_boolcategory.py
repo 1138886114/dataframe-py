@@ -186,15 +186,15 @@ check(cc[1] == "banana", "CategoryColumn[1]")
 check(cc[2] == "apple", "CategoryColumn[2]")
 check(cc[3] == "cherry", "CategoryColumn[3]")
 
-# cat.codes
-codes = cc.cat.codes
+# cate.codes
+codes = cc.cate.codes
 check(codes[0] == 0, "codes apple=0")
 check(codes[1] == 1, "codes banana=1")
 check(codes[2] == 0, "codes apple=0 again")
 check(codes[3] == 2, "codes cherry=2")
 
-# cat.categories
-cats = cc.cat.categories
+# cate.categories
+cats = cc.cate.categories
 check(len(cats) == 3, "3 categories")
 check(cats[0] == "apple", "category 0")
 check(cats[1] == "banana", "category 1")
@@ -327,6 +327,119 @@ df6 = df6.append({'X': 1, 'Z': True})
 df6 = df6.append({'X': 2, 'Z': False})
 check(df6['Z'][0] is True, "df append bool col")
 check(df6['Z'][1] is False, "df append bool col 2")
+
+# ==================== _CategoryAccessor category management ====================
+print("=== CategoryAccessor category management ===")
+
+g = CategoryColumn(10)
+for v in ['apple', 'banana', 'apple', 'cherry', 'banana', 'apple']:
+    g.append(v)
+
+# codes returns a fast IntColumn copy
+codes = g.cate.codes
+check(isinstance(codes, IntColumn), "cate.codes is IntColumn")
+check(list(codes) == [0, 1, 0, 2, 1, 0], "cate.codes values")
+
+# categories returns a fresh list
+cats = g.cate.categories
+check(cats == ['apple', 'banana', 'cherry'], "cate.categories values")
+cats.append('mutated')
+check(g.cate.categories == ['apple', 'banana', 'cherry'], "cate.categories is a copy")
+
+# rename_categories with dict (not inplace)
+g2 = g.cate.rename_categories({'apple': 'fruit_a', 'banana': 'fruit_b'})
+check(g2.cate.categories == ['fruit_a', 'fruit_b', 'cherry'], "rename dict categories")
+check(list(g2.cate.codes) == list(g.cate.codes), "rename keeps codes")
+check([g2[i] for i in range(len(g2))] == ['fruit_a', 'fruit_b', 'fruit_a', 'cherry', 'fruit_b', 'fruit_a'], "rename dict values")
+check(g.cate.categories == ['apple', 'banana', 'cherry'], "rename not inplace preserves original")
+
+# rename_categories with list
+g3 = g.cate.rename_categories(['A', 'B', 'C'])
+check(g3.cate.categories == ['A', 'B', 'C'], "rename list categories")
+check([g3[i] for i in range(len(g3))] == ['A', 'B', 'A', 'C', 'B', 'A'], "rename list values")
+
+# rename_categories duplicate guard
+try:
+    g.cate.rename_categories({'apple': 'banana'})
+    check(False, "rename duplicate raises")
+except ValueError:
+    check(True, "rename duplicate raises")
+
+# rename_categories list length mismatch
+try:
+    g.cate.rename_categories(['A', 'B'])
+    check(False, "rename wrong-length list raises")
+except ValueError:
+    check(True, "rename wrong-length list raises")
+
+# rename_categories inplace
+g4 = CategoryColumn(6)
+for v in ['apple', 'banana']:
+    g4.append(v)
+r = g4.cate.rename_categories({'apple': 'x'}, inplace=True)
+check(r is None, "rename inplace returns None")
+check(g4.cate.categories == ['x', 'banana'], "rename inplace mutated")
+
+# add_categories
+g5 = g.cate.add_categories(['date', 'elderberry'])
+check(g5.cate.categories == ['apple', 'banana', 'cherry', 'date', 'elderberry'], "add_categories list")
+g5.append('date')
+check(g5[-1] == 'date', "add_categories allows append of new cat")
+check(list(g5.cate.codes)[-1] == 3, "add_categories new cat code")
+check('date' not in g.cate.categories, "add_categories not inplace preserves original")
+
+# add_categories dedups existing
+g6 = g.cate.add_categories(['apple', 'date'])
+check(g6.cate.categories == ['apple', 'banana', 'cherry', 'date'], "add_categories dedups existing")
+
+# set_categories to subset maps removed to ''
+g7 = g.cate.set_categories(['apple', 'banana'])
+check(g7.cate.categories == ['apple', 'banana', ''], "set_categories keeps '' placeholder")
+check([g7[i] for i in range(len(g7))] == ['apple', 'banana', 'apple', '', 'banana', 'apple'], "set_categories removed map to ''")
+check([g7[i] for i in range(len(g7)) if g7[i] != ''] == ['apple', 'banana', 'apple', 'banana', 'apple'], "set_categories kept cats intact")
+
+# set_categories reorders codes
+g8 = g.cate.set_categories(['cherry', 'apple', 'banana'])
+check(g8.cate.categories == ['cherry', 'apple', 'banana', ''], "set_categories ordering")
+check([g8[i] for i in range(len(g8))] == ['apple', 'banana', 'apple', 'cherry', 'banana', 'apple'], "set_categories reorder values")
+
+# set_categories inplace
+g9 = CategoryColumn(4)
+for v in ['apple', 'banana', 'apple', 'cherry']:
+    g9.append(v)
+r = g9.cate.set_categories(['apple'], inplace=True)
+check(r is None, "set_categories inplace returns None")
+check(g9.cate.categories == ['apple', ''], "set_categories inplace categories")
+check([g9[i] for i in range(len(g9))] == ['apple', '', 'apple', ''], "set_categories inplace values")
+
+# remove_categories
+g10 = g.cate.remove_categories(['cherry'])
+check(g10.cate.categories == ['apple', 'banana', ''], "remove_categories categories")
+check([g10[i] for i in range(len(g10))] == ['apple', 'banana', 'apple', '', 'banana', 'apple'], "remove_categories values")
+
+# remove_categories inplace
+g11 = CategoryColumn(4)
+for v in ['apple', 'banana', 'apple', 'cherry']:
+    g11.append(v)
+r = g11.cate.remove_categories(['apple'], inplace=True)
+check(r is None, "remove_categories inplace returns None")
+check(g11.cate.categories == ['banana', 'cherry', ''], "remove_categories inplace categories")
+check([g11[i] for i in range(len(g11))] == ['', 'banana', '', 'cherry'], "remove_categories inplace values")
+
+# codes on empty column
+g12 = CategoryColumn(0)
+empty_codes = g12.cate.codes
+check(len(empty_codes) == 0, "cate.codes empty column")
+check(g12.cate.categories == [], "cate.categories empty column")
+
+# category management integrated with DataFrame schema
+gdf = FastDataFrame(schema={'C': 'category'})
+gdf = gdf.append({'C': 'apple'})
+gdf = gdf.append({'C': 'banana'})
+gdf = gdf.append({'C': 'apple'})
+gdfr = gdf['C'].cate.rename_categories({'apple': 'AA'})
+check(list(gdfr.cate.codes) == [0, 1, 0], "df cat rename keeps codes")
+check(gdfr[0] == 'AA', "df cat rename value")
 
 print(f"\nResults: {PASSED} passed, {FAILED} failed")
 if FAILED > 0:

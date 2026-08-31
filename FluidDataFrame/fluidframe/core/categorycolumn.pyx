@@ -118,7 +118,7 @@ cdef class CategoryColumn(BaseColumn):
         self.codes_c = new_data
 
     @property
-    def cat(self):
+    def cate(self):
         return _CategoryAccessor(self)
 
     def __getitem__(self, Py_ssize_t idx):
@@ -312,14 +312,125 @@ cdef class _CategoryAccessor:
 
     @property
     def codes(self):
-        cdef IntColumn res
-        res = IntColumn(max(self.col.capacity, 1))
+        """返回底层的整数编码 (IntColumn)。使用底层内存拷贝，速度极快。"""
+        cdef IntColumn res = IntColumn(max(self.col.capacity, 1))
         res.length = self.col.length
-        cdef Py_ssize_t i
-        for i in range(self.col.length):
-            res.data_c[i] = self.col.codes_c[i]
+        if self.col.length > 0:
+            with nogil:
+                memcpy(res.data_c, self.col.codes_c, self.col.length * sizeof(int))
         return res
 
     @property
     def categories(self):
+        """返回当前所有的不重复类别列表。"""
         return list(self.col.categories)
+
+    @cython.binding(False)
+    def rename_categories(self, mapper, bint inplace=False):
+        """
+        重命名现有的类别。这是一个极速的 O(K) 元数据操作。
+        mapper 可以是字典 {'old_name': 'new_name'}，也可以是对应长度的列表。
+        """
+        cdef CategoryColumn target = self.col if inplace else self.col.copy()
+        cdef list new_cats = list(target.categories)
+        cdef int i
+
+        if isinstance(mapper, dict):
+            for i in range(len(new_cats)):
+                if new_cats[i] in mapper:
+                    new_cats[i] = str(mapper[new_cats[i]])
+        elif isinstance(mapper, list):
+            if len(mapper) != len(new_cats):
+                raise ValueError(f"新类别列表的长度 ({len(mapper)}) 必须等于原类别长度 ({len(new_cats)})")
+            for i in range(len(mapper)):
+                new_cats[i] = str(mapper[i])
+        else:
+            raise TypeError("mapper 必须是字典或列表")
+
+        if len(new_cats) != len(set(new_cats)):
+            raise ValueError("rename_categories 不能产生重复的类别")
+
+        target.categories = new_cats
+        target._cat_to_code = {}
+        for i in range(len(new_cats)):
+            target._cat_to_code[new_cats[i]] = i
+
+        if not inplace:
+            return target
+
+    @cython.binding(False)
+    def add_categories(self, list new_categories, bint inplace=False):
+        """添加新的类别选项，原有的数据和编码不发生改变。"""
+        cdef CategoryColumn target = self.col if inplace else self.col.copy()
+        cdef str c
+
+        for c in new_categories:
+            c_str = str(c)
+            if c_str not in target._cat_to_code:
+                target._cat_to_code[c_str] = len(target.categories)
+                target.categories.append(c_str)
+
+        if not inplace:
+            return target
+
+    @cython.binding(False)
+    def remove_categories(self, list removals, bint inplace=False):
+        """移除指定的类别。列中原有属于该类别的数据将被安全置空 ('')。"""
+        cdef set rem_set = set([str(x) for x in removals])
+        cdef list new_cats = [c for c in self.col.categories if c not in rem_set]
+        return self.set_categories(new_cats, inplace=inplace)
+
+    @cython.binding(False)
+    def set_categories(self, list new_categories, bint inplace=False):
+        """
+        强行设置列的类别为指定的列表。
+        不在新列表中的老类别的数据将被置空 ('')，底层 O(N) 极速映射。
+        """
+        cdef CategoryColumn target = self.col if inplace else self.col.copy()
+        cdef dict final_cat_to_code = {}
+        cdef list final_categories = []
+        cdef str c, c_str
+        cdef int n_new = 0
+
+        # 1. 构建全新的类别结构
+        for c in new_categories:
+            c_str = str(c)
+            if c_str not in final_cat_to_code:
+                final_cat_to_code[c_str] = n_new
+                final_categories.append(c_str)
+                n_new += 1
+
+        # 确保缺失值占位符 '' 存在，防止引发越界
+        if '' not in final_cat_to_code:
+            final_cat_to_code[''] = n_new
+            final_categories.append('')
+            n_new += 1
+
+        cdef int missing_code = final_cat_to_code['']
+
+        # 2. 构建安全的旧代码到新代码映射表 (避免嵌套字典查找)
+        cdef int old_len = len(target.categories)
+        cdef int* code_map = <int*>aligned_malloc(max(old_len, 1) * sizeof(int))
+        if not code_map: raise MemoryError()
+
+        cdef int old_code
+        for old_code, old_cat in enumerate(target.categories):
+            if old_cat in final_cat_to_code:
+                code_map[old_code] = final_cat_to_code[old_cat]
+            else:
+                code_map[old_code] = missing_code
+
+        # 3. O(N) C级别极速映射
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(target.length):
+                target.codes_c[i] = code_map[target.codes_c[i]]
+
+        os_aligned_free(code_map)
+
+        # 4. 更新对象元数据
+        target.categories = final_categories
+        target._cat_to_code = final_cat_to_code
+
+        if not inplace:
+            return target
