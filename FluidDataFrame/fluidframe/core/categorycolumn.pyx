@@ -68,6 +68,13 @@ cdef class CategoryColumn(BaseColumn):
         self.length -= 1
         return self.categories[self.codes_c[self.length]]
 
+    def pop_front(self):
+        if self.length == 0: raise IndexError("pop from empty column")
+        cdef int val_code = self.codes_c[0]
+        memmove(self.codes_c, self.codes_c + 1, (self.length - 1) * sizeof(int))
+        self.length -= 1
+        return self.categories[val_code]
+
     def concat(self, CategoryColumn other):
         cdef Py_ssize_t new_len = self.length + other.length
         self._reserve(new_len)
@@ -79,13 +86,36 @@ cdef class CategoryColumn(BaseColumn):
         self.length = new_len
 
     def copy(self):
-        cdef CategoryColumn col = CategoryColumn(self.capacity)
+        cdef CategoryColumn col = CategoryColumn(max(self.capacity, 1))
         col.length = self.length
         col.categories = list(self.categories)
         col._cat_to_code = dict(self._cat_to_code)
         if self.length > 0:
             memcpy(col.codes_c, self.codes_c, self.length * sizeof(int))
         return col
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def _reorder(self, list indices):
+        cdef Py_ssize_t n = len(indices)
+        if n != self.length:
+            raise ValueError("Length of indices must match column length")
+
+        cdef int* new_data = <int*>aligned_malloc(max(n, 1) * sizeof(int))
+        if not new_data: raise MemoryError()
+        cdef Py_ssize_t i, idx
+        try:
+            for i in range(n):
+                idx = <Py_ssize_t>indices[i]
+                if idx < 0: idx += self.length
+                if idx < 0 or idx >= self.length:
+                    raise IndexError("Index out of bounds")
+                new_data[i] = self.codes_c[idx]
+        except Exception:
+            os_aligned_free(new_data)
+            raise
+        os_aligned_free(self.codes_c)
+        self.codes_c = new_data
 
     @property
     def cat(self):
@@ -110,7 +140,7 @@ cdef class CategoryColumn(BaseColumn):
 
     def isin(self, set values):
         cdef BoolColumn res
-        res = BoolColumn(self.capacity)
+        res = BoolColumn(max(self.capacity, 1))
         res.length = self.length
         cdef Py_ssize_t i
         cdef str val
@@ -123,7 +153,7 @@ cdef class CategoryColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
-        cdef CategoryColumn col = CategoryColumn(n)
+        cdef CategoryColumn col = CategoryColumn(max(n, 1))
         cdef Py_ssize_t i
         cdef str fill_str = str(fill) if fill is not None else ''
         for i in range(n):
@@ -155,7 +185,7 @@ cdef class CategoryColumn(BaseColumn):
                 new_col.codes_c[i] = self.codes_c[indices[i]]
             return new_col
         else:
-            new_codes = <int*>aligned_malloc(max(n, self.capacity) * sizeof(int))
+            new_codes = <int*>aligned_malloc(max(max(n, self.capacity), 1) * sizeof(int))
             if not new_codes: raise MemoryError()
             for i in range(n):
                 new_codes[i] = self.codes_c[indices[i]]
@@ -166,6 +196,8 @@ cdef class CategoryColumn(BaseColumn):
             return self
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        if row_idx < 0:
+            row_idx += self.length
         if rem_len > 0:
             memmove(self.codes_c + row_idx,
                     self.codes_c + row_idx + 1,
@@ -209,41 +241,41 @@ cdef class CategoryColumn(BaseColumn):
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
         if tname in ('int', 'i4'):
-            ic = IntColumn(n)
+            ic = IntColumn(max(n, 1))
             ic.length = n
             for i in range(n):
                 s = self._resolve(i)
                 ic.data_c[i] = int(float(s)) if s else 0
             return ic
         elif tname in ('double', 'float'):
-            dc = DoubleColumn(n)
+            dc = DoubleColumn(max(n, 1))
             dc.length = n
             for i in range(n):
                 s = self._resolve(i)
                 dc.data_c[i] = float(s) if s else 0.0
             return dc
         elif tname == 'bool':
-            bc = BoolColumn(n)
+            bc = BoolColumn(max(n, 1))
             bc.length = n
             for i in range(n):
                 s = self._resolve(i)
                 bc.data_c[i] = 1 if s.lower() in ('true', '1', 'yes') else 0
             return bc
         elif tname in ('str', 'string', 'ucs2'):
-            uc = UCS2Column_SoA(n)
+            uc = UCS2Column_SoA(max(n, 1))
             uc.length = n
             for i in range(n):
                 s = self._resolve(i)
                 uc._set_item(i, s)
             return uc
         elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(n)
+            cc = Char256Column_SoA(max(n, 1))
             for i in range(n):
                 s = self._resolve(i)
                 cc.append(s)
             return cc
         elif tname in ('timestamp', 'date'):
-            tc = DateColumn(n)
+            tc = DateColumn(max(n, 1))
             for i in range(n):
                 s = self._resolve(i)
                 if s:
@@ -252,7 +284,7 @@ cdef class CategoryColumn(BaseColumn):
                     tc.append(0)
             return tc
         elif tname == 'datetime':
-            dtc = DateTimeColumn(n)
+            dtc = DateTimeColumn(max(n, 1))
             for i in range(n):
                 s = self._resolve(i)
                 if s:
@@ -261,7 +293,7 @@ cdef class CategoryColumn(BaseColumn):
                     dtc.append('')
             return dtc
         elif tname == 'time':
-            tmc = TimeColumn(n)
+            tmc = TimeColumn(max(n, 1))
             for i in range(n):
                 s = self._resolve(i)
                 if s:
@@ -281,7 +313,7 @@ cdef class _CategoryAccessor:
     @property
     def codes(self):
         cdef IntColumn res
-        res = IntColumn(self.col.capacity)
+        res = IntColumn(max(self.col.capacity, 1))
         res.length = self.col.length
         cdef Py_ssize_t i
         for i in range(self.col.length):
