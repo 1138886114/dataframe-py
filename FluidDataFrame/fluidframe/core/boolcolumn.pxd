@@ -1,7 +1,5 @@
 # cython: language_level=3
 cimport cython
-from libc.stdlib cimport malloc, realloc, free
-from libc.string cimport memcpy, memmove
 from fluidframe.core._base cimport BaseColumn
 
 @cython.final

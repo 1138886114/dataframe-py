@@ -4,10 +4,8 @@
 # cython: cdivision=True
 
 cimport cython
-from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove
-from libc.math cimport NAN
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CATEGORY, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_DATETIME, TYPE_TIME
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CATEGORY
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -53,6 +51,11 @@ cdef class CategoryColumn(BaseColumn):
             self._cat_to_code[val] = code
         return self._cat_to_code[val]
 
+    cdef inline str _resolve(self, Py_ssize_t i):
+        if self.codes_c[i] < len(self.categories):
+            return self.categories[self.codes_c[i]]
+        return ''
+
     def append(self, object val):
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
@@ -61,8 +64,9 @@ cdef class CategoryColumn(BaseColumn):
         self.length += 1
 
     def pop_back(self):
-        if self.length > 0:
-            self.length -= 1
+        if self.length == 0: raise IndexError("pop from empty column")
+        self.length -= 1
+        return self.categories[self.codes_c[self.length]]
 
     def concat(self, CategoryColumn other):
         cdef Py_ssize_t new_len = self.length + other.length
@@ -141,24 +145,32 @@ cdef class CategoryColumn(BaseColumn):
         return self.__str__()
 
     cdef CategoryColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef CategoryColumn col
-        if inplace:
-            col = self
-        else:
-            col = CategoryColumn(n)
-        col.length = n
-        col.categories = list(self.categories)
-        col._cat_to_code = dict(self._cat_to_code)
         cdef Py_ssize_t i
-        for i in range(n):
-            col.codes_c[i] = self.codes_c[indices[i]]
-        return col
+        if not inplace:
+            new_col = CategoryColumn(max(n, 1))
+            new_col.length = n
+            new_col.categories = list(self.categories)
+            new_col._cat_to_code = dict(self._cat_to_code)
+            for i in range(n):
+                new_col.codes_c[i] = self.codes_c[indices[i]]
+            return new_col
+        else:
+            new_codes = <int*>aligned_malloc(max(n, self.capacity) * sizeof(int))
+            if not new_codes: raise MemoryError()
+            for i in range(n):
+                new_codes[i] = self.codes_c[indices[i]]
+            os_aligned_free(self.codes_c)
+            self.codes_c = new_codes
+            self.capacity = max(n, self.capacity)
+            self.length = n
+            return self
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
-        if row_idx < self.length - 1:
-            memmove(self.codes_c + row_idx, self.codes_c + row_idx + 1,
-                    (self.length - 1 - row_idx) * sizeof(int))
-        self.length = rem_len
+        if rem_len > 0:
+            memmove(self.codes_c + row_idx,
+                    self.codes_c + row_idx + 1,
+                    rem_len * sizeof(int))
+        self.length -= 1
 
     def __eq__(self, other):
         cdef CategoryColumn o
@@ -200,40 +212,40 @@ cdef class CategoryColumn(BaseColumn):
             ic = IntColumn(n)
             ic.length = n
             for i in range(n):
-                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                s = self._resolve(i)
                 ic.data_c[i] = int(float(s)) if s else 0
             return ic
         elif tname in ('double', 'float'):
             dc = DoubleColumn(n)
             dc.length = n
             for i in range(n):
-                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                s = self._resolve(i)
                 dc.data_c[i] = float(s) if s else 0.0
             return dc
         elif tname == 'bool':
             bc = BoolColumn(n)
             bc.length = n
             for i in range(n):
-                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                s = self._resolve(i)
                 bc.data_c[i] = 1 if s.lower() in ('true', '1', 'yes') else 0
             return bc
         elif tname in ('str', 'string', 'ucs2'):
             uc = UCS2Column_SoA(n)
             uc.length = n
             for i in range(n):
-                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                s = self._resolve(i)
                 uc._set_item(i, s)
             return uc
         elif tname in ('char256', 'ascii'):
             cc = Char256Column_SoA(n)
             for i in range(n):
-                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                s = self._resolve(i)
                 cc.append(s)
             return cc
         elif tname in ('timestamp', 'date'):
             tc = DateColumn(n)
             for i in range(n):
-                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                s = self._resolve(i)
                 if s:
                     tc.append(s)
                 else:
@@ -242,7 +254,7 @@ cdef class CategoryColumn(BaseColumn):
         elif tname == 'datetime':
             dtc = DateTimeColumn(n)
             for i in range(n):
-                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                s = self._resolve(i)
                 if s:
                     dtc.append(s)
                 else:
@@ -251,7 +263,7 @@ cdef class CategoryColumn(BaseColumn):
         elif tname == 'time':
             tmc = TimeColumn(n)
             for i in range(n):
-                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                s = self._resolve(i)
                 if s:
                     tmc.append(s)
                 else:

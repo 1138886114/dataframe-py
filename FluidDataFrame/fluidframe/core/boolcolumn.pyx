@@ -4,10 +4,9 @@
 # cython: cdivision=True
 
 cimport cython
-from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove
 from libc.math cimport NAN
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
@@ -55,8 +54,16 @@ cdef class BoolColumn(BaseColumn):
         self.length += 1
 
     def pop_back(self):
-        if self.length > 0:
-            self.length -= 1
+        if self.length == 0: raise IndexError("pop from empty column")
+        self.length -= 1
+        return bool(self.data_c[self.length])
+
+    def pop_front(self):
+        if self.length == 0: raise IndexError("pop from empty column")
+        cdef unsigned char val = self.data_c[0]
+        memmove(self.data_c, self.data_c + 1, (self.length - 1) * sizeof(unsigned char))
+        self.length -= 1
+        return bool(val)
 
     def concat(self, BoolColumn other):
         cdef Py_ssize_t new_len = self.length + other.length
@@ -169,22 +176,32 @@ cdef class BoolColumn(BaseColumn):
         return self.__str__()
 
     cdef BoolColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef BoolColumn col
-        if inplace:
-            col = self
-        else:
-            col = BoolColumn(n)
-        col.length = n
         cdef Py_ssize_t i
-        for i in range(n):
-            col.data_c[i] = self.data_c[indices[i]]
-        return col
+        if not inplace:
+            new_col = BoolColumn(max(n, 1))
+            new_col.length = n
+            with nogil:
+                for i in range(n):
+                    new_col.data_c[i] = self.data_c[indices[i]]
+            return new_col
+        else:
+            new_data = <unsigned char*>aligned_malloc(max(n, self.capacity) * sizeof(unsigned char))
+            if not new_data: raise MemoryError()
+            with nogil:
+                for i in range(n):
+                    new_data[i] = self.data_c[indices[i]]
+            os_aligned_free(self.data_c)
+            self.data_c = new_data
+            self.capacity = max(n, self.capacity)
+            self.length = n
+            return self
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
-        if row_idx < self.length - 1:
-            memmove(self.data_c + row_idx, self.data_c + row_idx + 1,
-                    (self.length - 1 - row_idx) * sizeof(unsigned char))
-        self.length = rem_len
+        if rem_len > 0:
+            memmove(self.data_c + row_idx,
+                    self.data_c + row_idx + 1,
+                    rem_len * sizeof(unsigned char))
+        self.length -= 1
 
     def __eq__(self, other):
         cdef BoolColumn o

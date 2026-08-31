@@ -960,8 +960,6 @@ cdef class DateColumn(BaseColumn):
             return self
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
-        if row_idx < 0:
-            row_idx += self.length
         if rem_len > 0:
             memmove(self.data_c + row_idx,
                     self.data_c + row_idx + 1,

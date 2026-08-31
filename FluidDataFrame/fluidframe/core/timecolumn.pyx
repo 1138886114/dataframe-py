@@ -6,7 +6,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_TIME, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_CATEGORY, TYPE_TIMESTAMP
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_TIME
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
@@ -35,14 +35,25 @@ cdef int _parse_time_str(str s):
     if ndigits < 2:
         raise ValueError(f"Invalid time string: '{s}'")
 
-    if ndigits >= 2:
-        hour = digits[0]*10 + digits[1]
+    hour = digits[0]*10 + digits[1]
     if ndigits >= 4:
         minute = digits[2]*10 + digits[3]
     if ndigits >= 6:
         second = digits[4]*10 + digits[5]
 
     return hour * 3600 + minute * 60 + second
+
+
+cdef inline void _secs_to_hms(int secs, int* h, int* m, int* s) noexcept nogil:
+    h[0] = secs / 3600
+    m[0] = (secs % 3600) / 60
+    s[0] = secs % 60
+
+
+cdef inline str _time_to_str(int secs):
+    cdef int h, m, s
+    _secs_to_hms(secs, &h, &m, &s)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 @cython.final
@@ -159,11 +170,7 @@ cdef class TimeColumn(BaseColumn):
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError()
-        cdef int secs = self.data_c[idx]
-        cdef int h = secs / 3600
-        cdef int m = (secs % 3600) / 60
-        cdef int s = secs % 60
-        return f"{h:02d}:{m:02d}:{s:02d}"
+        return _time_to_str(self.data_c[idx])
 
     @cython.binding(False)
     def unique(self):
@@ -181,24 +188,30 @@ cdef class TimeColumn(BaseColumn):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
+        cdef int h, m, s
         for i in range(self.length):
-            res.data_c[i] = self.data_c[i] / 3600
+            _secs_to_hms(self.data_c[i], &h, &m, &s)
+            res.data_c[i] = h
         return res
 
     def minute(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
+        cdef int h, m, s
         for i in range(self.length):
-            res.data_c[i] = (self.data_c[i] % 3600) / 60
+            _secs_to_hms(self.data_c[i], &h, &m, &s)
+            res.data_c[i] = m
         return res
 
     def second(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
+        cdef int h, m, s
         for i in range(self.length):
-            res.data_c[i] = self.data_c[i] % 60
+            _secs_to_hms(self.data_c[i], &h, &m, &s)
+            res.data_c[i] = s
         return res
 
     @cython.binding(False)
@@ -240,22 +253,30 @@ cdef class TimeColumn(BaseColumn):
         return res
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
-        if row_idx < self.length - 1:
-            memmove(self.data_c + row_idx, self.data_c + row_idx + 1,
-                    (self.length - 1 - row_idx) * sizeof(int))
-        self.length = rem_len
+        if rem_len > 0:
+            memmove(self.data_c + row_idx,
+                    self.data_c + row_idx + 1,
+                    rem_len * sizeof(int))
+        self.length -= 1
 
     cdef TimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef TimeColumn col
-        if inplace:
-            col = self
-        else:
-            col = TimeColumn(n)
-        col.length = n
         cdef Py_ssize_t i
-        for i in range(n):
-            col.data_c[i] = self.data_c[indices[i]]
-        return col
+        if not inplace:
+            new_col = TimeColumn(max(n, 1))
+            new_col.length = n
+            for i in range(n):
+                new_col.data_c[i] = self.data_c[indices[i]]
+            return new_col
+        else:
+            new_data = <int*>aligned_malloc(max(n, self.capacity) * sizeof(int))
+            if not new_data: raise MemoryError()
+            for i in range(n):
+                new_data[i] = self.data_c[indices[i]]
+            os_aligned_free(self.data_c)
+            self.data_c = new_data
+            self.capacity = max(n, self.capacity)
+            self.length = n
+            return self
 
     def astype(self, object target):
         cdef str tname
@@ -264,9 +285,9 @@ cdef class TimeColumn(BaseColumn):
         else:
             tname = {int: 'int', float: 'double', str: 'ucs2'}.get(target, '')
         cdef Py_ssize_t i, n = self.length
-        cdef int h, m, s
         cdef IntColumn ic
         cdef DoubleColumn dc
+        cdef BoolColumn bc
         cdef UCS2Column_SoA uc
         cdef Char256Column_SoA cc
         cdef CategoryColumn catc
@@ -293,26 +314,17 @@ cdef class TimeColumn(BaseColumn):
             uc = UCS2Column_SoA(n)
             uc.length = n
             for i in range(n):
-                h = self.data_c[i] / 3600
-                m = (self.data_c[i] % 3600) / 60
-                s = self.data_c[i] % 60
-                uc._set_item(i, f"{h:02d}:{m:02d}:{s:02d}")
+                uc._set_item(i, _time_to_str(self.data_c[i]))
             return uc
         elif tname in ('char256', 'ascii'):
             cc = Char256Column_SoA(n)
             for i in range(n):
-                h = self.data_c[i] / 3600
-                m = (self.data_c[i] % 3600) / 60
-                s = self.data_c[i] % 60
-                cc.append(f"{h:02d}:{m:02d}:{s:02d}")
+                cc.append(_time_to_str(self.data_c[i]))
             return cc
         elif tname == 'category':
             catc = CategoryColumn(n)
             for i in range(n):
-                h = self.data_c[i] / 3600
-                m = (self.data_c[i] % 3600) / 60
-                s = self.data_c[i] % 60
-                catc.append(f"{h:02d}:{m:02d}:{s:02d}")
+                catc.append(_time_to_str(self.data_c[i]))
             return catc
         elif tname in ('timestamp', 'date'):
             tc = DateColumn(n)

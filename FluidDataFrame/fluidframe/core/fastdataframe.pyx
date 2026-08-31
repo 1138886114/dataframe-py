@@ -231,6 +231,42 @@ cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indic
     _c_argsort_ucs2(chars, offsets, indices, i, right)
 
 
+cdef inline void _c_shift_right(void* buf, Py_ssize_t pos, Py_ssize_t col_len, Py_ssize_t elem_size) noexcept nogil:
+    cdef Py_ssize_t n = col_len - pos
+    if n > 0:
+        memmove(<char*>buf + (pos + 1) * elem_size,
+                <char*>buf + pos * elem_size,
+                n * elem_size)
+
+
+cdef inline void _c_shift_left(void* buf, Py_ssize_t pos, Py_ssize_t col_len, Py_ssize_t elem_size) noexcept nogil:
+    cdef Py_ssize_t n = col_len - pos - 1
+    if n > 0:
+        memmove(<char*>buf + pos * elem_size,
+                <char*>buf + (pos + 1) * elem_size,
+                n * elem_size)
+
+
+cdef dict _TYPE_NAMES = {
+    TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_CHAR256: 'char256',
+    TYPE_UCS2: 'ucs2', TYPE_TIMESTAMP: 'timestamp', TYPE_BOOL: 'bool',
+    TYPE_CATEGORY: 'category', TYPE_DATETIME: 'datetime', TYPE_TIME: 'time',
+}
+
+cdef dict _TYPE_PYCLASSES = {
+    TYPE_INT: int, TYPE_DOUBLE: float, TYPE_CHAR256: Char256,
+    TYPE_UCS2: str, TYPE_TIMESTAMP: Timestamp, TYPE_BOOL: bool,
+    TYPE_CATEGORY: Category, TYPE_DATETIME: DateTime, TYPE_TIME: Time,
+}
+
+cdef dict _TYPE_BYTES = {
+    TYPE_INT: sizeof(int), TYPE_DOUBLE: sizeof(double), TYPE_CHAR256: 256,
+    TYPE_UCS2: sizeof(Py_UCS2), TYPE_TIMESTAMP: sizeof(long long),
+    TYPE_BOOL: 1, TYPE_CATEGORY: sizeof(int),
+    TYPE_DATETIME: sizeof(long long), TYPE_TIME: sizeof(int),
+}
+
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -258,16 +294,7 @@ cdef class FastDataFrame:
         raise TypeError(f"Unsupported column dtype: {col.dtype}")
 
     cdef str _type_name(self, BaseColumn col):
-        if col.dtype == TYPE_INT: return 'int'
-        elif col.dtype == TYPE_DOUBLE: return 'float'
-        elif col.dtype == TYPE_CHAR256: return 'char256'
-        elif col.dtype == TYPE_UCS2: return 'ucs2'
-        elif col.dtype == TYPE_TIMESTAMP: return 'timestamp'
-        elif col.dtype == TYPE_BOOL: return 'bool'
-        elif col.dtype == TYPE_CATEGORY: return 'category'
-        elif col.dtype == TYPE_DATETIME: return 'datetime'
-        elif col.dtype == TYPE_TIME: return 'time'
-        return 'unknown'
+        return _TYPE_NAMES.get(col.dtype, 'unknown')
 
     cdef BaseColumn _diff_column(self, BaseColumn col, int periods):
         if col.dtype == TYPE_INT:
@@ -914,24 +941,7 @@ cdef class FastDataFrame:
         cdef str name
         cdef BaseColumn col
         for name, col in self.columns.items():
-            if col.dtype == TYPE_INT:
-                result[name] = int
-            elif col.dtype == TYPE_DOUBLE:
-                result[name] = float
-            elif col.dtype == TYPE_CHAR256:
-                result[name] = Char256
-            elif col.dtype == TYPE_UCS2:
-                result[name] = str
-            elif col.dtype == TYPE_TIMESTAMP:
-                result[name] = Timestamp
-            elif col.dtype == TYPE_BOOL:
-                result[name] = bool
-            elif col.dtype == TYPE_CATEGORY:
-                result[name] = Category
-            elif col.dtype == TYPE_DATETIME:
-                result[name] = DateTime
-            elif col.dtype == TYPE_TIME:
-                result[name] = Time
+            result[name] = _TYPE_PYCLASSES.get(col.dtype, None)
         return result
 
     @cython.binding(False)
@@ -949,8 +959,6 @@ cdef class FastDataFrame:
         cdef str name, val, top_val
         cdef Py_ssize_t col_len, i, max_freq, freq_val
         cdef long long ts_min, ts_max
-        cdef long long dtc_min, dtc_max
-        cdef int tmc_min, tmc_max
         cdef dict freq_map
         for name, col_obj in self.columns.items():
             col_len = col_obj.length
@@ -980,7 +988,8 @@ cdef class FastDataFrame:
                     'top': top_val,
                     'freq': max_freq,
                 }
-            elif col_obj.dtype == TYPE_TIMESTAMP:
+            elif (col_obj.dtype == TYPE_TIMESTAMP or col_obj.dtype == TYPE_DATETIME
+                  or col_obj.dtype == TYPE_TIME):
                 if col_len > 0:
                     ts_min = col_obj.min()
                     ts_max = col_obj.max()
@@ -990,28 +999,6 @@ cdef class FastDataFrame:
                     'count': col_len,
                     'min': ts_min,
                     'max': ts_max,
-                }
-            elif col_obj.dtype == TYPE_DATETIME:
-                if col_len > 0:
-                    dtc_min = col_obj.min()
-                    dtc_max = col_obj.max()
-                else:
-                    dtc_min = dtc_max = 0
-                stats[name] = {
-                    'count': col_len,
-                    'min': dtc_min,
-                    'max': dtc_max,
-                }
-            elif col_obj.dtype == TYPE_TIME:
-                if col_len > 0:
-                    tmc_min = col_obj.min()
-                    tmc_max = col_obj.max()
-                else:
-                    tmc_min = tmc_max = 0
-                stats[name] = {
-                    'count': col_len,
-                    'min': tmc_min,
-                    'max': tmc_max,
                 }
             elif col_obj.dtype == TYPE_BOOL or col_obj.dtype == TYPE_CATEGORY:
                 freq_map = {}
@@ -1647,7 +1634,6 @@ cdef class FastDataFrame:
         cdef Py_ssize_t rem, col_len
         cdef Py_ssize_t start_offset, new_offsets_len, i
         cdef UCS2Column_SoA ucs2_col
-        cdef Py_ssize_t* new_offsets
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef Char256Column_SoA cc
@@ -1659,35 +1645,23 @@ cdef class FastDataFrame:
         if col.dtype == TYPE_INT:
             ic = <IntColumn>col
             col_len = ic.length
-            rem = col_len - pos
             if col_len >= ic.capacity:
                 ic._reserve(ic.capacity * 2)
-            if rem > 0:
-                memmove(ic.data_c + pos + 1,
-                        ic.data_c + pos,
-                        rem * sizeof(int))
+            _c_shift_right(ic.data_c, pos, col_len, sizeof(int))
             ic.length = col_len + 1
         elif col.dtype == TYPE_DOUBLE:
             dc = <DoubleColumn>col
             col_len = dc.length
-            rem = col_len - pos
             if col_len >= dc.capacity:
                 dc._reserve(dc.capacity * 2)
-            if rem > 0:
-                memmove(dc.data_c + pos + 1,
-                        dc.data_c + pos,
-                        rem * sizeof(double))
+            _c_shift_right(dc.data_c, pos, col_len, sizeof(double))
             dc.length = col_len + 1
         elif col.dtype == TYPE_CHAR256:
             cc = <Char256Column_SoA>col
             col_len = cc.length
-            rem = col_len - pos
             if col_len >= cc.capacity:
                 cc._reserve(cc.capacity * 2)
-            if rem > 0:
-                memmove(cc.data_c + ((pos + 1) * 256),
-                        cc.data_c + (pos * 256),
-                        rem * 256)
+            _c_shift_right(cc.data_c, pos, col_len, 256)
             cc.length = col_len + 1
         elif col.dtype == TYPE_UCS2:
             ucs2_col = <UCS2Column_SoA>col
@@ -1704,61 +1678,41 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_TIMESTAMP:
             tc = <DateColumn>col
             col_len = tc.length
-            rem = col_len - pos
             if col_len >= tc.capacity:
                 tc._reserve(tc.capacity * 2)
-            if rem > 0:
-                memmove(tc.data_c + pos + 1,
-                        tc.data_c + pos,
-                        rem * sizeof(long long))
+            _c_shift_right(tc.data_c, pos, col_len, sizeof(long long))
             tc.length = col_len + 1
 
         elif col.dtype == TYPE_BOOL:
             bool_col = <BoolColumn>col
             col_len = bool_col.length
-            rem = col_len - pos
             if col_len >= bool_col.capacity:
                 bool_col._reserve(bool_col.capacity * 2)
-            if rem > 0:
-                memmove(bool_col.data_c + pos + 1,
-                        bool_col.data_c + pos,
-                        rem * sizeof(unsigned char))
+            _c_shift_right(bool_col.data_c, pos, col_len, sizeof(unsigned char))
             bool_col.length = col_len + 1
 
         elif col.dtype == TYPE_CATEGORY:
             cat_col = <CategoryColumn>col
             col_len = cat_col.length
-            rem = col_len - pos
             if col_len >= cat_col.capacity:
                 cat_col._reserve(cat_col.capacity * 2)
-            if rem > 0:
-                memmove(cat_col.codes_c + pos + 1,
-                        cat_col.codes_c + pos,
-                        rem * sizeof(int))
+            _c_shift_right(cat_col.codes_c, pos, col_len, sizeof(int))
             cat_col.length = col_len + 1
 
         elif col.dtype == TYPE_DATETIME:
             dtc_col = <DateTimeColumn>col
             col_len = dtc_col.length
-            rem = col_len - pos
             if col_len >= dtc_col.capacity:
                 dtc_col._reserve(dtc_col.capacity * 2)
-            if rem > 0:
-                memmove(dtc_col.data_c + pos + 1,
-                        dtc_col.data_c + pos,
-                        rem * sizeof(long long))
+            _c_shift_right(dtc_col.data_c, pos, col_len, sizeof(long long))
             dtc_col.length = col_len + 1
 
         elif col.dtype == TYPE_TIME:
             tmc_col = <TimeColumn>col
             col_len = tmc_col.length
-            rem = col_len - pos
             if col_len >= tmc_col.capacity:
                 tmc_col._reserve(tmc_col.capacity * 2)
-            if rem > 0:
-                memmove(tmc_col.data_c + pos + 1,
-                        tmc_col.data_c + pos,
-                        rem * sizeof(int))
+            _c_shift_right(tmc_col.data_c, pos, col_len, sizeof(int))
             tmc_col.length = col_len + 1
 
     cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos):
@@ -1766,7 +1720,6 @@ cdef class FastDataFrame:
         cdef Py_ssize_t rem, col_len
         cdef Py_ssize_t start_offset, new_offsets_len, i
         cdef UCS2Column_SoA ucs2_col
-        cdef Py_ssize_t* new_offsets
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef Char256Column_SoA cc
@@ -1778,29 +1731,17 @@ cdef class FastDataFrame:
         if col.dtype == TYPE_INT:
             ic = <IntColumn>col
             col_len = ic.length
-            rem = col_len - pos - 1
-            if rem > 0:
-                memmove(ic.data_c + pos,
-                        ic.data_c + pos + 1,
-                        rem * sizeof(int))
+            _c_shift_left(ic.data_c, pos, col_len, sizeof(int))
             ic.length = col_len - 1
         elif col.dtype == TYPE_DOUBLE:
             dc = <DoubleColumn>col
             col_len = dc.length
-            rem = col_len - pos - 1
-            if rem > 0:
-                memmove(dc.data_c + pos,
-                        dc.data_c + pos + 1,
-                        rem * sizeof(double))
+            _c_shift_left(dc.data_c, pos, col_len, sizeof(double))
             dc.length = col_len - 1
         elif col.dtype == TYPE_CHAR256:
             cc = <Char256Column_SoA>col
             col_len = cc.length
-            rem = col_len - pos - 1
-            if rem > 0:
-                memmove(cc.data_c + (pos * 256),
-                        cc.data_c + ((pos + 1) * 256),
-                        rem * 256)
+            _c_shift_left(cc.data_c, pos, col_len, 256)
             cc.length = col_len - 1
         elif col.dtype == TYPE_UCS2:
             ucs2_col = <UCS2Column_SoA>col
@@ -1819,51 +1760,31 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_TIMESTAMP:
             tc = <DateColumn>col
             col_len = tc.length
-            rem = col_len - pos - 1
-            if rem > 0:
-                memmove(tc.data_c + pos,
-                        tc.data_c + pos + 1,
-                        rem * sizeof(long long))
+            _c_shift_left(tc.data_c, pos, col_len, sizeof(long long))
             tc.length = col_len - 1
 
         elif col.dtype == TYPE_BOOL:
             bool_col = <BoolColumn>col
             col_len = bool_col.length
-            rem = col_len - pos - 1
-            if rem > 0:
-                memmove(bool_col.data_c + pos,
-                        bool_col.data_c + pos + 1,
-                        rem * sizeof(unsigned char))
+            _c_shift_left(bool_col.data_c, pos, col_len, sizeof(unsigned char))
             bool_col.length = col_len - 1
 
         elif col.dtype == TYPE_CATEGORY:
             cat_col = <CategoryColumn>col
             col_len = cat_col.length
-            rem = col_len - pos - 1
-            if rem > 0:
-                memmove(cat_col.codes_c + pos,
-                        cat_col.codes_c + pos + 1,
-                        rem * sizeof(int))
+            _c_shift_left(cat_col.codes_c, pos, col_len, sizeof(int))
             cat_col.length = col_len - 1
 
         elif col.dtype == TYPE_DATETIME:
             dtc_col = <DateTimeColumn>col
             col_len = dtc_col.length
-            rem = col_len - pos - 1
-            if rem > 0:
-                memmove(dtc_col.data_c + pos,
-                        dtc_col.data_c + pos + 1,
-                        rem * sizeof(long long))
+            _c_shift_left(dtc_col.data_c, pos, col_len, sizeof(long long))
             dtc_col.length = col_len - 1
 
         elif col.dtype == TYPE_TIME:
             tmc_col = <TimeColumn>col
             col_len = tmc_col.length
-            rem = col_len - pos - 1
-            if rem > 0:
-                memmove(tmc_col.data_c + pos,
-                        tmc_col.data_c + pos + 1,
-                        rem * sizeof(int))
+            _c_shift_left(tmc_col.data_c, pos, col_len, sizeof(int))
             tmc_col.length = col_len - 1
 
     cdef double _get_col_value_as_double(self, BaseColumn col, Py_ssize_t i):
@@ -2619,16 +2540,7 @@ cdef class FastDataFrame:
         return '\n'.join(lines)
 
     cdef Py_ssize_t _col_bytes(self, BaseColumn col):
-        if col.dtype == TYPE_INT: return sizeof(int)
-        elif col.dtype == TYPE_DOUBLE: return sizeof(double)
-        elif col.dtype == TYPE_CHAR256: return 256
-        elif col.dtype == TYPE_TIMESTAMP: return sizeof(long long)
-        elif col.dtype == TYPE_UCS2: return 4
-        elif col.dtype == TYPE_BOOL: return 1
-        elif col.dtype == TYPE_CATEGORY: return sizeof(int)
-        elif col.dtype == TYPE_DATETIME: return sizeof(long long)
-        elif col.dtype == TYPE_TIME: return sizeof(int)
-        return 0
+        return _TYPE_BYTES.get(col.dtype, 0)
 
     cdef str _dtype_summary(self):
         cdef dict counts = {}
@@ -2641,24 +2553,12 @@ cdef class FastDataFrame:
     def memory_usage(self):
         cdef Py_ssize_t total = 0
         for name, col in self.columns.items():
-            if col.dtype == TYPE_INT:
-                total += col.capacity * sizeof(int)
-            elif col.dtype == TYPE_DOUBLE:
-                total += col.capacity * sizeof(double)
-            elif col.dtype == TYPE_CHAR256:
-                total += col.capacity * 256
-            elif col.dtype == TYPE_TIMESTAMP:
-                total += col.capacity * sizeof(long long)
-            elif col.dtype == TYPE_UCS2:
+            if col.dtype == TYPE_UCS2:
                 total += col.capacity * sizeof(Py_UCS2) + (col.capacity + 1) * sizeof(Py_ssize_t)
-            elif col.dtype == TYPE_BOOL:
-                total += col.capacity * sizeof(unsigned char)
             elif col.dtype == TYPE_CATEGORY:
-                total += col.capacity * sizeof(int) + len((<CategoryColumn>col).categories) * sizeof(void*)
-            elif col.dtype == TYPE_DATETIME:
-                total += col.capacity * sizeof(long long)
-            elif col.dtype == TYPE_TIME:
-                total += col.capacity * sizeof(int)
+                total += col.capacity * self._col_bytes(col) + len((<CategoryColumn>col).categories) * sizeof(void*)
+            else:
+                total += col.capacity * self._col_bytes(col)
         return total
 
 

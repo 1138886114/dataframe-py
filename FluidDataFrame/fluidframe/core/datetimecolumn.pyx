@@ -5,9 +5,8 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove
-from libc.stdlib cimport atoi
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_DATETIME, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_TIME
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_DATETIME
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
@@ -16,8 +15,7 @@ from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datecolumn cimport DateColumn, _date_to_daynum, _daynum_to_date
 
 
-# Reference epoch: 2024-01-01 00:00:00 as microseconds
-cdef long long _EPOCH_US = 1704067200000000LL  # 2024-01-01 00:00:00 UTC in microseconds
+# Reference epoch: 2024-01-01 00:00:00 (daynum of 2024-01-01)
 
 cdef inline long long _parse_datetime_str(str s):
     """Parse 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD' or 'YYYYMMDD' to microseconds since epoch."""
@@ -40,10 +38,9 @@ cdef inline long long _parse_datetime_str(str s):
     if ndigits < 8:
         raise ValueError(f"Invalid datetime string: '{s}'")
 
-    if ndigits >= 8:
-        year = digits[0]*1000 + digits[1]*100 + digits[2]*10 + digits[3]
-        month = digits[4]*10 + digits[5]
-        day = digits[6]*10 + digits[7]
+    year = digits[0]*1000 + digits[1]*100 + digits[2]*10 + digits[3]
+    month = digits[4]*10 + digits[5]
+    day = digits[6]*10 + digits[7]
     if ndigits >= 10:
         hour = digits[8]*10 + digits[9]
     if ndigits >= 12:
@@ -72,6 +69,26 @@ cdef inline void _datetime_to_ymdhms(long long us, int* y, int* m, int* d, int* 
     # Convert daynum to date
     cdef long long abs_daynum = daynum + _date_to_daynum(2024, 1, 1)
     _daynum_to_date(abs_daynum, y, m, d)
+
+
+cdef inline str _datetime_to_str(long long us):
+    """Format microseconds since epoch as 'YYYY-MM-DD[ HH:MM:SS]'."""
+    cdef int y, m, d, h, mi, s
+    _datetime_to_ymdhms(us, &y, &m, &d, &h, &mi, &s)
+    if h == 0 and mi == 0 and s == 0:
+        return f"{y:04d}-{m:02d}-{d:02d}"
+    return f"{y:04d}-{m:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}"
+
+
+cdef inline int _dt_extract_field(long long us, int which) noexcept:
+    cdef int y, m, d, h, mi, s
+    _datetime_to_ymdhms(us, &y, &m, &d, &h, &mi, &s)
+    if which == 0: return y
+    elif which == 1: return m
+    elif which == 2: return d
+    elif which == 3: return h
+    elif which == 4: return mi
+    return s
 
 
 @cython.final
@@ -188,11 +205,7 @@ cdef class DateTimeColumn(BaseColumn):
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError()
-        cdef int y, m, d, h, mi, s
-        _datetime_to_ymdhms(self.data_c[idx], &y, &m, &d, &h, &mi, &s)
-        if h == 0 and mi == 0 and s == 0:
-            return f"{y:04d}-{m:02d}-{d:02d}"
-        return f"{y:04d}-{m:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}"
+        return _datetime_to_str(self.data_c[idx])
 
     @cython.binding(False)
     def unique(self):
@@ -210,60 +223,48 @@ cdef class DateTimeColumn(BaseColumn):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
-        cdef int y, m, d, h, mi, s
         for i in range(self.length):
-            _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
-            res.data_c[i] = y
+            res.data_c[i] = _dt_extract_field(self.data_c[i], 0)
         return res
 
     def month(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
-        cdef int y, m, d, h, mi, s
         for i in range(self.length):
-            _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
-            res.data_c[i] = m
+            res.data_c[i] = _dt_extract_field(self.data_c[i], 1)
         return res
 
     def day(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
-        cdef int y, m, d, h, mi, s
         for i in range(self.length):
-            _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
-            res.data_c[i] = d
+            res.data_c[i] = _dt_extract_field(self.data_c[i], 2)
         return res
 
     def hour(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
-        cdef int y, m, d, h, mi, s
         for i in range(self.length):
-            _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
-            res.data_c[i] = h
+            res.data_c[i] = _dt_extract_field(self.data_c[i], 3)
         return res
 
     def minute(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
-        cdef int y, m, d, h, mi, s
         for i in range(self.length):
-            _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
-            res.data_c[i] = mi
+            res.data_c[i] = _dt_extract_field(self.data_c[i], 4)
         return res
 
     def second(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
-        cdef int y, m, d, h, mi, s
         for i in range(self.length):
-            _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
-            res.data_c[i] = s
+            res.data_c[i] = _dt_extract_field(self.data_c[i], 5)
         return res
 
     @cython.binding(False)
@@ -305,22 +306,30 @@ cdef class DateTimeColumn(BaseColumn):
         return res
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
-        if row_idx < self.length - 1:
-            memmove(self.data_c + row_idx, self.data_c + row_idx + 1,
-                    (self.length - 1 - row_idx) * sizeof(long long))
-        self.length = rem_len
+        if rem_len > 0:
+            memmove(self.data_c + row_idx,
+                    self.data_c + row_idx + 1,
+                    rem_len * sizeof(long long))
+        self.length -= 1
 
     cdef DateTimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef DateTimeColumn col
-        if inplace:
-            col = self
-        else:
-            col = DateTimeColumn(n)
-        col.length = n
         cdef Py_ssize_t i
-        for i in range(n):
-            col.data_c[i] = self.data_c[indices[i]]
-        return col
+        if not inplace:
+            new_col = DateTimeColumn(max(n, 1))
+            new_col.length = n
+            for i in range(n):
+                new_col.data_c[i] = self.data_c[indices[i]]
+            return new_col
+        else:
+            new_data = <long long*>aligned_malloc(max(n, self.capacity) * sizeof(long long))
+            if not new_data: raise MemoryError()
+            for i in range(n):
+                new_data[i] = self.data_c[indices[i]]
+            os_aligned_free(self.data_c)
+            self.data_c = new_data
+            self.capacity = max(n, self.capacity)
+            self.length = n
+            return self
 
     def astype(self, object target):
         cdef str tname
@@ -351,29 +360,17 @@ cdef class DateTimeColumn(BaseColumn):
             uc = UCS2Column_SoA(n)
             uc.length = n
             for i in range(n):
-                _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
-                if h == 0 and mi == 0 and s == 0:
-                    uc._set_item(i, f"{y:04d}-{m:02d}-{d:02d}")
-                else:
-                    uc._set_item(i, f"{y:04d}-{m:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}")
+                uc._set_item(i, _datetime_to_str(self.data_c[i]))
             return uc
         elif tname in ('char256', 'ascii'):
             cc = Char256Column_SoA(n)
             for i in range(n):
-                _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
-                if h == 0 and mi == 0 and s == 0:
-                    cc.append(f"{y:04d}-{m:02d}-{d:02d}")
-                else:
-                    cc.append(f"{y:04d}-{m:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}")
+                cc.append(_datetime_to_str(self.data_c[i]))
             return cc
         elif tname == 'category':
             catc = CategoryColumn(n)
             for i in range(n):
-                _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
-                if h == 0 and mi == 0 and s == 0:
-                    catc.append(f"{y:04d}-{m:02d}-{d:02d}")
-                else:
-                    catc.append(f"{y:04d}-{m:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}")
+                catc.append(_datetime_to_str(self.data_c[i]))
             return catc
         elif tname in ('timestamp', 'date'):
             from fluidframe.core.datecolumn import DateColumn as PyDateColumn
