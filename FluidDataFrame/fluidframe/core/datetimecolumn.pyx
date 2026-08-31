@@ -13,7 +13,7 @@ from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.categorycolumn cimport CategoryColumn
-from fluidframe.core.timestampcolumn cimport DateColumn, _date_to_daynum, _daynum_to_date
+from fluidframe.core.datecolumn cimport DateColumn, _date_to_daynum, _daynum_to_date
 
 
 # Reference epoch: 2024-01-01 00:00:00 as microseconds
@@ -376,7 +376,7 @@ cdef class DateTimeColumn(BaseColumn):
                     catc.append(f"{y:04d}-{m:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}")
             return catc
         elif tname in ('timestamp', 'date'):
-            from fluidframe.core.timestampcolumn import DateColumn as PyDateColumn
+            from fluidframe.core.datecolumn import DateColumn as PyDateColumn
             tc = PyDateColumn(n)
             for i in range(n):
                 _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)

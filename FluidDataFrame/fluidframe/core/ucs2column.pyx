@@ -11,7 +11,7 @@ from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.timestampcolumn cimport DateColumn
+from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn

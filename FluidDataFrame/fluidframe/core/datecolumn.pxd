@@ -1,10 +1,27 @@
 # cython: language_level=3
-# Backward-compatibility: DateColumn is the new name for TimestampColumn.
-# This module re-exports everything from timestampcolumn.
-from fluidframe.core._base cimport BaseColumn, TYPE_TIMESTAMP
+cimport cython
+from libc.stdlib cimport malloc, realloc, free
+from libc.string cimport memcpy, memmove
+from fluidframe.core._base cimport BaseColumn
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.timestampcolumn cimport (
-    DateColumn,
-    _is_leap_year, _days_in_month, _date_to_daynum, _daynum_to_date, _parse_date_str,
-)
+
+cdef bint _is_leap_year(int y) noexcept nogil
+cdef int _days_in_month(int y, int m) noexcept nogil
+cdef long long _date_to_daynum(int y, int m, int d) noexcept nogil
+cdef void _daynum_to_date(long long daynum, int* y, int* m, int* d) noexcept nogil
+cdef long long _parse_date_str(str s) noexcept
+
+@cython.final
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef class DateColumn(BaseColumn):
+    cdef public Py_ssize_t length
+    cdef public Py_ssize_t capacity
+    cdef long long* data_c
+    cdef void _reserve(self, Py_ssize_t new_cap)
+    cdef inline long long _resolve_date(self, date) except *
+    cdef inline int _week_of_year(self, int y, int m, int d) noexcept nogil
+    cdef inline int _week_of_year_impl(self, int y, int m, int d) noexcept nogil
+    cdef DateColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
+    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len)

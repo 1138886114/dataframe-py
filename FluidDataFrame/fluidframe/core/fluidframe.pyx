@@ -10,7 +10,7 @@ from fluidframe.core._base cimport BaseColumn, DataType, TYPE_INT, TYPE_DOUBLE, 
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
-from fluidframe.core.timestampcolumn cimport DateColumn
+from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
@@ -20,7 +20,6 @@ from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.char256column import Char256Column_SoA
 from fluidframe.core.ucs2column import UCS2Column_SoA
-from fluidframe.core.timestampcolumn import DateColumn
 from fluidframe.core.boolcolumn import BoolColumn
 from fluidframe.core.categorycolumn import CategoryColumn
 from fluidframe.core.datetimecolumn import DateTimeColumn

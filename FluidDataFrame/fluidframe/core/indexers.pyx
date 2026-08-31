@@ -10,7 +10,7 @@ from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.timestampcolumn cimport DateColumn
+from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.index cimport IndexBase
 
 

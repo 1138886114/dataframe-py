@@ -13,7 +13,7 @@ from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
-from fluidframe.core.timestampcolumn cimport DateColumn
+from fluidframe.core.datecolumn cimport DateColumn
 
 
 cdef int _parse_time_str(str s):

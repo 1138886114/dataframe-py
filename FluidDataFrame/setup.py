@@ -7,7 +7,7 @@ extensions = [
     Extension("fluidframe.core.doublecolumn", ["fluidframe/core/doublecolumn.pyx"]),
     Extension("fluidframe.core.char256column", ["fluidframe/core/char256column.pyx"]),
     Extension("fluidframe.core.ucs2column", ["fluidframe/core/ucs2column.pyx"]),
-    Extension("fluidframe.core.timestampcolumn", ["fluidframe/core/timestampcolumn.pyx"]),
+    Extension("fluidframe.core.datecolumn", ["fluidframe/core/datecolumn.pyx"]),
     Extension("fluidframe.core.boolcolumn", ["fluidframe/core/boolcolumn.pyx"]),
     Extension("fluidframe.core.categorycolumn", ["fluidframe/core/categorycolumn.pyx"]),
     Extension("fluidframe.core.datetimecolumn", ["fluidframe/core/datetimecolumn.pyx"]),

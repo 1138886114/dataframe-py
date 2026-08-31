@@ -1,6 +1,6 @@
 import sys
 sys.path.insert(0, '..')
-from fluidframe.core.timestampcolumn import DateColumn as DateColumn
+from fluidframe.core.datecolumn import DateColumn as DateColumn
 
 passed = 0
 failed = 0
