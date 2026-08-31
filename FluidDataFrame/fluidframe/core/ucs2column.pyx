@@ -8,7 +8,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdio cimport snprintf
-
+import re
 from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -368,34 +368,31 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def contains(self, str substring):
-        cdef IntColumn res = IntColumn(self.capacity)
+    def contains(self, object pat):
+        """
+        判断字符串是否包含指定的正则表达式模式。
+        pat: 可以是正则字符串 (如 r"\d+")，也可以是已编译的正则对象 (re.compile)
+        """
+        cdef IntColumn res = IntColumn(max(self.capacity, 1))
         res.length = self.length
         cdef int* out_ptr = res.data_c
-        cdef Py_ssize_t i, start, str_len
-        cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(substring)
+        cdef Py_ssize_t i
+        cdef str s
 
-        if sub_len == 0:
-            for i in range(self.length):
+        cdef object compiled_pat
+        if isinstance(pat, str):
+            compiled_pat = re.compile(pat)
+        elif hasattr(pat, 'search'):
+            compiled_pat = pat
+        else:
+            compiled_pat = re.compile(str(pat))
+
+        for i in range(self.length):
+            s = self._get_str(i)
+            if compiled_pat.search(s) is not None:
                 out_ptr[i] = 1
-            return res
-
-        cdef Py_UCS2* n_buf = <Py_UCS2*>aligned_malloc(sub_len * sizeof(Py_UCS2))
-        if not n_buf: raise MemoryError()
-        _copy_py_str_to_ucs2(substring, n_buf, sub_len)
-
-        cdef Py_ssize_t* offs = self.offsets_c
-        cdef Py_UCS2* chars = self.chars_c
-        cdef Py_UCS2* match
-
-        with nogil:
-            for i in range(self.length):
-                start = offs[i]
-                str_len = offs[i+1] - start
-                match = _ucs2_strstr(chars + start, <int>str_len, n_buf, <int>sub_len)
-                out_ptr[i] = 1 if match != NULL else 0
-
-        os_aligned_free(n_buf)
+            else:
+                out_ptr[i] = 0
         return res
 
     @cython.binding(False)
