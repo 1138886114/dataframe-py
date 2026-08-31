@@ -243,6 +243,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return val
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def len(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -253,6 +254,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def startswith(self, str prefix):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -264,6 +266,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def endswith(self, str suffix):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -275,6 +278,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def contains(self, str substring):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -286,6 +290,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def find(self, str substring):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -297,6 +302,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def replace(self, str old, str new):
         cdef Py_ssize_t i
         cdef str s
@@ -340,6 +346,7 @@ cdef class UCS2Column_SoA(BaseColumn):
             self.offsets_c[oi] += diff
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def lower(self):
         cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
         cdef Py_ssize_t i
@@ -350,6 +357,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def upper(self):
         cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
         cdef Py_ssize_t i
@@ -360,6 +368,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def strip(self):
         cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
         cdef Py_ssize_t i
@@ -370,6 +379,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def lstrip(self):
         cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
         cdef Py_ssize_t i
@@ -380,6 +390,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def rstrip(self):
         cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
         cdef Py_ssize_t i
@@ -390,6 +401,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def count(self, str substring):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -415,6 +427,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isdigit(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -426,6 +439,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isalpha(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -437,6 +451,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isalnum(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -448,6 +463,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isspace(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -459,6 +475,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self):
         cdef set seen = set()
         cdef list result = []
@@ -470,6 +487,8 @@ cdef class UCS2Column_SoA(BaseColumn):
                 result.append(s)
         return result
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def _cmp_op(self, val, int op):
         cdef Py_ssize_t i
         cdef IntColumn res = IntColumn(self.capacity)
@@ -503,13 +522,27 @@ cdef class UCS2Column_SoA(BaseColumn):
                 res.data_c[i] = cmp_val
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __lt__(self, val):  return self._cmp_op(val, 0)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __le__(self, val):  return self._cmp_op(val, 1)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __gt__(self, val):  return self._cmp_op(val, 2)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ge__(self, val):  return self._cmp_op(val, 3)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __eq__(self, val):  return self._cmp_op(val, 4)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ne__(self, val):  return self._cmp_op(val, 5)
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __and__(self, other):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot & non-IntColumn mask")
@@ -522,6 +555,8 @@ cdef class UCS2Column_SoA(BaseColumn):
             res.data_c[i] = 1 if self[i] != '' and other.data_c[i] else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __or__(self, other):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot | non-IntColumn mask")
@@ -534,6 +569,8 @@ cdef class UCS2Column_SoA(BaseColumn):
             res.data_c[i] = 1 if self[i] != '' or other.data_c[i] else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __invert__(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -542,6 +579,8 @@ cdef class UCS2Column_SoA(BaseColumn):
             res.data_c[i] = 0 if self[i] != '' else 1
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def isin(self, set values):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -550,6 +589,8 @@ cdef class UCS2Column_SoA(BaseColumn):
             res.data_c[i] = 1 if self[i] in values else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
@@ -564,6 +605,8 @@ cdef class UCS2Column_SoA(BaseColumn):
                 col.append(fill_str)
         return col
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i
@@ -571,9 +614,13 @@ cdef class UCS2Column_SoA(BaseColumn):
             items.append(repr(self[i]))
         return f"UCS2Column([{', '.join(items)}])"
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __bool__(self):
         return self.length > 0
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __len__(self):
         return self.length
 
@@ -646,6 +693,8 @@ cdef class UCS2Column_SoA(BaseColumn):
             self.offsets_c[i] = self.offsets_c[i + 1] - char_len
         self.length -= 1
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def astype(self, object target):
         cdef str tname
         if isinstance(target, str):

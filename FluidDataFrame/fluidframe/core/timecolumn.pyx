@@ -174,6 +174,7 @@ cdef class TimeColumn(BaseColumn):
         return _time_to_str(self.data_c[idx])
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self):
         cdef set seen = set()
         cdef list result = []
@@ -185,6 +186,8 @@ cdef class TimeColumn(BaseColumn):
                 result.append(val)
         return result
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def hour(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -195,6 +198,8 @@ cdef class TimeColumn(BaseColumn):
             res.data_c[i] = h
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def minute(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -205,6 +210,8 @@ cdef class TimeColumn(BaseColumn):
             res.data_c[i] = m
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def second(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -233,6 +240,8 @@ cdef class TimeColumn(BaseColumn):
             col.data_c[i] = self.data_c[i] if mask.data_c[i] else fill_val
         return col
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def isin(self, set values):
         # 安全性能修复：前置集合解析，消除 O(N*M) 的性能灾难
         cdef set parsed_vals = set()
@@ -279,6 +288,8 @@ cdef class TimeColumn(BaseColumn):
             self.length = n
             return self
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def astype(self, object target):
         cdef str tname
         if isinstance(target, str):
@@ -286,6 +297,7 @@ cdef class TimeColumn(BaseColumn):
         else:
             tname = {int: 'int', float: 'double', str: 'ucs2'}.get(target, '')
         cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t cap = max(n, 1)
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef BoolColumn bc
@@ -294,41 +306,41 @@ cdef class TimeColumn(BaseColumn):
         cdef CategoryColumn catc
         cdef DateColumn tc
         if tname in ('int', 'i4'):
-            ic = IntColumn(max(n, 1))
+            ic = IntColumn(cap)
             ic.length = n
             for i in range(n):
                 ic.data_c[i] = self.data_c[i]
             return ic
         elif tname in ('double', 'float'):
-            dc = DoubleColumn(max(n, 1))
+            dc = DoubleColumn(cap)
             dc.length = n
             for i in range(n):
                 dc.data_c[i] = <double>self.data_c[i]
             return dc
         elif tname == 'bool':
-            bc = BoolColumn(max(n, 1))
+            bc = BoolColumn(cap)
             bc.length = n
             for i in range(n):
                 bc.data_c[i] = 1 if self.data_c[i] != 0 else 0
             return bc
         elif tname in ('str', 'string', 'ucs2'):
-            uc = UCS2Column_SoA(max(n, 1))
+            uc = UCS2Column_SoA(cap)
             uc.length = n
             for i in range(n):
                 uc._set_item(i, _time_to_str(self.data_c[i]))
             return uc
         elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(max(n, 1))
+            cc = Char256Column_SoA(cap)
             for i in range(n):
                 cc.append(_time_to_str(self.data_c[i]))
             return cc
         elif tname == 'category':
-            catc = CategoryColumn(max(n, 1))
+            catc = CategoryColumn(cap)
             for i in range(n):
                 catc.append(_time_to_str(self.data_c[i]))
             return catc
         elif tname in ('timestamp', 'date'):
-            tc = DateColumn(max(n, 1))
+            tc = DateColumn(cap)
             tc.length = n
             for i in range(n):
                 tc.data_c[i] = 0

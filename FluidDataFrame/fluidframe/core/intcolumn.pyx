@@ -564,6 +564,8 @@ cdef class IntColumn(BaseColumn):
                 res.data_c[i] = <double>self.data_c[i] / val if val != 0 else NAN
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def add(self, object other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -585,6 +587,8 @@ cdef class IntColumn(BaseColumn):
             return dbl
         raise TypeError(f"Unsupported type for add: {type(other)}")
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def sub(self, object other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -606,6 +610,8 @@ cdef class IntColumn(BaseColumn):
             return dbl
         raise TypeError(f"Unsupported type for sub: {type(other)}")
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def mul(self, object other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -627,6 +633,8 @@ cdef class IntColumn(BaseColumn):
             return dbl
         raise TypeError(f"Unsupported type for mul: {type(other)}")
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def div(self, object other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -725,13 +733,27 @@ cdef class IntColumn(BaseColumn):
                 for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] != v else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __lt__(self, val):  return self._cmp_op(val, 0)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __le__(self, val):  return self._cmp_op(val, 1)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __gt__(self, val):  return self._cmp_op(val, 2)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ge__(self, val):  return self._cmp_op(val, 3)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __eq__(self, val):  return self._cmp_op(val, 4)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ne__(self, val):  return self._cmp_op(val, 5)
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __and__(self, other):
         if not isinstance(other, IntColumn):
             raise TypeError("Bitwise AND only supported between two IntColumn masks")
@@ -746,6 +768,8 @@ cdef class IntColumn(BaseColumn):
             res.data_c[i] = 1 if (a.data_c[i] != 0 and b.data_c[i] != 0) else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __or__(self, other):
         if not isinstance(other, IntColumn):
             raise TypeError("Bitwise OR only supported between two IntColumn masks")
@@ -760,6 +784,8 @@ cdef class IntColumn(BaseColumn):
             res.data_c[i] = 1 if (a.data_c[i] != 0 or b.data_c[i] != 0) else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __invert__(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -768,6 +794,8 @@ cdef class IntColumn(BaseColumn):
             res.data_c[i] = 0 if self.data_c[i] != 0 else 1
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def isin(self, set values):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -776,6 +804,8 @@ cdef class IntColumn(BaseColumn):
             res.data_c[i] = 1 if self.data_c[i] in values else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def between(self, int low, int high):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -784,6 +814,8 @@ cdef class IntColumn(BaseColumn):
             res.data_c[i] = 1 if low <= self.data_c[i] <= high else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i
@@ -791,9 +823,13 @@ cdef class IntColumn(BaseColumn):
             items.append(str(self.data_c[i]))
         return f"IntColumn([{', '.join(items)}])"
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __bool__(self):
         return self.length > 0
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __len__(self):
         return self.length
 
@@ -848,6 +884,8 @@ cdef class IntColumn(BaseColumn):
                 col.data_c[i] = other
         return col
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
@@ -920,6 +958,8 @@ cdef class IntColumn(BaseColumn):
                 out[j] = i
                 j += 1
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def astype(self, object target):
         cdef str tname
         if isinstance(target, str):

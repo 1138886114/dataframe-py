@@ -167,6 +167,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def replace(self, str old_str, str new_str):
         cdef bytes b_old = old_str.encode('ascii')
         cdef bytes b_new = new_str.encode('ascii')
@@ -187,6 +188,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return self
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def extract(self, str pattern):
         prog = re.compile(pattern)
         cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
@@ -202,6 +204,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def extract_twice(self, str pattern):
         prog = re.compile(pattern)
         cdef Char256Column_SoA res1 = Char256Column_SoA(self.capacity)
@@ -220,6 +223,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res1, res2
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def len(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -230,10 +234,12 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def len_list(self):
         return [strlen(self.data_c + i * 256) for i in range(self.length)]
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def startswith(self, str prefix):
         cdef bytes b_pre = prefix.encode('ascii')
         cdef const char* c_pre = b_pre
@@ -247,6 +253,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def endswith(self, str suffix):
         cdef bytes b_suf = suffix.encode('ascii')
         cdef const char* c_suf = b_suf
@@ -266,6 +273,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def lower(self):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, j
@@ -279,6 +287,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def upper(self):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, j
@@ -292,6 +301,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isdigit(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -314,6 +324,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def strip(self):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, left, right
@@ -336,6 +347,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def lstrip(self):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, left, remaining
@@ -353,6 +365,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def rstrip(self):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, right
@@ -367,6 +380,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def find(self, str substring):
         cdef bytes b_sub = substring.encode('ascii')
         cdef const char* c_sub = b_sub
@@ -384,6 +398,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def count(self, str substring):
         cdef bytes b_sub = substring.encode('ascii')
         cdef size_t sub_len = len(b_sub)
@@ -414,6 +429,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isalpha(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -436,6 +452,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isalnum(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -458,6 +475,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isspace(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -480,6 +498,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def islower(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -505,6 +524,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isupper(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -530,6 +550,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def removeprefix(self, str prefix):
         cdef bytes b_pre = prefix.encode('ascii')
         cdef const char* c_pre = b_pre
@@ -547,6 +568,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def removesuffix(self, str suffix):
         cdef bytes b_suf = suffix.encode('ascii')
         cdef const char* c_suf = b_suf
@@ -564,6 +586,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def zfill(self, Py_ssize_t width):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, j, curr_len, pad
@@ -583,6 +606,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self):
         cdef set seen = set()
         cdef list result = []
@@ -594,6 +618,8 @@ cdef class Char256Column_SoA(BaseColumn):
                 result.append(val)
         return result
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def _cmp_op(self, val, int op):
         cdef Py_ssize_t i
         cdef IntColumn res = IntColumn(self.capacity)
@@ -633,13 +659,27 @@ cdef class Char256Column_SoA(BaseColumn):
                 for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) != 0 else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __lt__(self, val):  return self._cmp_op(val, 0)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __le__(self, val):  return self._cmp_op(val, 1)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __gt__(self, val):  return self._cmp_op(val, 2)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ge__(self, val):  return self._cmp_op(val, 3)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __eq__(self, val):  return self._cmp_op(val, 4)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ne__(self, val):  return self._cmp_op(val, 5)
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __and__(self, other):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot & non-IntColumn mask")
@@ -652,6 +692,8 @@ cdef class Char256Column_SoA(BaseColumn):
             res.data_c[i] = 1 if (self.data_c + i * 256)[0] != 0 and other.data_c[i] else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __or__(self, other):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot | non-IntColumn mask")
@@ -664,6 +706,8 @@ cdef class Char256Column_SoA(BaseColumn):
             res.data_c[i] = 1 if (self.data_c + i * 256)[0] != 0 or other.data_c[i] else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __invert__(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -672,6 +716,8 @@ cdef class Char256Column_SoA(BaseColumn):
             res.data_c[i] = 0 if (self.data_c + i * 256)[0] != 0 else 1
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def isin(self, set values):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -682,6 +728,8 @@ cdef class Char256Column_SoA(BaseColumn):
             res.data_c[i] = 1 if val in values else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
@@ -702,6 +750,8 @@ cdef class Char256Column_SoA(BaseColumn):
             dest[255] = 0
         return col
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i
@@ -709,9 +759,13 @@ cdef class Char256Column_SoA(BaseColumn):
             items.append(repr((self.data_c + i * 256).decode('ascii')))
         return f"Char256Column([{', '.join(items)}])"
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __bool__(self):
         return self.length > 0
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __len__(self):
         return self.length
 
@@ -744,6 +798,8 @@ cdef class Char256Column_SoA(BaseColumn):
                     rem_len * 256)
         self.length -= 1
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def astype(self, object target):
         cdef str tname
         if isinstance(target, str):

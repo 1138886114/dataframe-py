@@ -56,6 +56,8 @@ cdef class CategoryColumn(BaseColumn):
             return self.categories[self.codes_c[i]]
         return ''
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def append(self, object val):
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
@@ -63,11 +65,15 @@ cdef class CategoryColumn(BaseColumn):
         self.codes_c[self.length] = self._get_or_add_code(s)
         self.length += 1
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def pop_back(self):
         if self.length == 0: raise IndexError("pop from empty column")
         self.length -= 1
         return self.categories[self.codes_c[self.length]]
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def pop_front(self):
         if self.length == 0: raise IndexError("pop from empty column")
         cdef int val_code = self.codes_c[0]
@@ -75,6 +81,8 @@ cdef class CategoryColumn(BaseColumn):
         self.length -= 1
         return self.categories[val_code]
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def concat(self, CategoryColumn other):
         cdef Py_ssize_t new_len = self.length + other.length
         self._reserve(new_len)
@@ -85,6 +93,8 @@ cdef class CategoryColumn(BaseColumn):
             self.codes_c[self.length + i] = new_code
         self.length = new_len
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def copy(self):
         cdef CategoryColumn col = CategoryColumn(max(self.capacity, 1))
         col.length = self.length
@@ -121,23 +131,33 @@ cdef class CategoryColumn(BaseColumn):
     def cate(self):
         return _CategoryAccessor(self)
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError("Index out of bounds")
         return self.categories[self.codes_c[idx]]
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __setitem__(self, Py_ssize_t idx, object val):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError("Index out of bounds")
         cdef str s = str(val) if val is not None else ''
         self.codes_c[idx] = self._get_or_add_code(s)
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __len__(self):
         return self.length
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __bool__(self):
         return self.length > 0
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def isin(self, set values):
         cdef BoolColumn res
         res = BoolColumn(max(self.capacity, 1))
@@ -149,6 +169,8 @@ cdef class CategoryColumn(BaseColumn):
             res.data_c[i] = 1 if val in values else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
@@ -164,6 +186,8 @@ cdef class CategoryColumn(BaseColumn):
         col.length = n
         return col
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i
@@ -171,6 +195,8 @@ cdef class CategoryColumn(BaseColumn):
             items.append(repr(self.categories[self.codes_c[i]]))
         return f"CategoryColumn([{', '.join(items)}])"
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __repr__(self):
         return self.__str__()
 
@@ -204,6 +230,8 @@ cdef class CategoryColumn(BaseColumn):
                     rem_len * sizeof(int))
         self.length -= 1
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __eq__(self, other):
         cdef CategoryColumn o
         cdef Py_ssize_t i
@@ -219,11 +247,15 @@ cdef class CategoryColumn(BaseColumn):
                 return False
         return True
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ne__(self, other):
         result = self.__eq__(other)
         if result is NotImplemented: return result
         return not result
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def astype(self, object target):
         cdef str tname
         if isinstance(target, str):
@@ -231,6 +263,7 @@ cdef class CategoryColumn(BaseColumn):
         else:
             tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
         cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t cap = max(n, 1)
         cdef str s
         cdef IntColumn ic
         cdef DoubleColumn dc
@@ -241,41 +274,41 @@ cdef class CategoryColumn(BaseColumn):
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
         if tname in ('int', 'i4'):
-            ic = IntColumn(max(n, 1))
+            ic = IntColumn(cap)
             ic.length = n
             for i in range(n):
                 s = self._resolve(i)
                 ic.data_c[i] = int(float(s)) if s else 0
             return ic
         elif tname in ('double', 'float'):
-            dc = DoubleColumn(max(n, 1))
+            dc = DoubleColumn(cap)
             dc.length = n
             for i in range(n):
                 s = self._resolve(i)
                 dc.data_c[i] = float(s) if s else 0.0
             return dc
         elif tname == 'bool':
-            bc = BoolColumn(max(n, 1))
+            bc = BoolColumn(cap)
             bc.length = n
             for i in range(n):
                 s = self._resolve(i)
                 bc.data_c[i] = 1 if s.lower() in ('true', '1', 'yes') else 0
             return bc
         elif tname in ('str', 'string', 'ucs2'):
-            uc = UCS2Column_SoA(max(n, 1))
+            uc = UCS2Column_SoA(cap)
             uc.length = n
             for i in range(n):
                 s = self._resolve(i)
                 uc._set_item(i, s)
             return uc
         elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(max(n, 1))
+            cc = Char256Column_SoA(cap)
             for i in range(n):
                 s = self._resolve(i)
                 cc.append(s)
             return cc
         elif tname in ('timestamp', 'date'):
-            tc = DateColumn(max(n, 1))
+            tc = DateColumn(cap)
             for i in range(n):
                 s = self._resolve(i)
                 if s:
@@ -284,7 +317,7 @@ cdef class CategoryColumn(BaseColumn):
                     tc.append(0)
             return tc
         elif tname == 'datetime':
-            dtc = DateTimeColumn(max(n, 1))
+            dtc = DateTimeColumn(cap)
             for i in range(n):
                 s = self._resolve(i)
                 if s:
@@ -293,7 +326,7 @@ cdef class CategoryColumn(BaseColumn):
                     dtc.append('')
             return dtc
         elif tname == 'time':
-            tmc = TimeColumn(max(n, 1))
+            tmc = TimeColumn(cap)
             for i in range(n):
                 s = self._resolve(i)
                 if s:

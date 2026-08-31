@@ -41,23 +41,31 @@ cdef class BoolColumn(BaseColumn):
         self.data_c = new_data
         self.capacity = new_cap
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def append(self, object val):
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
         self.data_c[self.length] = 1 if val else 0
         self.length += 1
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def append_bool(self, bint val):
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
         self.data_c[self.length] = 1 if val else 0
         self.length += 1
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def pop_back(self):
         if self.length == 0: raise IndexError("pop from empty column")
         self.length -= 1
         return bool(self.data_c[self.length])
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def pop_front(self):
         if self.length == 0: raise IndexError("pop from empty column")
         cdef unsigned char val = self.data_c[0]
@@ -65,12 +73,16 @@ cdef class BoolColumn(BaseColumn):
         self.length -= 1
         return bool(val)
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def concat(self, BoolColumn other):
         cdef Py_ssize_t new_len = self.length + other.length
         self._reserve(new_len)
         memcpy(self.data_c + self.length, other.data_c, other.length * sizeof(unsigned char))
         self.length = new_len
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def copy(self):
         cdef BoolColumn col = BoolColumn(max(self.capacity, 1))
         col.length = self.length
@@ -101,22 +113,32 @@ cdef class BoolColumn(BaseColumn):
         os_aligned_free(self.data_c)
         self.data_c = new_data
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError("Index out of bounds")
         return bool(self.data_c[idx])
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __setitem__(self, Py_ssize_t idx, object val):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError("Index out of bounds")
         self.data_c[idx] = 1 if val else 0
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __len__(self):
         return self.length
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __bool__(self):
         return self.length > 0
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def isin(self, set values):
         cdef BoolColumn res = BoolColumn(max(self.capacity, 1))
         res.length = self.length
@@ -125,6 +147,8 @@ cdef class BoolColumn(BaseColumn):
             res.data_c[i] = 1 if bool(self.data_c[i]) in values else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
@@ -137,16 +161,22 @@ cdef class BoolColumn(BaseColumn):
             col.data_c[i] = self.data_c[i] if mask.data_c[i] else fill_val
         return col
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def sum(self):
         cdef Py_ssize_t i, s = 0
         for i in range(self.length):
             s += self.data_c[i]
         return s
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def mean(self):
         if self.length == 0: return NAN
         return <double>self.sum() / self.length
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __and__(self, BoolColumn other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -158,6 +188,8 @@ cdef class BoolColumn(BaseColumn):
             res.data_c[i] = self.data_c[i] & other.data_c[i]
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __or__(self, BoolColumn other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -169,6 +201,8 @@ cdef class BoolColumn(BaseColumn):
             res.data_c[i] = self.data_c[i] | other.data_c[i]
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __xor__(self, BoolColumn other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -180,6 +214,8 @@ cdef class BoolColumn(BaseColumn):
             res.data_c[i] = self.data_c[i] ^ other.data_c[i]
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __invert__(self):
         cdef BoolColumn res = BoolColumn(max(self.capacity, 1))
         res.length = self.length
@@ -188,6 +224,8 @@ cdef class BoolColumn(BaseColumn):
             res.data_c[i] = 1 - self.data_c[i]
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i
@@ -195,6 +233,8 @@ cdef class BoolColumn(BaseColumn):
             items.append(str(bool(self.data_c[i])))
         return f"BoolColumn([{', '.join(items)}])"
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __repr__(self):
         return self.__str__()
 
@@ -228,6 +268,8 @@ cdef class BoolColumn(BaseColumn):
                     rem_len * sizeof(unsigned char))
         self.length -= 1
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __eq__(self, other):
         cdef BoolColumn o
         cdef Py_ssize_t i
@@ -241,11 +283,15 @@ cdef class BoolColumn(BaseColumn):
                 return False
         return True
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ne__(self, other):
         result = self.__eq__(other)
         if result is NotImplemented: return result
         return not result
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def astype(self, object target):
         cdef str tname
         if isinstance(target, str):
@@ -253,6 +299,7 @@ cdef class BoolColumn(BaseColumn):
         else:
             tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
         cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t cap = max(n, 1)
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef UCS2Column_SoA uc
@@ -261,40 +308,40 @@ cdef class BoolColumn(BaseColumn):
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
         if tname in ('int', 'i4'):
-            ic = IntColumn(max(n, 1))
+            ic = IntColumn(cap)
             ic.length = n
             for i in range(n):
                 ic.data_c[i] = <int>self.data_c[i]
             return ic
         elif tname in ('double', 'float'):
-            dc = DoubleColumn(max(n, 1))
+            dc = DoubleColumn(cap)
             dc.length = n
             for i in range(n):
                 dc.data_c[i] = <double>self.data_c[i]
             return dc
         elif tname in ('str', 'string', 'ucs2'):
-            uc = UCS2Column_SoA(max(n, 1))
+            uc = UCS2Column_SoA(cap)
             uc.length = n
             for i in range(n):
                 uc._set_item(i, 'True' if self.data_c[i] else 'False')
             return uc
         elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(max(n, 1))
+            cc = Char256Column_SoA(cap)
             for i in range(n):
                 cc.append('True' if self.data_c[i] else 'False')
             return cc
         elif tname == 'category':
-            catc = CategoryColumn(max(n, 1))
+            catc = CategoryColumn(cap)
             for i in range(n):
                 catc.append('True' if self.data_c[i] else 'False')
             return catc
         elif tname == 'datetime':
-            dtc = DateTimeColumn(max(n, 1))
+            dtc = DateTimeColumn(cap)
             for i in range(n):
                 dtc.append('True' if self.data_c[i] else 'False')
             return dtc
         elif tname == 'time':
-            tmc = TimeColumn(max(n, 1))
+            tmc = TimeColumn(cap)
             for i in range(n):
                 tmc.append(<int>self.data_c[i])
             return tmc

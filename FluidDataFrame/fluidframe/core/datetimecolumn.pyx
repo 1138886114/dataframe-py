@@ -208,6 +208,7 @@ cdef class DateTimeColumn(BaseColumn):
         return _datetime_to_str(self.data_c[idx])
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self):
         cdef set seen = set()
         cdef list result = []
@@ -219,6 +220,8 @@ cdef class DateTimeColumn(BaseColumn):
                 result.append(val)
         return result
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def year(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -227,6 +230,8 @@ cdef class DateTimeColumn(BaseColumn):
             res.data_c[i] = _dt_extract_field(self.data_c[i], 0)
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def month(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -235,6 +240,8 @@ cdef class DateTimeColumn(BaseColumn):
             res.data_c[i] = _dt_extract_field(self.data_c[i], 1)
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def day(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -243,6 +250,8 @@ cdef class DateTimeColumn(BaseColumn):
             res.data_c[i] = _dt_extract_field(self.data_c[i], 2)
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def hour(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -251,6 +260,8 @@ cdef class DateTimeColumn(BaseColumn):
             res.data_c[i] = _dt_extract_field(self.data_c[i], 3)
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def minute(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -259,6 +270,8 @@ cdef class DateTimeColumn(BaseColumn):
             res.data_c[i] = _dt_extract_field(self.data_c[i], 4)
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def second(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -285,6 +298,8 @@ cdef class DateTimeColumn(BaseColumn):
             col.data_c[i] = self.data_c[i] if mask.data_c[i] else fill_val
         return col
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def isin(self, set values):
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t i
@@ -331,6 +346,8 @@ cdef class DateTimeColumn(BaseColumn):
             self.length = n
             return self
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def astype(self, object target):
         cdef str tname
         if isinstance(target, str):

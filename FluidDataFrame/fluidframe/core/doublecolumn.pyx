@@ -187,6 +187,7 @@ cdef class DoubleColumn(BaseColumn):
         return self.data_c[idx]
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def count_nonzeros(self):
         cdef Py_ssize_t count = 0
         cdef Py_ssize_t i
@@ -196,6 +197,7 @@ cdef class DoubleColumn(BaseColumn):
         return count
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sum(self):
         cdef double total = 0
         cdef Py_ssize_t i
@@ -205,6 +207,7 @@ cdef class DoubleColumn(BaseColumn):
         return total
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def idxmax(self):
         if self.length == 0: raise ValueError("empty column")
         cdef Py_ssize_t max_idx = 0
@@ -218,6 +221,7 @@ cdef class DoubleColumn(BaseColumn):
         return max_idx
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def idxmin(self):
         if self.length == 0: raise ValueError("empty column")
         cdef Py_ssize_t min_idx = 0
@@ -231,12 +235,15 @@ cdef class DoubleColumn(BaseColumn):
         return min_idx
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def argmax(self): return self.idxmax()
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def argmin(self): return self.idxmin()
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def median(self):
         if self.length == 0: return NAN
         cdef double* temp = <double*>aligned_malloc(self.length * sizeof(double))
@@ -254,6 +261,7 @@ cdef class DoubleColumn(BaseColumn):
         return result
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mad(self):
         if self.length == 0: return NAN
         cdef double m = self.mean()
@@ -265,6 +273,7 @@ cdef class DoubleColumn(BaseColumn):
         return total_dev / self.length
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def prod(self):
         if self.length == 0: return NAN
         cdef double total = 1
@@ -275,6 +284,7 @@ cdef class DoubleColumn(BaseColumn):
         return total
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def nunique(self):
         if self.length == 0: return 0
         cdef set seen = set()
@@ -284,6 +294,7 @@ cdef class DoubleColumn(BaseColumn):
         return len(seen)
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def value_counts(self):
         cdef dict counts = {}
         cdef Py_ssize_t i
@@ -297,6 +308,7 @@ cdef class DoubleColumn(BaseColumn):
         return counts
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mode(self):
         if self.length == 0: return []
         cdef dict counts = {}
@@ -351,6 +363,7 @@ cdef class DoubleColumn(BaseColumn):
         return data[k]
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def quantile(self, double q):
         if self.length == 0: return NAN
         if q < 0 or q > 1: raise ValueError("q must be between 0 and 1")
@@ -371,6 +384,7 @@ cdef class DoubleColumn(BaseColumn):
         return v1 + frac * (v2 - v1)
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cumsum(self):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
@@ -383,6 +397,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cummax(self):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
@@ -398,6 +413,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cummin(self):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
@@ -482,6 +498,7 @@ cdef class DoubleColumn(BaseColumn):
         out_m4[0] = m4
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def skew(self):
         if self.length < 3: return NAN
         cdef double m, m2, m3, m4
@@ -491,6 +508,7 @@ cdef class DoubleColumn(BaseColumn):
         return (n * m3) / ((n - 1) * (n - 2) * (m2 / (n - 1)) ** 1.5)
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def kurt(self):
         if self.length < 4: return NAN
         cdef double m, m2, m3, m4
@@ -502,6 +520,7 @@ cdef class DoubleColumn(BaseColumn):
         return kurt
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sem(self):
         if self.length < 2: return NAN
         cdef double m, m2, m3, m4
@@ -561,6 +580,7 @@ cdef class DoubleColumn(BaseColumn):
         return sqrt(self._var_rows(indices, n))
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def add_val(self, double val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
@@ -570,6 +590,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sub_val(self, double val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
@@ -579,6 +600,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mul_val(self, double val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
@@ -588,6 +610,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def div_val(self, double val):
         cdef DoubleColumn res = DoubleColumn(self.capacity)
         res.length = self.length
@@ -597,6 +620,8 @@ cdef class DoubleColumn(BaseColumn):
                 res.data_c[i] = self.data_c[i] / val if val != 0 else NAN
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def add(self, object other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -614,6 +639,8 @@ cdef class DoubleColumn(BaseColumn):
             raise TypeError(f"Unsupported type for add: {type(other)}")
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def sub(self, object other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -631,6 +658,8 @@ cdef class DoubleColumn(BaseColumn):
             raise TypeError(f"Unsupported type for sub: {type(other)}")
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def mul(self, object other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -648,6 +677,8 @@ cdef class DoubleColumn(BaseColumn):
             raise TypeError(f"Unsupported type for mul: {type(other)}")
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def div(self, object other):
         cdef Py_ssize_t n = self.length
         if other.length != n:
@@ -666,6 +697,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self):
         cdef set seen = set()
         cdef list result = []
@@ -678,6 +710,7 @@ cdef class DoubleColumn(BaseColumn):
         return result
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def _cmp_op(self, object val, int op):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -727,13 +760,27 @@ cdef class DoubleColumn(BaseColumn):
                         res.data_c[i] = 1 if self.data_c[i] != v else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __lt__(self, val):  return self._cmp_op(val, 0)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __le__(self, val):  return self._cmp_op(val, 1)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __gt__(self, val):  return self._cmp_op(val, 2)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ge__(self, val):  return self._cmp_op(val, 3)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __eq__(self, val):  return self._cmp_op(val, 4)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ne__(self, val):  return self._cmp_op(val, 5)
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __and__(self, other):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot & non-IntColumn mask")
@@ -746,6 +793,8 @@ cdef class DoubleColumn(BaseColumn):
             res.data_c[i] = 1 if (self.data_c[i] != 0 and other.data_c[i] != 0) else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __or__(self, other):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot | non-IntColumn mask")
@@ -758,6 +807,8 @@ cdef class DoubleColumn(BaseColumn):
             res.data_c[i] = 1 if (self.data_c[i] != 0 or other.data_c[i] != 0) else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __invert__(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -766,6 +817,8 @@ cdef class DoubleColumn(BaseColumn):
             res.data_c[i] = 0 if self.data_c[i] != 0 else 1
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def isin(self, set values):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -774,6 +827,8 @@ cdef class DoubleColumn(BaseColumn):
             res.data_c[i] = 1 if self.data_c[i] in values else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def between(self, double low, double high):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -782,6 +837,8 @@ cdef class DoubleColumn(BaseColumn):
             res.data_c[i] = 1 if low <= self.data_c[i] <= high else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i
@@ -789,9 +846,13 @@ cdef class DoubleColumn(BaseColumn):
             items.append(str(self.data_c[i]))
         return f"DoubleColumn([{', '.join(items)}])"
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __bool__(self):
         return self.length > 0
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __len__(self):
         return self.length
 
@@ -844,6 +905,8 @@ cdef class DoubleColumn(BaseColumn):
                 col.data_c[i] = other
         return col
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
@@ -905,6 +968,8 @@ cdef class DoubleColumn(BaseColumn):
                     new_col.data_c[i] = sentinel
         return new_col
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def astype(self, object target):
         cdef str tname
         if isinstance(target, str):

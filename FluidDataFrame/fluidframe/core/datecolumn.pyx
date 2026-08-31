@@ -178,6 +178,7 @@ cdef class DateColumn(BaseColumn):
         return self.data_c[idx]
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self):
         cdef set seen = set()
         cdef list result = []
@@ -190,6 +191,7 @@ cdef class DateColumn(BaseColumn):
         return result
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def year(self):
         cdef IntColumn res = IntColumn(max(self.capacity, 1))
         res.length = self.length
@@ -200,6 +202,7 @@ cdef class DateColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def month(self):
         cdef IntColumn res = IntColumn(max(self.capacity, 1))
         res.length = self.length
@@ -210,6 +213,7 @@ cdef class DateColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def day(self):
         cdef IntColumn res = IntColumn(max(self.capacity, 1))
         res.length = self.length
@@ -220,6 +224,7 @@ cdef class DateColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def strftime(self, str fmt):
         cdef bytes b_fmt = fmt.encode('ascii', errors='ignore')
         cdef const char* c_fmt = b_fmt
@@ -371,6 +376,8 @@ cdef class DateColumn(BaseColumn):
                 res.data_c[i] = 1 if lo <= self.data_c[i] <= hi else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
@@ -852,6 +859,8 @@ cdef class DateColumn(BaseColumn):
                 res.data_c[i] = <int>(daynum - _date_to_daynum(y, m, d))
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def _cmp_op(self, val, int op):
         cdef Py_ssize_t i
         cdef IntColumn res = IntColumn(max(self.capacity, 1))
@@ -890,13 +899,27 @@ cdef class DateColumn(BaseColumn):
                 for i in range(self.length): res.data_c[i] = 1 if self.data_c[i] != v else 0
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __lt__(self, val):  return self._cmp_op(val, 0)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __le__(self, val):  return self._cmp_op(val, 1)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __gt__(self, val):  return self._cmp_op(val, 2)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ge__(self, val):  return self._cmp_op(val, 3)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __eq__(self, val):  return self._cmp_op(val, 4)
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __ne__(self, val):  return self._cmp_op(val, 5)
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i
@@ -904,9 +927,13 @@ cdef class DateColumn(BaseColumn):
             items.append(str(self.data_c[i]))
         return f"DateColumn([{', '.join(items)}])"
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __bool__(self):
         return self.length > 0
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __len__(self):
         return self.length
 
@@ -940,6 +967,8 @@ cdef class DateColumn(BaseColumn):
                     rem_len * sizeof(long long))
         self.length -= 1
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def astype(self, object target):
         cdef str tname
         if isinstance(target, str):
