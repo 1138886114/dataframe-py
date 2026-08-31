@@ -72,11 +72,34 @@ cdef class BoolColumn(BaseColumn):
         self.length = new_len
 
     def copy(self):
-        cdef BoolColumn col = BoolColumn(self.capacity)
+        cdef BoolColumn col = BoolColumn(max(self.capacity, 1))
         col.length = self.length
         if self.length > 0:
             memcpy(col.data_c, self.data_c, self.length * sizeof(unsigned char))
         return col
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def _reorder(self, list indices):
+        cdef Py_ssize_t n = len(indices)
+        if n != self.length:
+            raise ValueError("Length of indices must match column length")
+
+        cdef unsigned char* new_data = <unsigned char*>aligned_malloc(max(n, 1) * sizeof(unsigned char))
+        if not new_data: raise MemoryError()
+        cdef Py_ssize_t i, idx
+        try:
+            for i in range(n):
+                idx = <Py_ssize_t>indices[i]
+                if idx < 0: idx += self.length
+                if idx < 0 or idx >= self.length:
+                    raise IndexError("Index out of bounds")
+                new_data[i] = self.data_c[idx]
+        except Exception:
+            os_aligned_free(new_data)
+            raise
+        os_aligned_free(self.data_c)
+        self.data_c = new_data
 
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
@@ -95,7 +118,7 @@ cdef class BoolColumn(BaseColumn):
         return self.length > 0
 
     def isin(self, set values):
-        cdef BoolColumn res = BoolColumn(self.capacity)
+        cdef BoolColumn res = BoolColumn(max(self.capacity, 1))
         res.length = self.length
         cdef Py_ssize_t i
         for i in range(self.length):
@@ -106,7 +129,7 @@ cdef class BoolColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
-        cdef BoolColumn col = BoolColumn(n)
+        cdef BoolColumn col = BoolColumn(max(n, 1))
         col.length = n
         cdef unsigned char fill_val = 1 if fill else 0
         cdef Py_ssize_t i
@@ -128,7 +151,7 @@ cdef class BoolColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
-        cdef BoolColumn res = BoolColumn(n)
+        cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
         cdef Py_ssize_t i
         for i in range(n):
@@ -139,7 +162,7 @@ cdef class BoolColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
-        cdef BoolColumn res = BoolColumn(n)
+        cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
         cdef Py_ssize_t i
         for i in range(n):
@@ -150,7 +173,7 @@ cdef class BoolColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
-        cdef BoolColumn res = BoolColumn(n)
+        cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
         cdef Py_ssize_t i
         for i in range(n):
@@ -158,7 +181,7 @@ cdef class BoolColumn(BaseColumn):
         return res
 
     def __invert__(self):
-        cdef BoolColumn res = BoolColumn(self.capacity)
+        cdef BoolColumn res = BoolColumn(max(self.capacity, 1))
         res.length = self.length
         cdef Py_ssize_t i
         for i in range(self.length):
@@ -185,7 +208,7 @@ cdef class BoolColumn(BaseColumn):
                     new_col.data_c[i] = self.data_c[indices[i]]
             return new_col
         else:
-            new_data = <unsigned char*>aligned_malloc(max(n, self.capacity) * sizeof(unsigned char))
+            new_data = <unsigned char*>aligned_malloc(max(max(n, self.capacity), 1) * sizeof(unsigned char))
             if not new_data: raise MemoryError()
             with nogil:
                 for i in range(n):
@@ -197,6 +220,8 @@ cdef class BoolColumn(BaseColumn):
             return self
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        if row_idx < 0:
+            row_idx += self.length
         if rem_len > 0:
             memmove(self.data_c + row_idx,
                     self.data_c + row_idx + 1,
@@ -236,40 +261,40 @@ cdef class BoolColumn(BaseColumn):
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
         if tname in ('int', 'i4'):
-            ic = IntColumn(n)
+            ic = IntColumn(max(n, 1))
             ic.length = n
             for i in range(n):
                 ic.data_c[i] = <int>self.data_c[i]
             return ic
         elif tname in ('double', 'float'):
-            dc = DoubleColumn(n)
+            dc = DoubleColumn(max(n, 1))
             dc.length = n
             for i in range(n):
                 dc.data_c[i] = <double>self.data_c[i]
             return dc
         elif tname in ('str', 'string', 'ucs2'):
-            uc = UCS2Column_SoA(n)
+            uc = UCS2Column_SoA(max(n, 1))
             uc.length = n
             for i in range(n):
                 uc._set_item(i, 'True' if self.data_c[i] else 'False')
             return uc
         elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(n)
+            cc = Char256Column_SoA(max(n, 1))
             for i in range(n):
                 cc.append('True' if self.data_c[i] else 'False')
             return cc
         elif tname == 'category':
-            catc = CategoryColumn(n)
+            catc = CategoryColumn(max(n, 1))
             for i in range(n):
                 catc.append('True' if self.data_c[i] else 'False')
             return catc
         elif tname == 'datetime':
-            dtc = DateTimeColumn(n)
+            dtc = DateTimeColumn(max(n, 1))
             for i in range(n):
                 dtc.append('True' if self.data_c[i] else 'False')
             return dtc
         elif tname == 'time':
-            tmc = TimeColumn(n)
+            tmc = TimeColumn(max(n, 1))
             for i in range(n):
                 tmc.append(<int>self.data_c[i])
             return tmc
