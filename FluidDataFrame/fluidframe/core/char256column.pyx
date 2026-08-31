@@ -52,6 +52,8 @@ cdef inline void _c_str_replace_inplace(char* buffer, const char* old_sub, const
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.initializedcheck(False)
 cdef class Char256Column_SoA(BaseColumn):
 
     @cython.binding(False)
@@ -71,6 +73,20 @@ cdef class Char256Column_SoA(BaseColumn):
             self.data_c = <char*>aligned_realloc(self.data_c, self.capacity * 256, new_cap * 256)
             if not self.data_c: raise MemoryError()
             self.capacity = new_cap
+
+    cdef inline str _get_str(self, Py_ssize_t idx):
+        cdef char* ptr = self.data_c + (idx * 256)
+        if ptr[0] == b'\0':
+            return ""
+        return ptr.decode('ascii')
+
+    cdef void _set_item(self, Py_ssize_t idx, str val) except *:
+        """Replace string at given index in-place on the fixed 256-byte row."""
+        cdef bytes b_val = val.encode('ascii', errors='ignore')
+        cdef char* src = b_val
+        cdef char* dest = self.data_c + (idx * 256)
+        strncpy(dest, src, 255)
+        dest[255] = b'\0'
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -144,22 +160,22 @@ cdef class Char256Column_SoA(BaseColumn):
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError()
-        cdef char* ptr = self.data_c + (idx * 256)
-        return ptr.decode('ascii')
+        return self._get_str(idx)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def contains(self, str substring):
         cdef bytes b_sub = substring.encode('ascii')
         cdef const char* c_sub = b_sub
-        cdef int* out_idx = <int*>aligned_malloc(self.length * sizeof(int))
+        cdef int* out_idx = <int*>aligned_malloc(max(self.length, 1) * sizeof(int))
         if not out_idx: raise MemoryError()
+        cdef char* data = self.data_c
         cdef int count = 0
         cdef Py_ssize_t i
 
         with nogil:
             for i in range(self.length):
-                if _c_str_contains(self.data_c + (i * 256), c_sub):
+                if _c_str_contains(data + (i * 256), c_sub):
                     out_idx[count] = i
                     count += 1
         cdef list res = [out_idx[j] for j in range(count)]
@@ -173,10 +189,11 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef bytes b_new = new_str.encode('ascii')
         cdef const char* c_old = b_old
         cdef const char* c_new = b_new
+        cdef char* data = self.data_c
         cdef Py_ssize_t i
         with nogil:
             for i in range(self.length):
-                _c_str_replace_inplace(self.data_c + (i * 256), c_old, c_new)
+                _c_str_replace_inplace(data + (i * 256), c_old, c_new)
         return self
 
     @cython.binding(False)
@@ -227,16 +244,19 @@ cdef class Char256Column_SoA(BaseColumn):
     def len(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i
         with nogil:
             for i in range(self.length):
-                res.data_c[i] = <int>strlen(self.data_c + i * 256)
+                out_ptr[i] = <int>strlen(data + i * 256)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def len_list(self):
-        return [strlen(self.data_c + i * 256) for i in range(self.length)]
+        cdef char* data = self.data_c
+        return [strlen(data + i * 256) for i in range(self.length)]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -246,10 +266,12 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Py_ssize_t pre_len = strlen(c_pre)
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i
         with nogil:
             for i in range(self.length):
-                res.data_c[i] = 1 if strncmp(self.data_c + i * 256, c_pre, pre_len) == 0 else 0
+                out_ptr[i] = 1 if strncmp(data + i * 256, c_pre, pre_len) == 0 else 0
         return res
 
     @cython.binding(False)
@@ -260,16 +282,16 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Py_ssize_t suf_len = strlen(c_suf)
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i, curr_len
-        cdef char* ptr
         with nogil:
             for i in range(self.length):
-                ptr = self.data_c + i * 256
-                curr_len = strlen(ptr)
-                if curr_len >= suf_len and strncmp(ptr + curr_len - suf_len, c_suf, suf_len) == 0:
-                    res.data_c[i] = 1
+                curr_len = strlen(data + i * 256)
+                if curr_len >= suf_len and strncmp(data + i * 256 + curr_len - suf_len, c_suf, suf_len) == 0:
+                    out_ptr[i] = 1
                 else:
-                    res.data_c[i] = 0
+                    out_ptr[i] = 0
         return res
 
     @cython.binding(False)
@@ -305,22 +327,22 @@ cdef class Char256Column_SoA(BaseColumn):
     def isdigit(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i, j
-        cdef char* ptr
         cdef bint valid
         with nogil:
             for i in range(self.length):
-                ptr = self.data_c + i * 256
-                if ptr[0] == b'\0':
-                    res.data_c[i] = 0
+                if data[i * 256] == b'\0':
+                    out_ptr[i] = 0
                     continue
                 valid = 1
                 for j in range(256):
-                    if ptr[j] == b'\0': break
-                    if not isdigit(ptr[j]):
+                    if data[i * 256 + j] == b'\0': break
+                    if not isdigit(data[i * 256 + j]):
                         valid = 0
                         break
-                res.data_c[i] = valid
+                out_ptr[i] = valid
         return res
 
     @cython.binding(False)
@@ -386,15 +408,17 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef const char* c_sub = b_sub
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i
         cdef char* match
         with nogil:
             for i in range(self.length):
-                match = strstr(self.data_c + i * 256, c_sub)
+                match = strstr(data + i * 256, c_sub)
                 if match != NULL:
-                    res.data_c[i] = <int>(match - (self.data_c + i * 256))
+                    out_ptr[i] = <int>(match - (data + i * 256))
                 else:
-                    res.data_c[i] = -1
+                    out_ptr[i] = -1
         return res
 
     @cython.binding(False)
@@ -405,12 +429,14 @@ cdef class Char256Column_SoA(BaseColumn):
 
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i
 
         if sub_len == 0:
             with nogil:
                 for i in range(self.length):
-                    res.data_c[i] = <int>strlen(self.data_c + i * 256) + 1
+                    out_ptr[i] = <int>strlen(data + i * 256) + 1
             return res
 
         cdef const char* c_sub = b_sub
@@ -419,13 +445,13 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef int cnt
         with nogil:
             for i in range(self.length):
-                ptr = self.data_c + i * 256
+                ptr = data + i * 256
                 cnt = 0
                 match = strstr(ptr, c_sub)
                 while match != NULL:
                     cnt += 1
                     match = strstr(match + sub_len, c_sub)
-                res.data_c[i] = cnt
+                out_ptr[i] = cnt
         return res
 
     @cython.binding(False)
@@ -433,22 +459,22 @@ cdef class Char256Column_SoA(BaseColumn):
     def isalpha(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i, j
-        cdef char* ptr
         cdef bint valid
         with nogil:
             for i in range(self.length):
-                ptr = self.data_c + i * 256
-                if ptr[0] == b'\0':
-                    res.data_c[i] = 0
+                if data[i * 256] == b'\0':
+                    out_ptr[i] = 0
                     continue
                 valid = 1
                 for j in range(256):
-                    if ptr[j] == b'\0': break
-                    if not isalpha(ptr[j]):
+                    if data[i * 256 + j] == b'\0': break
+                    if not isalpha(data[i * 256 + j]):
                         valid = 0
                         break
-                res.data_c[i] = valid
+                out_ptr[i] = valid
         return res
 
     @cython.binding(False)
@@ -456,22 +482,22 @@ cdef class Char256Column_SoA(BaseColumn):
     def isalnum(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i, j
-        cdef char* ptr
         cdef bint valid
         with nogil:
             for i in range(self.length):
-                ptr = self.data_c + i * 256
-                if ptr[0] == b'\0':
-                    res.data_c[i] = 0
+                if data[i * 256] == b'\0':
+                    out_ptr[i] = 0
                     continue
                 valid = 1
                 for j in range(256):
-                    if ptr[j] == b'\0': break
-                    if not isalnum(ptr[j]):
+                    if data[i * 256 + j] == b'\0': break
+                    if not isalnum(data[i * 256 + j]):
                         valid = 0
                         break
-                res.data_c[i] = valid
+                out_ptr[i] = valid
         return res
 
     @cython.binding(False)
@@ -479,22 +505,22 @@ cdef class Char256Column_SoA(BaseColumn):
     def isspace(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i, j
-        cdef char* ptr
         cdef bint valid
         with nogil:
             for i in range(self.length):
-                ptr = self.data_c + i * 256
-                if ptr[0] == b'\0':
-                    res.data_c[i] = 0
+                if data[i * 256] == b'\0':
+                    out_ptr[i] = 0
                     continue
                 valid = 1
                 for j in range(256):
-                    if ptr[j] == b'\0': break
-                    if not isspace(ptr[j]):
+                    if data[i * 256 + j] == b'\0': break
+                    if not isspace(data[i * 256 + j]):
                         valid = 0
                         break
-                res.data_c[i] = valid
+                out_ptr[i] = valid
         return res
 
     @cython.binding(False)
@@ -502,25 +528,25 @@ cdef class Char256Column_SoA(BaseColumn):
     def islower(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i, j
-        cdef char* ptr
         cdef bint has_letter, all_lower
         with nogil:
             for i in range(self.length):
-                ptr = self.data_c + i * 256
-                if ptr[0] == b'\0':
-                    res.data_c[i] = 0
+                if data[i * 256] == b'\0':
+                    out_ptr[i] = 0
                     continue
                 has_letter = 0
                 all_lower = 1
                 for j in range(256):
-                    if ptr[j] == b'\0': break
-                    if isalpha(ptr[j]):
+                    if data[i * 256 + j] == b'\0': break
+                    if isalpha(data[i * 256 + j]):
                         has_letter = 1
-                        if not islower(ptr[j]):
+                        if not islower(data[i * 256 + j]):
                             all_lower = 0
                             break
-                res.data_c[i] = 1 if (has_letter and all_lower) else 0
+                out_ptr[i] = 1 if (has_letter and all_lower) else 0
         return res
 
     @cython.binding(False)
@@ -528,25 +554,25 @@ cdef class Char256Column_SoA(BaseColumn):
     def isupper(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i, j
-        cdef char* ptr
         cdef bint has_letter, all_upper
         with nogil:
             for i in range(self.length):
-                ptr = self.data_c + i * 256
-                if ptr[0] == b'\0':
-                    res.data_c[i] = 0
+                if data[i * 256] == b'\0':
+                    out_ptr[i] = 0
                     continue
                 has_letter = 0
                 all_upper = 1
                 for j in range(256):
-                    if ptr[j] == b'\0': break
-                    if isalpha(ptr[j]):
+                    if data[i * 256 + j] == b'\0': break
+                    if isalpha(data[i * 256 + j]):
                         has_letter = 1
-                        if not isupper(ptr[j]):
+                        if not isupper(data[i * 256 + j]):
                             all_upper = 0
                             break
-                res.data_c[i] = 1 if (has_letter and all_upper) else 0
+                out_ptr[i] = 1 if (has_letter and all_upper) else 0
         return res
 
     @cython.binding(False)
@@ -612,7 +638,7 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef list result = []
         cdef Py_ssize_t i
         for i in range(self.length):
-            val = (self.data_c + i * 256).decode('ascii')
+            val = self._get_str(i)
             if val not in seen:
                 seen.add(val)
                 result.append(val)
@@ -623,40 +649,39 @@ cdef class Char256Column_SoA(BaseColumn):
     def _cmp_op(self, val, int op):
         cdef Py_ssize_t i
         cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef bytes v_bytes
         cdef char* v_ptr
-        res.length = self.length
+        cdef char* o_data
+        cdef int cmp_res
         if isinstance(val, Char256Column_SoA):
             other = <Char256Column_SoA>val
             if other.length != self.length:
                 raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
-            if op == 0:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) < 0 else 0
-            elif op == 1:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) <= 0 else 0
-            elif op == 2:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) > 0 else 0
-            elif op == 3:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) >= 0 else 0
-            elif op == 4:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) == 0 else 0
-            elif op == 5:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, other.data_c + i * 256, 256) != 0 else 0
+            o_data = other.data_c
+            with nogil:
+                for i in range(self.length):
+                    cmp_res = strncmp(data + i * 256, o_data + i * 256, 256)
+                    if op == 0:   out_ptr[i] = 1 if cmp_res < 0 else 0
+                    elif op == 1: out_ptr[i] = 1 if cmp_res <= 0 else 0
+                    elif op == 2: out_ptr[i] = 1 if cmp_res > 0 else 0
+                    elif op == 3: out_ptr[i] = 1 if cmp_res >= 0 else 0
+                    elif op == 4: out_ptr[i] = 1 if cmp_res == 0 else 0
+                    elif op == 5: out_ptr[i] = 1 if cmp_res != 0 else 0
         else:
             v_bytes = val.encode('ascii') if isinstance(val, str) else val
             v_ptr = v_bytes
-            if op == 0:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) < 0 else 0
-            elif op == 1:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) <= 0 else 0
-            elif op == 2:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) > 0 else 0
-            elif op == 3:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) >= 0 else 0
-            elif op == 4:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) == 0 else 0
-            elif op == 5:
-                for i in range(self.length): res.data_c[i] = 1 if strncmp(self.data_c + i * 256, v_ptr, 256) != 0 else 0
+            with nogil:
+                for i in range(self.length):
+                    cmp_res = strncmp(data + i * 256, v_ptr, 256)
+                    if op == 0:   out_ptr[i] = 1 if cmp_res < 0 else 0
+                    elif op == 1: out_ptr[i] = 1 if cmp_res <= 0 else 0
+                    elif op == 2: out_ptr[i] = 1 if cmp_res > 0 else 0
+                    elif op == 3: out_ptr[i] = 1 if cmp_res >= 0 else 0
+                    elif op == 4: out_ptr[i] = 1 if cmp_res == 0 else 0
+                    elif op == 5: out_ptr[i] = 1 if cmp_res != 0 else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -687,9 +712,13 @@ cdef class Char256Column_SoA(BaseColumn):
             raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef int* other_ptr = (<IntColumn>other).data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 1 if (self.data_c + i * 256)[0] != 0 and other.data_c[i] else 0
+        with nogil:
+            for i in range(self.length):
+                out_ptr[i] = 1 if data[i * 256] != 0 and other_ptr[i] else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -701,9 +730,13 @@ cdef class Char256Column_SoA(BaseColumn):
             raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef int* other_ptr = (<IntColumn>other).data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 1 if (self.data_c + i * 256)[0] != 0 or other.data_c[i] else 0
+        with nogil:
+            for i in range(self.length):
+                out_ptr[i] = 1 if data[i * 256] != 0 or other_ptr[i] else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -711,9 +744,12 @@ cdef class Char256Column_SoA(BaseColumn):
     def __invert__(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 0 if (self.data_c + i * 256)[0] != 0 else 1
+        with nogil:
+            for i in range(self.length):
+                out_ptr[i] = 0 if data[i * 256] != 0 else 1
         return res
 
     @cython.always_allow_keywords(False)
@@ -721,11 +757,10 @@ cdef class Char256Column_SoA(BaseColumn):
     def isin(self, set values):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
         cdef Py_ssize_t i
-        cdef str val
         for i in range(self.length):
-            val = (self.data_c + i * 256).decode('ascii') if (self.data_c + i * 256)[0] != 0 else ''
-            res.data_c[i] = 1 if val in values else 0
+            out_ptr[i] = 1 if self._get_str(i) in values else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -736,18 +771,18 @@ cdef class Char256Column_SoA(BaseColumn):
             raise ValueError(f"Mask length {mask.length} != column length {n}")
         cdef Char256Column_SoA col = Char256Column_SoA(n)
         col.length = n
+        cdef int* mask_ptr = mask.data_c
+        cdef char* src = self.data_c
+        cdef char* dest = col.data_c
         cdef bytes fill_bytes = str(fill).encode('ascii', errors='ignore')
-        cdef char* src
-        cdef char* dest
+        cdef const char* c_fill = fill_bytes
         cdef Py_ssize_t i
         for i in range(n):
-            dest = col.data_c + (i * 256)
-            if mask.data_c[i]:
-                src = self.data_c + (i * 256)
-                strncpy(dest, src, 255)
+            if mask_ptr[i]:
+                strncpy(dest + (i * 256), src + (i * 256), 255)
             else:
-                strncpy(dest, fill_bytes, 255)
-            dest[255] = 0
+                strncpy(dest + (i * 256), c_fill, 255)
+            dest[i * 256 + 255] = 0
         return col
 
     @cython.always_allow_keywords(False)
@@ -756,7 +791,7 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef list items = []
         cdef Py_ssize_t i
         for i in range(self.length):
-            items.append(repr((self.data_c + i * 256).decode('ascii')))
+            items.append(repr(self._get_str(i)))
         return f"Char256Column([{', '.join(items)}])"
 
     @cython.always_allow_keywords(False)

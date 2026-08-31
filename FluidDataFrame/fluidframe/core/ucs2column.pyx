@@ -23,7 +23,7 @@ from cpython.unicode cimport (
     PyUnicode_1BYTE_KIND, PyUnicode_2BYTE_KIND, PyUnicode_4BYTE_KIND,
     PyUnicode_FromKindAndData, PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR,
     PyUnicode_KIND, PyUnicode_DATA,
-    Py_UCS1, Py_UCS2, Py_UCS4
+    Py_UCS1, Py_UCS2
 )
 
 
@@ -624,18 +624,22 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef int* out_ptr = res.data_c
         cdef char err_buf[128]
 
+        cdef Py_ssize_t* s_offs = self.offsets_c
+        cdef Py_UCS2* s_chars = self.chars_c
+        cdef Py_UCS2* o_chars
+        cdef Py_ssize_t* o_offs
+        cdef Py_UCS2* v_buf
+        cdef Py_ssize_t v_len, len_s, len_o
+        cdef int cmp_res
+
         if isinstance(val, UCS2Column_SoA):
             other = <UCS2Column_SoA>val
             if other.length != self.length:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", self.length, other.length)
                 raise ValueError(err_buf.decode('ascii'))
 
-            cdef Py_ssize_t* s_offs = self.offsets_c
-            cdef Py_UCS2* s_chars = self.chars_c
-            cdef Py_ssize_t* o_offs = other.offsets_c
-            cdef Py_UCS2* o_chars = other.chars_c
-            cdef Py_ssize_t len_s, len_o
-            cdef int cmp_res
+            o_offs = other.offsets_c
+            o_chars = other.chars_c
 
             with nogil:
                 for i in range(self.length):
@@ -651,28 +655,23 @@ cdef class UCS2Column_SoA(BaseColumn):
                     elif op == 5: out_ptr[i] = 1 if cmp_res != 0 else 0
         else:
             v_str = <str>val
-            cdef Py_ssize_t v_len = PyUnicode_GET_LENGTH(v_str)
-            cdef Py_UCS2* v_buf = <Py_UCS2*>aligned_malloc(max(v_len, 1) * sizeof(Py_UCS2))
+            v_len = PyUnicode_GET_LENGTH(v_str)
+            v_buf = <Py_UCS2*>aligned_malloc(max(v_len, 1) * sizeof(Py_UCS2))
             if not v_buf: raise MemoryError()
 
             _copy_py_str_to_ucs2(v_str, v_buf, v_len)
 
-            cdef Py_ssize_t* s_offs2 = self.offsets_c
-            cdef Py_UCS2* s_chars2 = self.chars_c
-            cdef Py_ssize_t len_s2
-            cdef int cmp_res2
-
             with nogil:
                 for i in range(self.length):
-                    len_s2 = s_offs2[i+1] - s_offs2[i]
-                    cmp_res2 = _cmp_ucs2_buffers(s_chars2 + s_offs2[i], len_s2, v_buf, v_len)
+                    len_s = s_offs[i+1] - s_offs[i]
+                    cmp_res = _cmp_ucs2_buffers(s_chars + s_offs[i], len_s, v_buf, v_len)
 
-                    if op == 0:   out_ptr[i] = 1 if cmp_res2 < 0 else 0
-                    elif op == 1: out_ptr[i] = 1 if cmp_res2 <= 0 else 0
-                    elif op == 2: out_ptr[i] = 1 if cmp_res2 > 0 else 0
-                    elif op == 3: out_ptr[i] = 1 if cmp_res2 >= 0 else 0
-                    elif op == 4: out_ptr[i] = 1 if cmp_res2 == 0 else 0
-                    elif op == 5: out_ptr[i] = 1 if cmp_res2 != 0 else 0
+                    if op == 0:   out_ptr[i] = 1 if cmp_res < 0 else 0
+                    elif op == 1: out_ptr[i] = 1 if cmp_res <= 0 else 0
+                    elif op == 2: out_ptr[i] = 1 if cmp_res > 0 else 0
+                    elif op == 3: out_ptr[i] = 1 if cmp_res >= 0 else 0
+                    elif op == 4: out_ptr[i] = 1 if cmp_res == 0 else 0
+                    elif op == 5: out_ptr[i] = 1 if cmp_res != 0 else 0
 
             os_aligned_free(v_buf)
         return res
@@ -702,9 +701,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot & non-IntColumn mask")
         if self.length != other.length:
-            cdef char err_buf[128]
-            snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", self.length, other.length)
-            raise ValueError(err_buf.decode('ascii'))
+            raise ValueError("Length mismatch: %zd vs %zd" % (self.length, other.length))
 
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -724,9 +721,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot | non-IntColumn mask")
         if self.length != other.length:
-            cdef char err_buf[128]
-            snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", self.length, other.length)
-            raise ValueError(err_buf.decode('ascii'))
+            raise ValueError("Length mismatch: %zd vs %zd" % (self.length, other.length))
 
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
@@ -772,9 +767,7 @@ cdef class UCS2Column_SoA(BaseColumn):
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
-            cdef char err_buf[128]
-            snprintf(err_buf, sizeof(err_buf), "Mask length %zd != column length %zd", mask.length, n)
-            raise ValueError(err_buf.decode('ascii'))
+            raise ValueError("Mask length %zd != column length %zd" % (mask.length, n))
 
         cdef UCS2Column_SoA col = UCS2Column_SoA(n)
         cdef str fill_str = str(fill) if fill is not None else ""
@@ -891,11 +884,14 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
+        cdef int* ic_ptr
+        cdef double* dc_ptr
+        cdef unsigned char* bc_ptr
 
         if target_type == TYPE_INT:
             ic = IntColumn(safe_cap)
             ic.length = n
-            cdef int* ic_ptr = ic.data_c
+            ic_ptr = ic.data_c
             for i in range(n):
                 s = self._get_str(i)
                 ic_ptr[i] = int(float(s)) if len(s) > 0 else 0
@@ -904,7 +900,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         elif target_type == TYPE_DOUBLE:
             dc = DoubleColumn(safe_cap)
             dc.length = n
-            cdef double* dc_ptr = dc.data_c
+            dc_ptr = dc.data_c
             for i in range(n):
                 s = self._get_str(i)
                 dc_ptr[i] = float(s) if len(s) > 0 else 0.0
@@ -913,7 +909,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         elif target_type == TYPE_BOOL:
             bc = BoolColumn(safe_cap)
             bc.length = n
-            cdef unsigned char* bc_ptr = bc.data_c
+            bc_ptr = bc.data_c
             for i in range(n):
                 s = self._get_str(i)
                 if len(s) > 0 and (s == 'true' or s == 'True' or s == '1' or s == 'yes' or s == 'Yes'):

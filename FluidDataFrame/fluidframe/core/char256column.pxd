@@ -16,5 +16,7 @@ cdef class Char256Column_SoA(BaseColumn):
     cdef public Py_ssize_t capacity
     cdef char* data_c
     cdef void _reserve(self, Py_ssize_t new_cap)
+    cdef inline str _get_str(self, Py_ssize_t idx)
+    cdef void _set_item(self, Py_ssize_t idx, str val) except *
     cdef Char256Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len)
