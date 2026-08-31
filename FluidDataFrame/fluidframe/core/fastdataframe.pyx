@@ -9,6 +9,11 @@ from libc.stdint cimport uint32_t
 from libc.time cimport time_t, time
 from libc.math cimport NAN, sqrt, log, cos
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
+from fluidframe.core._base cimport (
+    BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free,
+    TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP,
+    TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
+)
 
 cdef extern from *:
     """
@@ -144,6 +149,8 @@ from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
 from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 
 from fluidframe._schema_types import Char256, Timestamp, Bool, Category, DateTime, Time, _parse_schema
+
+
 
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
@@ -351,6 +358,247 @@ cdef class FastDataFrame:
                     self.columns[col_name] = DateTimeColumn()
                 elif dtype == TYPE_TIME:
                     self.columns[col_name] = TimeColumn()
+
+    cdef inline str _fast_type_name(self, int dt):
+        """纯 C 级别的类型映射，零装箱开销"""
+        if dt == TYPE_INT: return 'i64'
+        elif dt == TYPE_DOUBLE: return 'f64'
+        elif dt == TYPE_CHAR256: return 'str'
+        elif dt == TYPE_UCS2: return 'str'
+        elif dt == TYPE_TIMESTAMP: return 'date'
+        elif dt == TYPE_DATETIME: return 'datetime'
+        elif dt == TYPE_TIME: return 'time'
+        elif dt == TYPE_BOOL: return 'bool'
+        elif dt == TYPE_CATEGORY: return 'cat'
+        return 'unknown'
+
+    cdef int _display_width(self, str s):
+        """计算 UTF-8 字符串的真实控制台显示宽度 (兼容中文/全角字符)"""
+        cdef int w = 0
+        cdef Py_UCS4 c
+        for ch in s:
+            c = ord(ch)
+            if (c >= 0x4E00 and c <= 0x9FFF) or \
+               (c >= 0x3000 and c <= 0x3FFF) or \
+               (c >= 0xFF00 and c <= 0xFFEF):
+                w += 2
+            else:
+                w += 1
+        return w
+
+
+    cdef str _truncate_str(self, str s, int max_display_width=40):
+        """基于真实显示宽度的安全截断，防止中文字符被从中间切断导致乱码"""
+        cdef int w = 0
+        cdef Py_ssize_t i = 0
+        cdef Py_UCS4 c
+        if self._display_width(s) <= max_display_width:
+            return s
+
+        for ch in s:
+            c = ord(ch)
+            w += 2 if ((c >= 0x4E00 and c <= 0x9FFF) or (c >= 0x3000 and c <= 0x3FFF) or (c >= 0xFF00 and c <= 0xFFEF)) else 1
+            if w > max_display_width - 3:
+                break
+            i += 1
+        return s[:i] + "..."
+
+    cdef str _format_value_fast(self, BaseColumn col, Py_ssize_t i):
+        """使用 snprintf 极速序列化基础数据类型，避开 Python f-string 开销"""
+        cdef int dt = col.dtype
+        cdef char buf[128]  # 安全的栈内存分配
+        cdef int sz = 0
+        cdef double dval
+        cdef long long tval
+        cdef int y, m, d
+        cdef int h, mm, s
+        cdef object val
+
+        if dt == TYPE_INT:
+            sz = snprintf(buf, sizeof(buf), "%d", (<IntColumn>col).data_c[i])
+            return buf[:sz].decode('ascii')
+
+        elif dt == TYPE_DOUBLE:
+            dval = (<DoubleColumn>col).data_c[i]
+            if dval != dval:  # NaN 判断
+                return "null"
+            # %g 会自动去除无用的零并采用最紧凑的科学计数法
+            sz = snprintf(buf, sizeof(buf), "%.6g", dval)
+            return buf[:sz].decode('ascii')
+
+        elif dt == TYPE_TIMESTAMP: # Date 格式 YYYYMMDD
+            tval = (<DateColumn>col).data_c[i]
+            y = <int>(tval / 10000)
+            m = <int>((tval / 100) % 100)
+            d = <int>(tval % 100)
+            sz = snprintf(buf, sizeof(buf), "%04d-%02d-%02d", y, m, d)
+            return buf[:sz].decode('ascii')
+
+        elif dt == TYPE_TIME: # Time 格式 秒数 -> HH:MM:SS
+            tval = (<TimeColumn>col).data_c[i]
+            h = <int>(tval / 3600)
+            mm = <int>((tval % 3600) / 60)
+            s = <int>(tval % 60)
+            sz = snprintf(buf, sizeof(buf), "%02d:%02d:%02d", h, mm, s)
+            return buf[:sz].decode('ascii')
+
+        elif dt == TYPE_BOOL:
+            return "true" if (<BoolColumn>col).data_c[i] else "false"
+
+        # 涉及 UTF-8 的复杂数据类型回退到安全的 Python 字符串层处理
+        val = col[i]
+        if val is None or val == '': return "null"
+        if dt in (TYPE_CHAR256, TYPE_UCS2, TYPE_CATEGORY):
+            return f'"{str(val).replace(chr(10), "\\n").replace(chr(13), "\\r")}"'
+        return str(val)
+
+    cdef tuple _get_header_strings(self):
+        cdef list names = []
+        cdef list types = []
+        cdef MultiIndex mi
+        cdef int j
+
+        if self.index is None or self.index.index_type == INDEX_RANGE:
+            names.append("")
+            types.append("[range]")
+        elif self.index.index_type == INDEX_INT:
+            names.append("index")
+            types.append("[i64]")
+        elif self.index.index_type == INDEX_MULTI:
+            mi = <MultiIndex>self.index
+            for j in range(mi.nlevels):
+                n = mi.names[j] if mi.names[j] is not None else f"level_{j}"
+                names.append(self._truncate_str(str(n)))
+                types.append("[multi]")
+
+        for col_name, col in self.columns.items():
+            names.append(self._truncate_str(str(col_name)))
+            types.append(f"[{self._fast_type_name(col.dtype)}]")
+
+        return names, types
+
+    cdef list _get_row_strings(self, Py_ssize_t i):
+        cdef list row_strs = []
+        cdef RangeIndex ri
+        cdef IntIndex ii
+        cdef MultiIndex mi
+        cdef int j, code
+
+        if self.index is None:
+            row_strs.append(str(i))
+        elif self.index.index_type == INDEX_RANGE:
+            ri = <RangeIndex>self.index
+            row_strs.append(str(ri.start + i * ri.step))
+        elif self.index.index_type == INDEX_INT:
+            ii = <IntIndex>self.index
+            row_strs.append(str(ii.data.data_c[i]))
+        elif self.index.index_type == INDEX_MULTI:
+            mi = <MultiIndex>self.index
+            for j in range(mi.nlevels):
+                code = (<IntColumn>mi.codes[j]).data_c[i]
+                row_strs.append(self._truncate_str(str(mi.levels[j][code])))
+
+        for col_name, col in self.columns.items():
+            row_strs.append(self._truncate_str(self._format_value_fast(col, i)))
+
+        return row_strs
+
+    @cython.binding(False)
+    def to_string(self, Py_ssize_t max_rows=80):
+        cdef Py_ssize_t n = self.df_length
+        cdef list row_indices = []
+        cdef Py_ssize_t half
+
+        if n <= max_rows:
+            row_indices = list(range(n))
+        else:
+            half = max_rows // 2
+            row_indices = list(range(half)) + [-1] + list(range(n - half, n))
+
+        names, types = self._get_header_strings()
+        cdef int num_display_cols = len(names)
+
+        cdef list table_data = []
+        cdef Py_ssize_t r
+        for r in row_indices:
+            if r == -1:
+                table_data.append(["..."] * num_display_cols)
+            else:
+                table_data.append(self._get_row_strings(r))
+
+        cdef list col_widths = [0] * num_display_cols
+        cdef int c
+        cdef int max_w, current_w
+        for c in range(num_display_cols):
+            max_w = self._display_width(names[c])
+            current_w = self._display_width(types[c])
+            if current_w > max_w: max_w = current_w
+            for row in table_data:
+                current_w = self._display_width(row[c])
+                if current_w > max_w: max_w = current_w
+            col_widths[c] = max_w + 2
+
+        cdef list lines = []
+        lines.append(f"shape: ({self.df_length}, {len(self.columns)})")
+
+        if num_display_cols > 0:
+            def make_border(left, mid, right, fill):
+                return left + mid.join([fill * col_widths[k] for k in range(num_display_cols)]) + right
+
+            lines.append(make_border("┌", "┬", "┐", "─"))
+
+            def format_cell(text, width, align_right):
+                """手动处理包含宽字符的居左/居右填充"""
+                dw = self._display_width(text)
+                padding = width - dw
+                if align_right:
+                    return " " * padding + text
+                else:
+                    return text + " " * padding
+
+            # 列名行
+            row_str = "│"
+            for c in range(num_display_cols):
+                row_str += " " + format_cell(names[c], col_widths[c] - 2, False) + " " + ("│" if c == num_display_cols - 1 else "┆")
+            lines.append(row_str)
+
+            # 类型行
+            row_str = "│"
+            for c in range(num_display_cols):
+                row_str += " " + format_cell(types[c], col_widths[c] - 2, False) + " " + ("│" if c == num_display_cols - 1 else "┆")
+            lines.append(row_str)
+
+            lines.append(make_border("╞", "╪", "╡", "═"))
+
+            for row_idx, row in enumerate(table_data):
+                row_str = "│"
+                for c in range(num_display_cols):
+                    val = row[c]
+                    is_num = val != "..." and types[c] in ("[i64]", "[f64]", "[range]", "[multi]")
+                    row_str += " " + format_cell(val, col_widths[c] - 2, is_num) + " " + ("│" if c == num_display_cols - 1 else "┆")
+                lines.append(row_str)
+
+            lines.append(make_border("└", "┴", "┘", "─"))
+        else:
+            lines.append("Empty DataFrame")
+
+        return "\n".join(lines)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def print(self, Py_ssize_t max_rows=80):
+        """直观的打印指令接口"""
+        print(self.to_string(max_rows))
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __str__(self):
+        return self.to_string()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __repr__(self):
+        return self.to_string()
 
     @property
     def loc(self):
