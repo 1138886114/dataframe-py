@@ -6,13 +6,15 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.timestampcolumn cimport DateColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 
 from cpython.unicode cimport (
     PyUnicode_4BYTE_KIND, PyUnicode_FromKindAndData,
@@ -656,8 +658,10 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef DoubleColumn dc
         cdef BoolColumn bc
         cdef Char256Column_SoA cc
-        cdef TimestampColumn tc
+        cdef DateColumn tc
         cdef CategoryColumn catc
+        cdef DateTimeColumn dtc
+        cdef TimeColumn tmc
         if tname in ('int', 'i4'):
             ic = IntColumn(n)
             ic.length = n
@@ -684,8 +688,8 @@ cdef class UCS2Column_SoA(BaseColumn):
             for i in range(n):
                 cc.append(self[i])
             return cc
-        elif tname in ('timestamp', 'date', 'datetime'):
-            tc = TimestampColumn(n)
+        elif tname in ('timestamp', 'date'):
+            tc = DateColumn(n)
             for i in range(n):
                 s = self[i]
                 if s:
@@ -698,4 +702,22 @@ cdef class UCS2Column_SoA(BaseColumn):
             for i in range(n):
                 catc.append(self[i])
             return catc
+        elif tname == 'datetime':
+            dtc = DateTimeColumn(n)
+            for i in range(n):
+                s = self[i]
+                if s:
+                    dtc.append(s)
+                else:
+                    dtc.append('')
+            return dtc
+        elif tname == 'time':
+            tmc = TimeColumn(n)
+            for i in range(n):
+                s = self[i]
+                if s:
+                    tmc.append(s)
+                else:
+                    tmc.append(0)
+            return tmc
         raise TypeError(f"Cannot convert ucs2 to '{tname}'")

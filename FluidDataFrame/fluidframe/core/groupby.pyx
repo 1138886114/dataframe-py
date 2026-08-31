@@ -13,7 +13,7 @@ from cpython.unicode cimport Py_UCS2
 
 
 from fluidframe.core._base cimport (
-    BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY,
+    BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
     aligned_malloc, os_aligned_free
 )
 from fluidframe.core.fastdataframe cimport FastDataFrame
@@ -21,13 +21,11 @@ from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.timestampcolumn cimport DateColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
-from fluidframe.core.doublecolumn cimport DoubleColumn
-from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 
 cdef enum AggFunc:
     AGG_SUM = 0
@@ -105,11 +103,15 @@ cdef class FastDataFrameGroupBy:
                 self._by_col_data[idx] = <void*>(<UCS2Column_SoA>col).chars_c
                 self._by_col_offsets[idx] = <void*>(<UCS2Column_SoA>col).offsets_c
             elif col.dtype == TYPE_TIMESTAMP:
-                self._by_col_data[idx] = <void*>(<TimestampColumn>col).data_c
+                self._by_col_data[idx] = <void*>(<DateColumn>col).data_c
             elif col.dtype == TYPE_BOOL:
                 self._by_col_data[idx] = <void*>(<BoolColumn>col).data_c
             elif col.dtype == TYPE_CATEGORY:
                 self._by_col_data[idx] = <void*>(<CategoryColumn>col).codes_c
+            elif col.dtype == TYPE_DATETIME:
+                self._by_col_data[idx] = <void*>(<DateTimeColumn>col).data_c
+            elif col.dtype == TYPE_TIME:
+                self._by_col_data[idx] = <void*>(<TimeColumn>col).data_c
 
     cdef uint64_t _hash_row(self, Py_ssize_t row_idx) nogil:
         cdef uint64_t h = 14695981039346656037ULL
@@ -145,6 +147,12 @@ cdef class FastDataFrameGroupBy:
                 b_data = <unsigned char*>self._by_col_data[col_idx]
                 val = <uint64_t>b_data[row_idx]
             elif self._by_col_types[col_idx] == TYPE_CATEGORY:
+                i_data = <int*>self._by_col_data[col_idx]
+                val = <uint64_t>i_data[row_idx]
+            elif self._by_col_types[col_idx] == TYPE_DATETIME:
+                t_data = <long long*>self._by_col_data[col_idx]
+                val = <uint64_t>t_data[row_idx]
+            elif self._by_col_types[col_idx] == TYPE_TIME:
                 i_data = <int*>self._by_col_data[col_idx]
                 val = <uint64_t>i_data[row_idx]
             else:

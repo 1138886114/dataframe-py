@@ -10,7 +10,7 @@ from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.timestampcolumn cimport DateColumn
 from fluidframe.core.index cimport IndexBase
 
 
@@ -131,7 +131,7 @@ cdef class _LocIndexer:
                     elif col.dtype == TYPE_UCS2:
                         (<UCS2Column_SoA>col)._set_item(idx, str(values[i]))
                     elif col.dtype == TYPE_TIMESTAMP:
-                        (<TimestampColumn>col).data_c[idx] = <long long>values[i]
+                        (<DateColumn>col).data_c[idx] = <long long>values[i]
             elif isinstance(values, dict):
                 for col_name, val in values.items():
                     if col_name not in self.frame.columns:
@@ -149,7 +149,7 @@ cdef class _LocIndexer:
                     elif col.dtype == TYPE_UCS2:
                         (<UCS2Column_SoA>col)._set_item(idx, str(val))
                     elif col.dtype == TYPE_TIMESTAMP:
-                        (<TimestampColumn>col).data_c[idx] = <long long>val
+                        (<DateColumn>col).data_c[idx] = <long long>val
             else:
                 raise TypeError(f"Cannot set row from {type(values)}")
         else:

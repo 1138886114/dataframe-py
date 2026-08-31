@@ -10,6 +10,8 @@ extensions = [
     Extension("fluidframe.core.timestampcolumn", ["fluidframe/core/timestampcolumn.pyx"]),
     Extension("fluidframe.core.boolcolumn", ["fluidframe/core/boolcolumn.pyx"]),
     Extension("fluidframe.core.categorycolumn", ["fluidframe/core/categorycolumn.pyx"]),
+    Extension("fluidframe.core.datetimecolumn", ["fluidframe/core/datetimecolumn.pyx"]),
+    Extension("fluidframe.core.timecolumn", ["fluidframe/core/timecolumn.pyx"]),
     Extension("fluidframe.core.index", ["fluidframe/core/index.pyx"], language="c++"),
     Extension("fluidframe.core.indexers", ["fluidframe/core/indexers.pyx"]),
     Extension("fluidframe.core.fastdataframe", ["fluidframe/core/fastdataframe.pyx"]),

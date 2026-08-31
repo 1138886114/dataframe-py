@@ -13,6 +13,8 @@ cdef enum DataType:
     TYPE_TIMESTAMP = 5
     TYPE_BOOL = 6
     TYPE_CATEGORY = 7
+    TYPE_DATETIME = 8
+    TYPE_TIME = 9
 
 cdef class BaseColumn:
     cdef public Py_ssize_t length

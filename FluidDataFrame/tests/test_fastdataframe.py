@@ -10,7 +10,7 @@ from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.char256column import Char256Column_SoA
 from fluidframe.core.ucs2column import UCS2Column_SoA
-from fluidframe.core.timestampcolumn import TimestampColumn
+from fluidframe.core.timestampcolumn import DateColumn as DateColumn
 from fluidframe._schema_types import Char256, Timestamp
 
 passed = 0
@@ -85,7 +85,7 @@ def test_init():
     check('schema char256', isinstance(df.columns['a'], Char256Column_SoA))
 
     df = FastDataFrame({'a': Timestamp})
-    check('schema timestamp', isinstance(df.columns['a'], TimestampColumn))
+    check('schema timestamp', isinstance(df.columns['a'], DateColumn))
 
     df = FastDataFrame({'id': int, 'name': str, 'score': float})
     check('schema multiple', df.shape == (0, 3))

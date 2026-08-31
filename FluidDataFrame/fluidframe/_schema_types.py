@@ -8,6 +8,8 @@ TYPE_UCS2 = 4
 TYPE_TIMESTAMP = 5
 TYPE_BOOL = 6
 TYPE_CATEGORY = 7
+TYPE_DATETIME = 8
+TYPE_TIME = 9
 
 
 class Char256:
@@ -19,6 +21,21 @@ class Timestamp:
     """时间戳类型，内部按 YYYYMMDD 整数存储；构造时支持 Timestamp('20160101') 或 Timestamp(20160101)"""
     def __init__(self, val=None):
         pass
+
+
+class Date:
+    """日期类型，内部按 YYYYMMDD 整数存储"""
+    pass
+
+
+class DateTime:
+    """日期时间类型，内部按微秒 since epoch 存储"""
+    pass
+
+
+class Time:
+    """时间类型，内部按秒 since midnight 存储"""
+    pass
 
 
 class Bool:
@@ -40,6 +57,9 @@ _STRING_TYPE_MAP = {
     'str': TYPE_UCS2,
     'string': TYPE_UCS2,
     'timestamp': TYPE_TIMESTAMP,
+    'date': TYPE_TIMESTAMP,
+    'datetime': TYPE_DATETIME,
+    'time': TYPE_TIME,
     'bool': TYPE_BOOL,
     'boolean': TYPE_BOOL,
     'category': TYPE_CATEGORY,
@@ -55,6 +75,9 @@ def _parse_schema(schema_dict):
         elif v is Char256: parsed[k] = TYPE_CHAR256
         elif v is str: parsed[k] = TYPE_UCS2
         elif v is Timestamp: parsed[k] = TYPE_TIMESTAMP
+        elif v is Date: parsed[k] = TYPE_TIMESTAMP
+        elif v is DateTime: parsed[k] = TYPE_DATETIME
+        elif v is Time: parsed[k] = TYPE_TIME
         elif v is Bool: parsed[k] = TYPE_BOOL
         elif v is Category: parsed[k] = TYPE_CATEGORY
         elif isinstance(v, str):

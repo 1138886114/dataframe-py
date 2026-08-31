@@ -134,14 +134,16 @@ from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn, _c_corr, _c_cov
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.timestampcolumn cimport DateColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex, INDEX_RANGE, INDEX_INT, INDEX_MULTI
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
-from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY
+from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 
-from fluidframe._schema_types import Char256, Timestamp, _parse_schema
+from fluidframe._schema_types import Char256, Timestamp, Bool, Category, DateTime, Time, _parse_schema
 
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
@@ -244,11 +246,15 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_UCS2:
             return (<UCS2Column_SoA>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_TIMESTAMP:
-            return (<TimestampColumn>col).take_by_indices(indices, n, inplace)
+            return (<DateColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_BOOL:
             return (<BoolColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_CATEGORY:
             return (<CategoryColumn>col).take_by_indices(indices, n, inplace)
+        elif col.dtype == TYPE_DATETIME:
+            return (<DateTimeColumn>col).take_by_indices(indices, n, inplace)
+        elif col.dtype == TYPE_TIME:
+            return (<TimeColumn>col).take_by_indices(indices, n, inplace)
         raise TypeError(f"Unsupported column dtype: {col.dtype}")
 
     cdef str _type_name(self, BaseColumn col):
@@ -259,6 +265,8 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_TIMESTAMP: return 'timestamp'
         elif col.dtype == TYPE_BOOL: return 'bool'
         elif col.dtype == TYPE_CATEGORY: return 'category'
+        elif col.dtype == TYPE_DATETIME: return 'datetime'
+        elif col.dtype == TYPE_TIME: return 'time'
         return 'unknown'
 
     cdef BaseColumn _diff_column(self, BaseColumn col, int periods):
@@ -278,11 +286,15 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_UCS2:
             (<UCS2Column_SoA>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_TIMESTAMP:
-            (<TimestampColumn>col).drop_row(row_idx, rem_len)
+            (<DateColumn>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_BOOL:
             (<BoolColumn>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_CATEGORY:
             (<CategoryColumn>col).drop_row(row_idx, rem_len)
+        elif col.dtype == TYPE_DATETIME:
+            (<DateTimeColumn>col).drop_row(row_idx, rem_len)
+        elif col.dtype == TYPE_TIME:
+            (<TimeColumn>col).drop_row(row_idx, rem_len)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -303,11 +315,15 @@ cdef class FastDataFrame:
                 elif dtype == TYPE_UCS2:
                     self.columns[col_name] = UCS2Column_SoA()
                 elif dtype == TYPE_TIMESTAMP:
-                    self.columns[col_name] = TimestampColumn()
+                    self.columns[col_name] = DateColumn()
                 elif dtype == TYPE_BOOL:
                     self.columns[col_name] = BoolColumn()
                 elif dtype == TYPE_CATEGORY:
                     self.columns[col_name] = CategoryColumn()
+                elif dtype == TYPE_DATETIME:
+                    self.columns[col_name] = DateTimeColumn()
+                elif dtype == TYPE_TIME:
+                    self.columns[col_name] = TimeColumn()
 
     @property
     def loc(self):
@@ -505,7 +521,16 @@ cdef class FastDataFrame:
 
         elif col.dtype == TYPE_TIMESTAMP:
             with nogil:
-                _c_argsort_numeric((<TimestampColumn>col).data_c, indices_c, 0, n - 1)
+                _c_argsort_numeric((<DateColumn>col).data_c, indices_c, 0, n - 1)
+        elif col.dtype == TYPE_DATETIME:
+            with nogil:
+                _c_argsort_numeric((<DateTimeColumn>col).data_c, indices_c, 0, n - 1)
+        elif col.dtype == TYPE_TIME:
+            with nogil:
+                _c_argsort_numeric((<TimeColumn>col).data_c, indices_c, 0, n - 1)
+        elif col.dtype == TYPE_BOOL or col.dtype == TYPE_CATEGORY:
+            os_aligned_free(indices_c)
+            raise TypeError("Sorting not supported for this column type")
         else:
             os_aligned_free(indices_c)
             raise TypeError("Sorting not supported for this column type")
@@ -899,6 +924,14 @@ cdef class FastDataFrame:
                 result[name] = str
             elif col.dtype == TYPE_TIMESTAMP:
                 result[name] = Timestamp
+            elif col.dtype == TYPE_BOOL:
+                result[name] = bool
+            elif col.dtype == TYPE_CATEGORY:
+                result[name] = Category
+            elif col.dtype == TYPE_DATETIME:
+                result[name] = DateTime
+            elif col.dtype == TYPE_TIME:
+                result[name] = Time
         return result
 
     @cython.binding(False)
@@ -916,6 +949,8 @@ cdef class FastDataFrame:
         cdef str name, val, top_val
         cdef Py_ssize_t col_len, i, max_freq, freq_val
         cdef long long ts_min, ts_max
+        cdef long long dtc_min, dtc_max
+        cdef int tmc_min, tmc_max
         cdef dict freq_map
         for name, col_obj in self.columns.items():
             col_len = col_obj.length
@@ -955,6 +990,45 @@ cdef class FastDataFrame:
                     'count': col_len,
                     'min': ts_min,
                     'max': ts_max,
+                }
+            elif col_obj.dtype == TYPE_DATETIME:
+                if col_len > 0:
+                    dtc_min = col_obj.min()
+                    dtc_max = col_obj.max()
+                else:
+                    dtc_min = dtc_max = 0
+                stats[name] = {
+                    'count': col_len,
+                    'min': dtc_min,
+                    'max': dtc_max,
+                }
+            elif col_obj.dtype == TYPE_TIME:
+                if col_len > 0:
+                    tmc_min = col_obj.min()
+                    tmc_max = col_obj.max()
+                else:
+                    tmc_min = tmc_max = 0
+                stats[name] = {
+                    'count': col_len,
+                    'min': tmc_min,
+                    'max': tmc_max,
+                }
+            elif col_obj.dtype == TYPE_BOOL or col_obj.dtype == TYPE_CATEGORY:
+                freq_map = {}
+                for i in range(col_len):
+                    val = str(col_obj[i])
+                    freq_map[val] = freq_map.get(val, 0) + 1
+                top_val = ''
+                max_freq = 0
+                for val, freq_val in freq_map.items():
+                    if freq_val > max_freq:
+                        max_freq = freq_val
+                        top_val = val
+                stats[name] = {
+                    'count': col_len,
+                    'unique': len(freq_map),
+                    'top': top_val,
+                    'freq': max_freq,
                 }
         return stats
 
@@ -1072,6 +1146,10 @@ cdef class FastDataFrame:
         cdef list col_names
         cdef list new_names
         cdef dict new_cols
+        cdef BoolColumn bool_col
+        cdef CategoryColumn cat_col
+        cdef DateTimeColumn dtc_col
+        cdef TimeColumn tmc_col
 
         for col_name, values in data.items():
             if col_name not in parsed:
@@ -1115,11 +1193,32 @@ cdef class FastDataFrame:
                     ucs2_col.append(<str>values[i])
                 df.columns[col_name] = ucs2_col
             elif dtype == TYPE_TIMESTAMP:
-                ts_col = TimestampColumn(n)
+                ts_col = DateColumn(n)
                 ts_col.length = n
                 for i in range(n):
                     ts_col.data_c[i] = <long long>values[i]
                 df.columns[col_name] = ts_col
+            elif dtype == TYPE_BOOL:
+                bool_col = BoolColumn(n)
+                bool_col.length = n
+                for i in range(n):
+                    bool_col.data_c[i] = 1 if values[i] else 0
+                df.columns[col_name] = bool_col
+            elif dtype == TYPE_CATEGORY:
+                cat_col = CategoryColumn(n)
+                for i in range(n):
+                    cat_col.append(<str>values[i])
+                df.columns[col_name] = cat_col
+            elif dtype == TYPE_DATETIME:
+                dtc_col = DateTimeColumn(n)
+                for i in range(n):
+                    dtc_col.append(<str>values[i])
+                df.columns[col_name] = dtc_col
+            elif dtype == TYPE_TIME:
+                tmc_col = TimeColumn(n)
+                for i in range(n):
+                    tmc_col.append(<str>values[i])
+                df.columns[col_name] = tmc_col
 
         if columns is not None:
             col_names = list(df.columns.keys())
@@ -1160,8 +1259,16 @@ cdef class FastDataFrame:
                 elif dtype == TYPE_UCS2:
                     df.columns[col_name] = UCS2Column_SoA()
                 elif dtype == TYPE_TIMESTAMP:
-                    df.columns[col_name] = TimestampColumn()
-            return df
+                    df.columns[col_name] = DateColumn()
+                elif dtype == TYPE_BOOL:
+                    df.columns[col_name] = BoolColumn()
+                elif dtype == TYPE_CATEGORY:
+                    df.columns[col_name] = CategoryColumn()
+                elif dtype == TYPE_DATETIME:
+                    df.columns[col_name] = DateTimeColumn()
+                elif dtype == TYPE_TIME:
+                    df.columns[col_name] = TimeColumn()
+                return df
 
         df.df_length = n_rows
         df.index = RangeIndex(0, n_rows)
@@ -1194,11 +1301,32 @@ cdef class FastDataFrame:
                     ucs2_col.append(<str>rows[i][j])
                 df.columns[col_name] = ucs2_col
             elif dtype == TYPE_TIMESTAMP:
-                ts_col = TimestampColumn(n_rows)
+                ts_col = DateColumn(n_rows)
                 ts_col.length = n_rows
                 for i in range(n_rows):
                     ts_col.data_c[i] = <long long>rows[i][j]
                 df.columns[col_name] = ts_col
+            elif dtype == TYPE_BOOL:
+                bool_col = BoolColumn(n_rows)
+                bool_col.length = n_rows
+                for i in range(n_rows):
+                    bool_col.data_c[i] = 1 if rows[i][j] else 0
+                df.columns[col_name] = bool_col
+            elif dtype == TYPE_CATEGORY:
+                cat_col = CategoryColumn(n_rows)
+                for i in range(n_rows):
+                    cat_col.append(<str>rows[i][j])
+                df.columns[col_name] = cat_col
+            elif dtype == TYPE_DATETIME:
+                dtc_col = DateTimeColumn(n_rows)
+                for i in range(n_rows):
+                    dtc_col.append(<str>rows[i][j])
+                df.columns[col_name] = dtc_col
+            elif dtype == TYPE_TIME:
+                tmc_col = TimeColumn(n_rows)
+                for i in range(n_rows):
+                    tmc_col.append(<str>rows[i][j])
+                df.columns[col_name] = tmc_col
 
         if columns is not None:
             col_names = list(df.columns.keys())
@@ -1247,7 +1375,15 @@ cdef class FastDataFrame:
                 elif dtype == TYPE_UCS2:
                     df.columns[col_name] = UCS2Column_SoA()
                 elif dtype == TYPE_TIMESTAMP:
-                    df.columns[col_name] = TimestampColumn()
+                    df.columns[col_name] = DateColumn()
+                elif dtype == TYPE_BOOL:
+                    df.columns[col_name] = BoolColumn()
+                elif dtype == TYPE_CATEGORY:
+                    df.columns[col_name] = CategoryColumn()
+                elif dtype == TYPE_DATETIME:
+                    df.columns[col_name] = DateTimeColumn()
+                elif dtype == TYPE_TIME:
+                    df.columns[col_name] = TimeColumn()
             return df
 
         df.df_length = n_rows
@@ -1281,11 +1417,32 @@ cdef class FastDataFrame:
                     ucs2_col.append(<str>arrays[j][i])
                 df.columns[col_name] = ucs2_col
             elif dtype == TYPE_TIMESTAMP:
-                ts_col = TimestampColumn(n_rows)
+                ts_col = DateColumn(n_rows)
                 ts_col.length = n_rows
                 for i in range(n_rows):
                     ts_col.data_c[i] = <long long>arrays[j][i]
                 df.columns[col_name] = ts_col
+            elif dtype == TYPE_BOOL:
+                bool_col = BoolColumn(n_rows)
+                bool_col.length = n_rows
+                for i in range(n_rows):
+                    bool_col.data_c[i] = 1 if arrays[j][i] else 0
+                df.columns[col_name] = bool_col
+            elif dtype == TYPE_CATEGORY:
+                cat_col = CategoryColumn(n_rows)
+                for i in range(n_rows):
+                    cat_col.append(<str>arrays[j][i])
+                df.columns[col_name] = cat_col
+            elif dtype == TYPE_DATETIME:
+                dtc_col = DateTimeColumn(n_rows)
+                for i in range(n_rows):
+                    dtc_col.append(<str>arrays[j][i])
+                df.columns[col_name] = dtc_col
+            elif dtype == TYPE_TIME:
+                tmc_col = TimeColumn(n_rows)
+                for i in range(n_rows):
+                    tmc_col.append(<str>arrays[j][i])
+                df.columns[col_name] = tmc_col
 
         if columns is not None:
             col_names = list(df.columns.keys())
@@ -1494,7 +1651,11 @@ cdef class FastDataFrame:
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef Char256Column_SoA cc
-        cdef TimestampColumn tc
+        cdef DateColumn tc
+        cdef BoolColumn bool_col
+        cdef CategoryColumn cat_col
+        cdef DateTimeColumn dtc_col
+        cdef TimeColumn tmc_col
         if col.dtype == TYPE_INT:
             ic = <IntColumn>col
             col_len = ic.length
@@ -1541,7 +1702,7 @@ cdef class FastDataFrame:
             ucs2_col.length = col_len + 1
 
         elif col.dtype == TYPE_TIMESTAMP:
-            tc = <TimestampColumn>col
+            tc = <DateColumn>col
             col_len = tc.length
             rem = col_len - pos
             if col_len >= tc.capacity:
@@ -1552,16 +1713,68 @@ cdef class FastDataFrame:
                         rem * sizeof(long long))
             tc.length = col_len + 1
 
+        elif col.dtype == TYPE_BOOL:
+            bool_col = <BoolColumn>col
+            col_len = bool_col.length
+            rem = col_len - pos
+            if col_len >= bool_col.capacity:
+                bool_col._reserve(bool_col.capacity * 2)
+            if rem > 0:
+                memmove(bool_col.data_c + pos + 1,
+                        bool_col.data_c + pos,
+                        rem * sizeof(unsigned char))
+            bool_col.length = col_len + 1
+
+        elif col.dtype == TYPE_CATEGORY:
+            cat_col = <CategoryColumn>col
+            col_len = cat_col.length
+            rem = col_len - pos
+            if col_len >= cat_col.capacity:
+                cat_col._reserve(cat_col.capacity * 2)
+            if rem > 0:
+                memmove(cat_col.codes_c + pos + 1,
+                        cat_col.codes_c + pos,
+                        rem * sizeof(int))
+            cat_col.length = col_len + 1
+
+        elif col.dtype == TYPE_DATETIME:
+            dtc_col = <DateTimeColumn>col
+            col_len = dtc_col.length
+            rem = col_len - pos
+            if col_len >= dtc_col.capacity:
+                dtc_col._reserve(dtc_col.capacity * 2)
+            if rem > 0:
+                memmove(dtc_col.data_c + pos + 1,
+                        dtc_col.data_c + pos,
+                        rem * sizeof(long long))
+            dtc_col.length = col_len + 1
+
+        elif col.dtype == TYPE_TIME:
+            tmc_col = <TimeColumn>col
+            col_len = tmc_col.length
+            rem = col_len - pos
+            if col_len >= tmc_col.capacity:
+                tmc_col._reserve(tmc_col.capacity * 2)
+            if rem > 0:
+                memmove(tmc_col.data_c + pos + 1,
+                        tmc_col.data_c + pos,
+                        rem * sizeof(int))
+            tmc_col.length = col_len + 1
+
     cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos):
         """Remove element at pos by shifting data left (inverse of _shift_right)."""
         cdef Py_ssize_t rem, col_len
-        cdef Py_ssize_t start_offset, new_offsets_len, i, removed_len
+        cdef Py_ssize_t start_offset, new_offsets_len, i
         cdef UCS2Column_SoA ucs2_col
         cdef Py_ssize_t* new_offsets
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef Char256Column_SoA cc
-        cdef TimestampColumn tc
+        cdef DateColumn tc
+        cdef BoolColumn bool_col
+        cdef CategoryColumn cat_col
+        cdef DateTimeColumn dtc_col
+        cdef TimeColumn tmc_col
         if col.dtype == TYPE_INT:
             ic = <IntColumn>col
             col_len = ic.length
@@ -1604,7 +1817,7 @@ cdef class FastDataFrame:
                 ucs2_col.offsets_c[i] = ucs2_col.offsets_c[i + 1] - removed_len
             ucs2_col.length = col_len - 1
         elif col.dtype == TYPE_TIMESTAMP:
-            tc = <TimestampColumn>col
+            tc = <DateColumn>col
             col_len = tc.length
             rem = col_len - pos - 1
             if rem > 0:
@@ -1612,6 +1825,46 @@ cdef class FastDataFrame:
                         tc.data_c + pos + 1,
                         rem * sizeof(long long))
             tc.length = col_len - 1
+
+        elif col.dtype == TYPE_BOOL:
+            bool_col = <BoolColumn>col
+            col_len = bool_col.length
+            rem = col_len - pos - 1
+            if rem > 0:
+                memmove(bool_col.data_c + pos,
+                        bool_col.data_c + pos + 1,
+                        rem * sizeof(unsigned char))
+            bool_col.length = col_len - 1
+
+        elif col.dtype == TYPE_CATEGORY:
+            cat_col = <CategoryColumn>col
+            col_len = cat_col.length
+            rem = col_len - pos - 1
+            if rem > 0:
+                memmove(cat_col.codes_c + pos,
+                        cat_col.codes_c + pos + 1,
+                        rem * sizeof(int))
+            cat_col.length = col_len - 1
+
+        elif col.dtype == TYPE_DATETIME:
+            dtc_col = <DateTimeColumn>col
+            col_len = dtc_col.length
+            rem = col_len - pos - 1
+            if rem > 0:
+                memmove(dtc_col.data_c + pos,
+                        dtc_col.data_c + pos + 1,
+                        rem * sizeof(long long))
+            dtc_col.length = col_len - 1
+
+        elif col.dtype == TYPE_TIME:
+            tmc_col = <TimeColumn>col
+            col_len = tmc_col.length
+            rem = col_len - pos - 1
+            if rem > 0:
+                memmove(tmc_col.data_c + pos,
+                        tmc_col.data_c + pos + 1,
+                        rem * sizeof(int))
+            tmc_col.length = col_len - 1
 
     cdef double _get_col_value_as_double(self, BaseColumn col, Py_ssize_t i):
         if col.dtype == TYPE_INT:
@@ -1753,7 +2006,15 @@ cdef class FastDataFrame:
                             ucs2_obj.offsets_c[_oi] += ucs2_val_len
                         ucs2_obj.char_length += ucs2_val_len
                 elif col_obj.dtype == TYPE_TIMESTAMP:
-                    (<TimestampColumn>col_obj).data_c[pos] = <long long>val
+                    (<DateColumn>col_obj).data_c[pos] = <long long>val
+                elif col_obj.dtype == TYPE_BOOL:
+                    (<BoolColumn>col_obj).data_c[pos] = 1 if val else 0
+                elif col_obj.dtype == TYPE_CATEGORY:
+                    (<CategoryColumn>col_obj).codes_c[pos] = (<CategoryColumn>col_obj)._get_or_add_code(str(val) if val is not None else '')
+                elif col_obj.dtype == TYPE_DATETIME:
+                    (<DateTimeColumn>col_obj).data_c[pos] = 0
+                elif col_obj.dtype == TYPE_TIME:
+                    (<TimeColumn>col_obj).data_c[pos] = <int>val if isinstance(val, int) else 0
             self.df_length += 1
             if self.index is not None:
                 if self.index.index_type == INDEX_RANGE:
@@ -2365,6 +2626,8 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_UCS2: return 4
         elif col.dtype == TYPE_BOOL: return 1
         elif col.dtype == TYPE_CATEGORY: return sizeof(int)
+        elif col.dtype == TYPE_DATETIME: return sizeof(long long)
+        elif col.dtype == TYPE_TIME: return sizeof(int)
         return 0
 
     cdef str _dtype_summary(self):
@@ -2388,6 +2651,14 @@ cdef class FastDataFrame:
                 total += col.capacity * sizeof(long long)
             elif col.dtype == TYPE_UCS2:
                 total += col.capacity * sizeof(Py_UCS2) + (col.capacity + 1) * sizeof(Py_ssize_t)
+            elif col.dtype == TYPE_BOOL:
+                total += col.capacity * sizeof(unsigned char)
+            elif col.dtype == TYPE_CATEGORY:
+                total += col.capacity * sizeof(int) + len((<CategoryColumn>col).categories) * sizeof(void*)
+            elif col.dtype == TYPE_DATETIME:
+                total += col.capacity * sizeof(long long)
+            elif col.dtype == TYPE_TIME:
+                total += col.capacity * sizeof(int)
         return total
 
 
@@ -2416,7 +2687,9 @@ cdef class FastDataFrame:
     def select_dtypes(self, list include_types=None, list exclude_types=None):
         cdef FastDataFrame result = FastDataFrame()
         cdef dict dtype_map = {TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_CHAR256: 'char256',
-                               TYPE_UCS2: 'ucs2', TYPE_TIMESTAMP: 'timestamp'}
+                                TYPE_UCS2: 'ucs2', TYPE_TIMESTAMP: 'timestamp',
+                                TYPE_BOOL: 'bool', TYPE_CATEGORY: 'category',
+                                TYPE_DATETIME: 'datetime', TYPE_TIME: 'time'}
         for name, col in self.columns.items():
             tn = dtype_map.get(col.dtype, 'unknown')
             if include_types is not None and tn not in include_types:

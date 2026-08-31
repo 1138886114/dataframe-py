@@ -18,13 +18,15 @@ cdef extern from "<ctype.h>" nogil:
 
 import re
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CHAR256, TYPE_INT, TYPE_DOUBLE, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CHAR256, TYPE_INT, TYPE_DOUBLE, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.timestampcolumn cimport DateColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 
 cdef inline bint _c_str_contains(char* source, const char* target) noexcept nogil:
     return strstr(source, target) != NULL
@@ -754,8 +756,10 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef DoubleColumn dc
         cdef BoolColumn bc
         cdef UCS2Column_SoA uc
-        cdef TimestampColumn tc
+        cdef DateColumn tc
         cdef CategoryColumn catc
+        cdef DateTimeColumn dtc
+        cdef TimeColumn tmc
         if tname in ('int', 'i4'):
             ic = IntColumn(n)
             ic.length = n
@@ -783,8 +787,8 @@ cdef class Char256Column_SoA(BaseColumn):
             for i in range(n):
                 uc._set_item(i, self[i])
             return uc
-        elif tname in ('timestamp', 'date', 'datetime'):
-            tc = TimestampColumn(n)
+        elif tname in ('timestamp', 'date'):
+            tc = DateColumn(n)
             for i in range(n):
                 s = self[i]
                 if s:
@@ -797,4 +801,22 @@ cdef class Char256Column_SoA(BaseColumn):
             for i in range(n):
                 catc.append(self[i])
             return catc
+        elif tname == 'datetime':
+            dtc = DateTimeColumn(n)
+            for i in range(n):
+                s = self[i]
+                if s:
+                    dtc.append(s)
+                else:
+                    dtc.append('')
+            return dtc
+        elif tname == 'time':
+            tmc = TimeColumn(n)
+            for i in range(n):
+                s = self[i]
+                if s:
+                    tmc.append(s)
+                else:
+                    tmc.append(0)
+            return tmc
         raise TypeError(f"Cannot convert char256 to '{tname}'")

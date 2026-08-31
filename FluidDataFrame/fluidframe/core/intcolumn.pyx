@@ -6,13 +6,15 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 from libc.math cimport sqrt, fabs, NAN
-from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free
+from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.timestampcolumn cimport DateColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 
 
 @cython.final
@@ -929,8 +931,11 @@ cdef class IntColumn(BaseColumn):
         cdef BoolColumn bc
         cdef UCS2Column_SoA uc
         cdef Char256Column_SoA cc
-        cdef TimestampColumn tc
+        cdef DateColumn tc
         cdef CategoryColumn catc
+        cdef DateTimeColumn dtc
+        cdef TimeColumn tmc
+        cdef int y, m, d
         if tname in ('double', 'float'):
             dc = DoubleColumn(n)
             dc.length = n
@@ -954,8 +959,8 @@ cdef class IntColumn(BaseColumn):
             for i in range(n):
                 cc.append(str(self.data_c[i]))
             return cc
-        elif tname in ('timestamp', 'date', 'datetime'):
-            tc = TimestampColumn(n)
+        elif tname in ('timestamp', 'date'):
+            tc = DateColumn(n)
             tc.length = n
             for i in range(n):
                 tc.data_c[i] = <long long>self.data_c[i]
@@ -965,4 +970,17 @@ cdef class IntColumn(BaseColumn):
             for i in range(n):
                 catc.append(str(self.data_c[i]))
             return catc
+        elif tname == 'datetime':
+            dtc = DateTimeColumn(n)
+            for i in range(n):
+                y = self.data_c[i] // 10000
+                m = (self.data_c[i] // 100) % 100
+                d = self.data_c[i] % 100
+                dtc.append(f"{y:04d}-{m:02d}-{d:02d}")
+            return dtc
+        elif tname == 'time':
+            tmc = TimeColumn(n)
+            for i in range(n):
+                tmc.append(self.data_c[i])
+            return tmc
         raise TypeError(f"Cannot convert int to '{tname}'")

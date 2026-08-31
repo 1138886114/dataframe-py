@@ -7,13 +7,15 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.math cimport sqrt, fabs, NAN
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_DOUBLE, TYPE_INT, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_DOUBLE, TYPE_INT, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.timestampcolumn cimport DateColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 
 
 cdef double _c_corr(double* a, double* b, Py_ssize_t n) noexcept nogil:
@@ -910,12 +912,15 @@ cdef class DoubleColumn(BaseColumn):
         else:
             tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
         cdef Py_ssize_t i, n = self.length
+        cdef int ival, y, m, d
         cdef IntColumn ic
         cdef BoolColumn bc
         cdef UCS2Column_SoA uc
         cdef Char256Column_SoA cc
-        cdef TimestampColumn tc
+        cdef DateColumn tc
         cdef CategoryColumn catc
+        cdef DateTimeColumn dtc
+        cdef TimeColumn tmc
         if tname in ('int', 'i4'):
             ic = IntColumn(n)
             ic.length = n
@@ -939,8 +944,8 @@ cdef class DoubleColumn(BaseColumn):
             for i in range(n):
                 cc.append(str(self.data_c[i]))
             return cc
-        elif tname in ('timestamp', 'date', 'datetime'):
-            tc = TimestampColumn(n)
+        elif tname in ('timestamp', 'date'):
+            tc = DateColumn(n)
             tc.length = n
             for i in range(n):
                 tc.data_c[i] = <long long>self.data_c[i]
@@ -950,4 +955,18 @@ cdef class DoubleColumn(BaseColumn):
             for i in range(n):
                 catc.append(str(self.data_c[i]))
             return catc
+        elif tname == 'datetime':
+            dtc = DateTimeColumn(n)
+            for i in range(n):
+                ival = <int>self.data_c[i]
+                y = ival // 10000
+                m = (ival // 100) % 100
+                d = ival % 100
+                dtc.append(f"{y:04d}-{m:02d}-{d:02d}")
+            return dtc
+        elif tname == 'time':
+            tmc = TimeColumn(n)
+            for i in range(n):
+                tmc.append(<int>self.data_c[i])
+            return tmc
         raise TypeError(f"Cannot convert float to '{tname}'")

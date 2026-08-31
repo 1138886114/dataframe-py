@@ -7,12 +7,14 @@ cimport cython
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove
 from libc.math cimport NAN
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_CATEGORY
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.categorycolumn cimport CategoryColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 
 
 cdef class BoolColumn(BaseColumn):
@@ -214,6 +216,8 @@ cdef class BoolColumn(BaseColumn):
         cdef UCS2Column_SoA uc
         cdef Char256Column_SoA cc
         cdef CategoryColumn catc
+        cdef DateTimeColumn dtc
+        cdef TimeColumn tmc
         if tname in ('int', 'i4'):
             ic = IntColumn(n)
             ic.length = n
@@ -242,4 +246,14 @@ cdef class BoolColumn(BaseColumn):
             for i in range(n):
                 catc.append('True' if self.data_c[i] else 'False')
             return catc
+        elif tname == 'datetime':
+            dtc = DateTimeColumn(n)
+            for i in range(n):
+                dtc.append('True' if self.data_c[i] else 'False')
+            return dtc
+        elif tname == 'time':
+            tmc = TimeColumn(n)
+            for i in range(n):
+                tmc.append(<int>self.data_c[i])
+            return tmc
         raise TypeError(f"Cannot convert bool to '{tname}'")

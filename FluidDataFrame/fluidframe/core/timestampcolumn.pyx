@@ -6,12 +6,14 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_TIMESTAMP, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_CATEGORY
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_TIMESTAMP, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.categorycolumn cimport CategoryColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +69,7 @@ cdef inline long long _parse_date_str(str s) noexcept:
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef class TimestampColumn(BaseColumn):
+cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -106,7 +108,7 @@ cdef class TimestampColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
-        cdef TimestampColumn new_col = TimestampColumn(self.capacity)
+        cdef DateColumn new_col = DateColumn(self.capacity)
         new_col.length = self.length
         memcpy(new_col.data_c, self.data_c, self.length * sizeof(long long))
         return new_col
@@ -129,7 +131,7 @@ cdef class TimestampColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def concat(self, TimestampColumn other):
+    def concat(self, DateColumn other):
         self._reserve(self.length + other.length)
         memcpy(self.data_c + self.length, other.data_c, other.length * sizeof(long long))
         self.length += other.length
@@ -382,7 +384,7 @@ cdef class TimestampColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
-        cdef TimestampColumn col = TimestampColumn(self.capacity)
+        cdef DateColumn col = DateColumn(self.capacity)
         col.length = n
         cdef long long fill_val = <long long>fill
         cdef Py_ssize_t i
@@ -394,7 +396,7 @@ cdef class TimestampColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def add_days(self, int n):
         cdef Py_ssize_t length = self.length
-        cdef TimestampColumn res = TimestampColumn(self.capacity)
+        cdef DateColumn res = DateColumn(self.capacity)
         res.length = length
         cdef Py_ssize_t i
         cdef int y, m, d
@@ -418,7 +420,7 @@ cdef class TimestampColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def add_months(self, int n):
         cdef Py_ssize_t length = self.length
-        cdef TimestampColumn res = TimestampColumn(self.capacity)
+        cdef DateColumn res = DateColumn(self.capacity)
         res.length = length
         cdef Py_ssize_t i
         cdef int y, m, d, total, new_m, new_y, max_d
@@ -448,7 +450,7 @@ cdef class TimestampColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def add_years(self, int n):
         cdef Py_ssize_t length = self.length
-        cdef TimestampColumn res = TimestampColumn(self.capacity)
+        cdef DateColumn res = DateColumn(self.capacity)
         res.length = length
         cdef Py_ssize_t i
         cdef int y, m, d, new_y, max_d
@@ -778,7 +780,7 @@ cdef class TimestampColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def last_day_of_month(self):
         """Return the last day of each date's month as YYYYMMDD."""
-        cdef TimestampColumn res = TimestampColumn(self.capacity)
+        cdef DateColumn res = DateColumn(self.capacity)
         res.length = self.length
         cdef Py_ssize_t i
         cdef int y, m, max_d
@@ -883,8 +885,8 @@ cdef class TimestampColumn(BaseColumn):
         res.length = self.length
 
         cdef long long v
-        if isinstance(val, TimestampColumn):
-            other = <TimestampColumn>val
+        if isinstance(val, DateColumn):
+            other = <DateColumn>val
             if other.length != self.length:
                 raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
             if op == 0:
@@ -927,7 +929,7 @@ cdef class TimestampColumn(BaseColumn):
         cdef Py_ssize_t i
         for i in range(self.length):
             items.append(str(self.data_c[i]))
-        return f"TimestampColumn([{', '.join(items)}])"
+        return f"DateColumn([{', '.join(items)}])"
 
     def __bool__(self):
         return self.length > 0
@@ -936,10 +938,10 @@ cdef class TimestampColumn(BaseColumn):
         return self.length
 
 
-    cdef TimestampColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
+    cdef DateColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef Py_ssize_t i
         if not inplace:
-            new_col = TimestampColumn(max(n, 1))
+            new_col = DateColumn(max(n, 1))
             new_col.length = n
             with nogil:
                 for i in range(n):
@@ -980,6 +982,8 @@ cdef class TimestampColumn(BaseColumn):
         cdef UCS2Column_SoA uc
         cdef Char256Column_SoA cc
         cdef CategoryColumn catc
+        cdef DateTimeColumn dtc
+        cdef TimeColumn tmc
         if tname in ('int', 'i4'):
             ic = IntColumn(n)
             ic.length = n
@@ -1020,4 +1024,19 @@ cdef class TimestampColumn(BaseColumn):
                 d = <int>(v % 100)
                 catc.append(f"{y:04d}-{m:02d}-{d:02d}")
             return catc
+        elif tname == 'datetime':
+            dtc = DateTimeColumn(n)
+            for i in range(n):
+                v = self.data_c[i]
+                y = <int>(v // 10000)
+                m = <int>((v // 100) % 100)
+                d = <int>(v % 100)
+                dtc.append(f"{y:04d}-{m:02d}-{d:02d}")
+            return dtc
+        elif tname == 'time':
+            tmc = TimeColumn(n)
+            tmc.length = n
+            for i in range(n):
+                tmc.data_c[i] = 0
+            return tmc
         raise TypeError(f"Cannot convert timestamp to '{tname}'")

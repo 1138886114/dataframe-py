@@ -7,13 +7,15 @@ cimport cython
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove
 from libc.math cimport NAN
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CATEGORY, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CATEGORY, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_DATETIME, TYPE_TIME
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.timestampcolumn cimport DateColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 
 
 cdef class CategoryColumn(BaseColumn):
@@ -190,7 +192,10 @@ cdef class CategoryColumn(BaseColumn):
         cdef DoubleColumn dc
         cdef UCS2Column_SoA uc
         cdef Char256Column_SoA cc
-        cdef TimestampColumn tc
+        cdef DateColumn tc
+        cdef BoolColumn bc
+        cdef DateTimeColumn dtc
+        cdef TimeColumn tmc
         if tname in ('int', 'i4'):
             ic = IntColumn(n)
             ic.length = n
@@ -225,8 +230,8 @@ cdef class CategoryColumn(BaseColumn):
                 s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
                 cc.append(s)
             return cc
-        elif tname in ('timestamp', 'date', 'datetime'):
-            tc = TimestampColumn(n)
+        elif tname in ('timestamp', 'date'):
+            tc = DateColumn(n)
             for i in range(n):
                 s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
                 if s:
@@ -234,6 +239,24 @@ cdef class CategoryColumn(BaseColumn):
                 else:
                     tc.append(0)
             return tc
+        elif tname == 'datetime':
+            dtc = DateTimeColumn(n)
+            for i in range(n):
+                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                if s:
+                    dtc.append(s)
+                else:
+                    dtc.append('')
+            return dtc
+        elif tname == 'time':
+            tmc = TimeColumn(n)
+            for i in range(n):
+                s = self.categories[self.codes_c[i]] if self.codes_c[i] < len(self.categories) else ''
+                if s:
+                    tmc.append(s)
+                else:
+                    tmc.append(0)
+            return tmc
         raise TypeError(f"Cannot convert category to '{tname}'")
 
 

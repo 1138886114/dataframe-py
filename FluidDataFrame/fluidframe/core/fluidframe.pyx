@@ -6,21 +6,25 @@
 cimport cython
 from libc.math cimport NAN
 
-from fluidframe.core._base cimport BaseColumn, DataType, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY
+from fluidframe.core._base cimport BaseColumn, DataType, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
-from fluidframe.core.timestampcolumn cimport TimestampColumn
+from fluidframe.core.timestampcolumn cimport DateColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 
-from fluidframe._schema_types import Char256, Timestamp, Bool, Category, _parse_schema
+from fluidframe._schema_types import Char256, Timestamp, Bool, Category, DateTime, Time, _parse_schema
 
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.char256column import Char256Column_SoA
 from fluidframe.core.ucs2column import UCS2Column_SoA
-from fluidframe.core.timestampcolumn import TimestampColumn
+from fluidframe.core.timestampcolumn import DateColumn
 from fluidframe.core.boolcolumn import BoolColumn
 from fluidframe.core.categorycolumn import CategoryColumn
+from fluidframe.core.datetimecolumn import DateTimeColumn
+from fluidframe.core.timecolumn import TimeColumn
 from fluidframe.core.index import RangeIndex
 
 
@@ -78,7 +82,7 @@ def from_pickle(filename, bint allow_raw_pickle=False):
             for v in values:
                 col.append(v)
         elif typ == 'timestamp':
-            col = TimestampColumn()
+            col = DateColumn()
             for v in values:
                 col.append(v)
         df.columns[col_name] = col
@@ -112,7 +116,7 @@ def read_csv(filename, dict schema, sep=','):
             elif dtype == TYPE_CHAR256:
                 df.columns[name] = Char256Column_SoA()
             elif dtype == TYPE_TIMESTAMP:
-                df.columns[name] = TimestampColumn()
+                df.columns[name] = DateColumn()
             else:
                 df.columns[name] = UCS2Column_SoA()
         return df
@@ -134,7 +138,7 @@ def read_csv(filename, dict schema, sep=','):
             for i in range(n_rows):
                 col.append(rows[i][j])
         elif py_type == TYPE_TIMESTAMP:
-            col = TimestampColumn(n_rows)
+            col = DateColumn(n_rows)
             for i in range(n_rows):
                 col.append(rows[i][j].strip())
         else:
@@ -154,7 +158,7 @@ def read_tsv(filename, dict schema):
 cdef object _default_val(BaseColumn col):
     if isinstance(col, IntColumn): return 0
     if isinstance(col, DoubleColumn): return float('nan')
-    if isinstance(col, TimestampColumn): return 0
+    if isinstance(col, DateColumn): return 0
     return ''
 
 
@@ -162,7 +166,7 @@ cdef BaseColumn _empty_col(BaseColumn col):
     if isinstance(col, IntColumn): return IntColumn()
     if isinstance(col, DoubleColumn): return DoubleColumn()
     if isinstance(col, Char256Column_SoA): return Char256Column_SoA()
-    if isinstance(col, TimestampColumn): return TimestampColumn()
+    if isinstance(col, DateColumn): return DateColumn()
     return UCS2Column_SoA()
 
 
@@ -373,9 +377,9 @@ def to_numeric(column, errors='coerce'):
 
 
 def to_datetime(column, str fmt='', errors='coerce'):
-    """Convert column to TimestampColumn. Like pd.to_datetime."""
-    n = column.length
-    res = TimestampColumn(n)
+    """Convert column to DateTimeColumn. Like pd.to_datetime."""
+    cdef Py_ssize_t n = column.length
+    cdef DateTimeColumn res = DateTimeColumn(n)
     for i in range(n):
         s = str(column[i])
         try:
@@ -383,6 +387,36 @@ def to_datetime(column, str fmt='', errors='coerce'):
         except (ValueError, TypeError):
             if errors == 'raise':
                 raise ValueError(f"Could not convert '{s}' to datetime")
+            res.append(0)
+    return res
+
+
+def to_date(column, str fmt='', errors='coerce'):
+    """Convert column to DateColumn (YYYYMMDD)."""
+    cdef Py_ssize_t n = column.length
+    cdef DateColumn res = DateColumn(n)
+    for i in range(n):
+        s = str(column[i])
+        try:
+            res.append(s)
+        except (ValueError, TypeError):
+            if errors == 'raise':
+                raise ValueError(f"Could not convert '{s}' to date")
+            res.append(0)
+    return res
+
+
+def to_time(column, str fmt='', errors='coerce'):
+    """Convert column to TimeColumn (seconds since midnight)."""
+    cdef Py_ssize_t n = column.length
+    cdef TimeColumn res = TimeColumn(n)
+    for i in range(n):
+        s = str(column[i])
+        try:
+            res.append(s)
+        except (ValueError, TypeError):
+            if errors == 'raise':
+                raise ValueError(f"Could not convert '{s}' to time")
             res.append(0)
     return res
 
