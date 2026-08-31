@@ -6,7 +6,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_DATETIME
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_DATETIME, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
@@ -349,60 +349,57 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def astype(self, object target):
-        cdef str tname
-        if isinstance(target, str):
-            tname = target.lower()
-        else:
-            tname = {int: 'int', float: 'double', str: 'ucs2'}.get(target, '')
+        cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t safe_cap = max(n, 1)
         cdef int y, m, d, h, mi, s
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef UCS2Column_SoA uc
         cdef Char256Column_SoA cc
         cdef CategoryColumn catc
-        if tname in ('int', 'i4'):
-            ic = IntColumn(n)
+        if target_type == TYPE_INT:
+            ic = IntColumn(safe_cap)
             ic.length = n
             for i in range(n):
                 ic.data_c[i] = <int>(self.data_c[i] / 1000000LL)
             return ic
-        elif tname in ('double', 'float'):
-            dc = DoubleColumn(n)
+        elif target_type == TYPE_DOUBLE:
+            dc = DoubleColumn(safe_cap)
             dc.length = n
             for i in range(n):
                 dc.data_c[i] = <double>self.data_c[i] / 1000000.0
             return dc
-        elif tname in ('str', 'string', 'ucs2'):
-            uc = UCS2Column_SoA(n)
+        elif target_type == TYPE_UCS2:
+            uc = UCS2Column_SoA(safe_cap)
             uc.length = n
             for i in range(n):
                 uc._set_item(i, _datetime_to_str(self.data_c[i]))
             return uc
-        elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(n)
+        elif target_type == TYPE_CHAR256:
+            cc = Char256Column_SoA(safe_cap)
             for i in range(n):
                 cc.append(_datetime_to_str(self.data_c[i]))
             return cc
-        elif tname == 'category':
-            catc = CategoryColumn(n)
+        elif target_type == TYPE_CATEGORY:
+            catc = CategoryColumn(safe_cap)
             for i in range(n):
                 catc.append(_datetime_to_str(self.data_c[i]))
             return catc
-        elif tname in ('timestamp', 'date'):
+        elif target_type == TYPE_TIMESTAMP:
             from fluidframe.core.datecolumn import DateColumn as PyDateColumn
-            tc = PyDateColumn(n)
+            tc = PyDateColumn(safe_cap)
             for i in range(n):
                 _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
                 tc.append(f"{y:04d}{m:02d}{d:02d}")
             return tc
-        elif tname == 'datetime':
+        elif target_type == TYPE_DATETIME:
             return self.copy()
-        elif tname == 'time':
+        elif target_type == TYPE_TIME:
             from fluidframe.core.timecolumn import TimeColumn as PyTimeColumn
-            tmc = PyTimeColumn(n)
+            tmc = PyTimeColumn(safe_cap)
             for i in range(n):
                 _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
                 tmc.append(h * 3600 + mi * 60 + s)
             return tmc
-        raise TypeError(f"Cannot convert datetime to '{tname}'")
+        raise TypeError(f"Failed to cast DATETIME column to internal type id: {target_type}")

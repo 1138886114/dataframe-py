@@ -16,6 +16,8 @@ cdef enum DataType:
     TYPE_DATETIME = 8
     TYPE_TIME = 9
 
+cdef int _resolve_astype_target(object target) except -1
+
 cdef class BaseColumn:
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity

@@ -6,7 +6,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 from libc.math cimport sqrt, fabs, NAN
-from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free
+from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, _resolve_astype_target
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
@@ -961,12 +961,9 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def astype(self, object target):
-        cdef str tname
-        if isinstance(target, str):
-            tname = target.lower()
-        else:
-            tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
+        cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t safe_cap = max(n, 1)
         cdef DoubleColumn dc
         cdef BoolColumn bc
         cdef UCS2Column_SoA uc
@@ -976,51 +973,53 @@ cdef class IntColumn(BaseColumn):
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
         cdef int y, m, d
-        if tname in ('double', 'float'):
-            dc = DoubleColumn(n)
+        if target_type == TYPE_DOUBLE:
+            dc = DoubleColumn(safe_cap)
             dc.length = n
             for i in range(n):
                 dc.data_c[i] = <double>self.data_c[i]
             return dc
-        elif tname == 'bool':
-            bc = BoolColumn(n)
+        elif target_type == TYPE_BOOL:
+            bc = BoolColumn(safe_cap)
             bc.length = n
             for i in range(n):
                 bc.data_c[i] = 1 if self.data_c[i] != 0 else 0
             return bc
-        elif tname in ('str', 'string', 'ucs2'):
-            uc = UCS2Column_SoA(n)
+        elif target_type == TYPE_UCS2:
+            uc = UCS2Column_SoA(safe_cap)
             uc.length = n
             for i in range(n):
                 uc._set_item(i, str(self.data_c[i]))
             return uc
-        elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(n)
+        elif target_type == TYPE_CHAR256:
+            cc = Char256Column_SoA(safe_cap)
             for i in range(n):
                 cc.append(str(self.data_c[i]))
             return cc
-        elif tname in ('timestamp', 'date'):
-            tc = DateColumn(n)
+        elif target_type == TYPE_TIMESTAMP:
+            tc = DateColumn(safe_cap)
             tc.length = n
             for i in range(n):
                 tc.data_c[i] = <long long>self.data_c[i]
             return tc
-        elif tname == 'category':
-            catc = CategoryColumn(n)
+        elif target_type == TYPE_CATEGORY:
+            catc = CategoryColumn(safe_cap)
             for i in range(n):
                 catc.append(str(self.data_c[i]))
             return catc
-        elif tname == 'datetime':
-            dtc = DateTimeColumn(n)
+        elif target_type == TYPE_DATETIME:
+            dtc = DateTimeColumn(safe_cap)
             for i in range(n):
                 y = self.data_c[i] // 10000
                 m = (self.data_c[i] // 100) % 100
                 d = self.data_c[i] % 100
                 dtc.append(f"{y:04d}-{m:02d}-{d:02d}")
             return dtc
-        elif tname == 'time':
-            tmc = TimeColumn(n)
+        elif target_type == TYPE_TIME:
+            tmc = TimeColumn(safe_cap)
             for i in range(n):
                 tmc.append(self.data_c[i])
             return tmc
-        raise TypeError(f"Cannot convert int to '{tname}'")
+        elif target_type == TYPE_INT:
+            return self.copy()
+        raise TypeError(f"Failed to cast INT column to internal type id: {target_type}")

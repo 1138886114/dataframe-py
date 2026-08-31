@@ -68,7 +68,7 @@ cdef class BaseColumn:
     pass
 
 
-cdef inline int _resolve_astype_target(object target) except -1:
+cdef int _resolve_astype_target(object target) except -1:
     cdef str tname
     if isinstance(target, str):
         tname = target.lower()

@@ -5,6 +5,7 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove, strncmp, memset, strncpy
+from libc.stdio cimport snprintf
 from libc.stdint cimport uint32_t
 from libc.time cimport time_t, time
 from libc.math cimport NAN, sqrt, log, cos

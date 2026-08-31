@@ -6,7 +6,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 from libc.math cimport NAN
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
@@ -293,13 +293,9 @@ cdef class BoolColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def astype(self, object target):
-        cdef str tname
-        if isinstance(target, str):
-            tname = target.lower()
-        else:
-            tname = {int: 'int', float: 'double', bool: 'bool', str: 'ucs2'}.get(target, '')
+        cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
-        cdef Py_ssize_t cap = max(n, 1)
+        cdef Py_ssize_t safe_cap = max(n, 1)
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef UCS2Column_SoA uc
@@ -307,42 +303,44 @@ cdef class BoolColumn(BaseColumn):
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
-        if tname in ('int', 'i4'):
-            ic = IntColumn(cap)
+        if target_type == TYPE_INT:
+            ic = IntColumn(safe_cap)
             ic.length = n
             for i in range(n):
                 ic.data_c[i] = <int>self.data_c[i]
             return ic
-        elif tname in ('double', 'float'):
-            dc = DoubleColumn(cap)
+        elif target_type == TYPE_DOUBLE:
+            dc = DoubleColumn(safe_cap)
             dc.length = n
             for i in range(n):
                 dc.data_c[i] = <double>self.data_c[i]
             return dc
-        elif tname in ('str', 'string', 'ucs2'):
-            uc = UCS2Column_SoA(cap)
+        elif target_type == TYPE_UCS2:
+            uc = UCS2Column_SoA(safe_cap)
             uc.length = n
             for i in range(n):
                 uc._set_item(i, 'True' if self.data_c[i] else 'False')
             return uc
-        elif tname in ('char256', 'ascii'):
-            cc = Char256Column_SoA(cap)
+        elif target_type == TYPE_CHAR256:
+            cc = Char256Column_SoA(safe_cap)
             for i in range(n):
                 cc.append('True' if self.data_c[i] else 'False')
             return cc
-        elif tname == 'category':
-            catc = CategoryColumn(cap)
+        elif target_type == TYPE_CATEGORY:
+            catc = CategoryColumn(safe_cap)
             for i in range(n):
                 catc.append('True' if self.data_c[i] else 'False')
             return catc
-        elif tname == 'datetime':
-            dtc = DateTimeColumn(cap)
+        elif target_type == TYPE_DATETIME:
+            dtc = DateTimeColumn(safe_cap)
             for i in range(n):
                 dtc.append('True' if self.data_c[i] else 'False')
             return dtc
-        elif tname == 'time':
-            tmc = TimeColumn(cap)
+        elif target_type == TYPE_TIME:
+            tmc = TimeColumn(safe_cap)
             for i in range(n):
                 tmc.append(<int>self.data_c[i])
             return tmc
-        raise TypeError(f"Cannot convert bool to '{tname}'")
+        elif target_type == TYPE_BOOL:
+            return self.copy()
+        raise TypeError(f"Failed to cast BOOL column to internal type id: {target_type}")
