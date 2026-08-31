@@ -2,9 +2,12 @@
 # cython: boundscheck=False
 # cython: wraparound=False
 # cython: cdivision=True
+# cython: nonecheck=False
+# cython: initializedcheck=False
 
 cimport cython
 from libc.string cimport memcpy, memmove
+from libc.stdio cimport snprintf
 
 from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
@@ -17,11 +20,40 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
 from cpython.unicode cimport (
-    PyUnicode_4BYTE_KIND, PyUnicode_FromKindAndData,
-    PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR,
-    PyUnicode_KIND, PyUnicode_2BYTE_KIND, PyUnicode_DATA,
-    Py_UCS2
+    PyUnicode_1BYTE_KIND, PyUnicode_2BYTE_KIND, PyUnicode_4BYTE_KIND,
+    PyUnicode_FromKindAndData, PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR,
+    PyUnicode_KIND, PyUnicode_DATA,
+    Py_UCS1, Py_UCS2, Py_UCS4
 )
+
+
+cdef inline void _copy_py_str_to_ucs2(str val, Py_UCS2* dest, Py_ssize_t length) noexcept:
+    """
+    极速、安全的摄入器：解析底层 Unicode 物理布局并批量直拷
+    超限宽字符 (Emoji等) 会在这里被永久替换为 '?' (0x003F)
+    """
+    cdef int kind = PyUnicode_KIND(val)
+    cdef void* data = PyUnicode_DATA(val)
+    cdef Py_ssize_t i
+    cdef Py_UCS4 ch
+
+    if kind == PyUnicode_1BYTE_KIND:
+        # ASCII / Latin1 数据，直接宽化拷贝
+        for i in range(length):
+            dest[i] = <Py_UCS2>(<Py_UCS1*>data)[i]
+    elif kind == PyUnicode_2BYTE_KIND:
+        # BMP 基本多文种平面 (包含中文)，安全且完美对齐，内存直拷
+        memcpy(dest, data, length * sizeof(Py_UCS2))
+    elif kind == PyUnicode_4BYTE_KIND:
+        # 包含了 Emoji 的宽字符字符串，清洗拦截
+        for i in range(length):
+            ch = (<Py_UCS4*>data)[i]
+            dest[i] = <Py_UCS2>ch if ch <= 0xFFFF else 0x003F
+    else:
+        # 安全降级，理论上 Python3.3+ 不会走到这里
+        for i in range(length):
+            ch = PyUnicode_READ_CHAR(val, i)
+            dest[i] = <Py_UCS2>ch if ch <= 0xFFFF else 0x003F
 
 cdef inline int _ucs2_len(Py_UCS2* string) noexcept nogil:
     cdef int i = 0
@@ -43,9 +75,39 @@ cdef inline Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle,
             if match: return haystack + i
     return NULL
 
+cdef inline bint _ucs2_startswith(Py_UCS2* s, Py_ssize_t s_len, Py_UCS2* prefix, Py_ssize_t p_len) noexcept nogil:
+    if p_len == 0: return True
+    if s_len < p_len: return False
+    cdef Py_ssize_t i
+    for i in range(p_len):
+        if s[i] != prefix[i]: return False
+    return True
+
+cdef inline bint _ucs2_endswith(Py_UCS2* s, Py_ssize_t s_len, Py_UCS2* suffix, Py_ssize_t suf_len) noexcept nogil:
+    if suf_len == 0: return True
+    if s_len < suf_len: return False
+    cdef Py_ssize_t i
+    cdef Py_ssize_t offset = s_len - suf_len
+    for i in range(suf_len):
+        if s[offset + i] != suffix[i]: return False
+    return True
+
+cdef inline int _cmp_ucs2_buffers(Py_UCS2* a, Py_ssize_t len_a, Py_UCS2* b, Py_ssize_t len_b) noexcept nogil:
+    cdef Py_ssize_t min_len = len_a if len_a < len_b else len_b
+    cdef Py_ssize_t i
+    for i in range(min_len):
+        if a[i] < b[i]: return -1
+        if a[i] > b[i]: return 1
+    if len_a < len_b: return -1
+    if len_a > len_b: return 1
+    return 0
+
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.initializedcheck(False)
 cdef class UCS2Column_SoA(BaseColumn):
 
     @cython.binding(False)
@@ -85,10 +147,17 @@ cdef class UCS2Column_SoA(BaseColumn):
             self.chars_c = new_ptr
             self.char_capacity = new_char_cap
 
+    cdef inline str _get_str(self, Py_ssize_t idx):
+        cdef Py_ssize_t start = self.offsets_c[idx]
+        cdef Py_ssize_t str_len = self.offsets_c[idx + 1] - start
+        if str_len == 0:
+            return ""
+        return PyUnicode_FromKindAndData(2, self.chars_c + start, str_len)
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, str val not None):
-        cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val) if val else 0
+        cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val)
 
         if self.length >= self.capacity:
             self._reserve_rows(self.capacity * 2)
@@ -97,34 +166,19 @@ cdef class UCS2Column_SoA(BaseColumn):
             self._reserve_chars(max(self.char_capacity * 2, self.char_length + str_len + 1024))
 
         if str_len > 0:
-            if PyUnicode_KIND(val) == PyUnicode_2BYTE_KIND:
-                memcpy(self.chars_c + self.char_length, PyUnicode_DATA(val), str_len * sizeof(Py_UCS2))
-            else:
-                self._fallback_copy_chars(val, str_len)
+            _copy_py_str_to_ucs2(val, self.chars_c + self.char_length, str_len)
 
         self.char_length += str_len
         self.length += 1
         self.offsets_c[self.length] = self.char_length
-
-    cdef inline void _fallback_copy_chars(self, str val, Py_ssize_t str_len):
-        cdef Py_ssize_t i
-        cdef Py_UCS4 char_code
-        for i in range(str_len):
-            char_code = PyUnicode_READ_CHAR(val, i)
-            if char_code > 0xFFFF:
-                self.chars_c[self.char_length + i] = 0x003F
-            else:
-                self.chars_c[self.char_length + i] = <Py_UCS2>char_code
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
         cdef UCS2Column_SoA new_col = UCS2Column_SoA(self.capacity)
         new_col._reserve_chars(self.char_capacity)
-
         new_col.length = self.length
         new_col.char_length = self.char_length
-
         memcpy(new_col.offsets_c, self.offsets_c, (self.length + 1) * sizeof(Py_ssize_t))
         memcpy(new_col.chars_c, self.chars_c, self.char_length * sizeof(Py_UCS2))
         return new_col
@@ -136,21 +190,27 @@ cdef class UCS2Column_SoA(BaseColumn):
         self._reserve_chars(self.char_length + other.char_length)
 
         cdef Py_ssize_t i
+        cdef Py_ssize_t base_offset = self.char_length
+        cdef Py_ssize_t other_len = other.length
+        cdef Py_ssize_t* self_offs = self.offsets_c
+        cdef Py_ssize_t* other_offs = other.offsets_c
+
         memcpy(self.chars_c + self.char_length, other.chars_c, other.char_length * sizeof(Py_UCS2))
 
-        cdef Py_ssize_t base_offset = self.char_length
-        for i in range(other.length):
-            self.offsets_c[self.length + 1 + i] = base_offset + other.offsets_c[i + 1]
+        for i in range(other_len):
+            self_offs[self.length + 1 + i] = base_offset + other_offs[i + 1]
 
-        self.length += other.length
+        self.length += other_len
         self.char_length += other.char_length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
         cdef Py_ssize_t n = len(indices)
+        cdef char err_buf[256]
         if n != self.length:
-            raise ValueError("Length of indices must match column length")
+            snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
+            raise ValueError(err_buf.decode('ascii'))
 
         cdef Py_ssize_t req_char_len = 0
         cdef Py_ssize_t i, idx
@@ -180,10 +240,8 @@ cdef class UCS2Column_SoA(BaseColumn):
                 start = self.offsets_c[idx]
                 end = self.offsets_c[idx + 1]
                 str_len = end - start
-
                 if str_len > 0:
                     memcpy(new_chars + current_char_len, self.chars_c + start, str_len * sizeof(Py_UCS2))
-
                 current_char_len += str_len
                 new_offsets[i + 1] = current_char_len
         except Exception:
@@ -203,12 +261,7 @@ cdef class UCS2Column_SoA(BaseColumn):
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError()
-        cdef Py_ssize_t start = self.offsets_c[idx]
-        cdef Py_ssize_t str_len = self.offsets_c[idx + 1] - start
-
-        if str_len == 0:
-            return ""
-        return PyUnicode_FromKindAndData(2, self.chars_c + start, str_len)
+        return self._get_str(idx)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -247,10 +300,12 @@ cdef class UCS2Column_SoA(BaseColumn):
     def len(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i
         with nogil:
             for i in range(self.length):
-                res.data_c[i] = <int>(self.offsets_c[i + 1] - self.offsets_c[i])
+                out_ptr[i] = <int>(offs[i + 1] - offs[i])
         return res
 
     @cython.binding(False)
@@ -258,11 +313,28 @@ cdef class UCS2Column_SoA(BaseColumn):
     def startswith(self, str prefix):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
-        cdef Py_ssize_t i
-        cdef str s
-        for i in range(self.length):
-            s = self[i]
-            res.data_c[i] = 1 if s.startswith(prefix) else 0
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i, start, str_len
+        cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(prefix)
+
+        if sub_len == 0:
+            for i in range(self.length):
+                out_ptr[i] = 1
+            return res
+
+        cdef Py_UCS2* n_buf = <Py_UCS2*>aligned_malloc(sub_len * sizeof(Py_UCS2))
+        if not n_buf: raise MemoryError()
+        _copy_py_str_to_ucs2(prefix, n_buf, sub_len)
+
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_UCS2* chars = self.chars_c
+        with nogil:
+            for i in range(self.length):
+                start = offs[i]
+                str_len = offs[i+1] - start
+                out_ptr[i] = 1 if _ucs2_startswith(chars + start, str_len, n_buf, sub_len) else 0
+
+        os_aligned_free(n_buf)
         return res
 
     @cython.binding(False)
@@ -270,11 +342,28 @@ cdef class UCS2Column_SoA(BaseColumn):
     def endswith(self, str suffix):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
-        cdef Py_ssize_t i
-        cdef str s
-        for i in range(self.length):
-            s = self[i]
-            res.data_c[i] = 1 if s.endswith(suffix) else 0
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i, start, str_len
+        cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(suffix)
+
+        if sub_len == 0:
+            for i in range(self.length):
+                out_ptr[i] = 1
+            return res
+
+        cdef Py_UCS2* n_buf = <Py_UCS2*>aligned_malloc(sub_len * sizeof(Py_UCS2))
+        if not n_buf: raise MemoryError()
+        _copy_py_str_to_ucs2(suffix, n_buf, sub_len)
+
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_UCS2* chars = self.chars_c
+        with nogil:
+            for i in range(self.length):
+                start = offs[i]
+                str_len = offs[i+1] - start
+                out_ptr[i] = 1 if _ucs2_endswith(chars + start, str_len, n_buf, sub_len) else 0
+
+        os_aligned_free(n_buf)
         return res
 
     @cython.binding(False)
@@ -282,11 +371,31 @@ cdef class UCS2Column_SoA(BaseColumn):
     def contains(self, str substring):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
-        cdef Py_ssize_t i
-        cdef str s
-        for i in range(self.length):
-            s = self[i]
-            res.data_c[i] = 1 if substring in s else 0
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i, start, str_len
+        cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(substring)
+
+        if sub_len == 0:
+            for i in range(self.length):
+                out_ptr[i] = 1
+            return res
+
+        cdef Py_UCS2* n_buf = <Py_UCS2*>aligned_malloc(sub_len * sizeof(Py_UCS2))
+        if not n_buf: raise MemoryError()
+        _copy_py_str_to_ucs2(substring, n_buf, sub_len)
+
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_UCS2* chars = self.chars_c
+        cdef Py_UCS2* match
+
+        with nogil:
+            for i in range(self.length):
+                start = offs[i]
+                str_len = offs[i+1] - start
+                match = _ucs2_strstr(chars + start, <int>str_len, n_buf, <int>sub_len)
+                out_ptr[i] = 1 if match != NULL else 0
+
+        os_aligned_free(n_buf)
         return res
 
     @cython.binding(False)
@@ -294,11 +403,31 @@ cdef class UCS2Column_SoA(BaseColumn):
     def find(self, str substring):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
-        cdef Py_ssize_t i
-        cdef str s
-        for i in range(self.length):
-            s = self[i]
-            res.data_c[i] = <int>s.find(substring)
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i, start, str_len
+        cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(substring)
+
+        if sub_len == 0:
+            for i in range(self.length):
+                out_ptr[i] = 0
+            return res
+
+        cdef Py_UCS2* n_buf = <Py_UCS2*>aligned_malloc(sub_len * sizeof(Py_UCS2))
+        if not n_buf: raise MemoryError()
+        _copy_py_str_to_ucs2(substring, n_buf, sub_len)
+
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_UCS2* chars = self.chars_c
+        cdef Py_UCS2* match
+
+        with nogil:
+            for i in range(self.length):
+                start = offs[i]
+                str_len = offs[i+1] - start
+                match = _ucs2_strstr(chars + start, <int>str_len, n_buf, <int>sub_len)
+                out_ptr[i] = <int>(match - (chars + start)) if match != NULL else -1
+
+        os_aligned_free(n_buf)
         return res
 
     @cython.binding(False)
@@ -307,16 +436,16 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i].replace(old, new)
+            s = self._get_str(i).replace(old, new)
             self._set_item(i, s)
         return self
 
     cdef inline void _set_item(self, Py_ssize_t idx, str val):
-        """Replace string at given index in-place."""
+        """Replace string at given index in-place. O(N) array shift."""
         cdef Py_ssize_t old_start = self.offsets_c[idx]
         cdef Py_ssize_t old_len = self.offsets_c[idx + 1] - old_start
-        cdef Py_ssize_t new_len = len(val)
-        cdef Py_ssize_t ci, diff, oi
+        cdef Py_ssize_t new_len = PyUnicode_GET_LENGTH(val)
+        cdef Py_ssize_t diff, oi
 
         if new_len > old_len:
             diff = new_len - old_len
@@ -334,11 +463,7 @@ cdef class UCS2Column_SoA(BaseColumn):
                         (self.char_length - old_start - old_len) * sizeof(Py_UCS2))
 
         if new_len > 0:
-            if PyUnicode_KIND(val) == PyUnicode_2BYTE_KIND:
-                memcpy(self.chars_c + old_start, PyUnicode_DATA(val), new_len * sizeof(Py_UCS2))
-            else:
-                for ci in range(new_len):
-                    self.chars_c[old_start + ci] = <Py_UCS2>PyUnicode_READ_CHAR(val, ci)
+            _copy_py_str_to_ucs2(val, self.chars_c + old_start, new_len)
 
         self.char_length += (new_len - old_len)
         diff = new_len - old_len
@@ -352,7 +477,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
+            s = self._get_str(i)
             res.append(s.lower())
         return res
 
@@ -363,7 +488,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
+            s = self._get_str(i)
             res.append(s.upper())
         return res
 
@@ -374,7 +499,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
+            s = self._get_str(i)
             res.append(s.strip())
         return res
 
@@ -385,7 +510,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
+            s = self._get_str(i)
             res.append(s.lstrip())
         return res
 
@@ -396,7 +521,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
+            s = self._get_str(i)
             res.append(s.rstrip())
         return res
 
@@ -405,16 +530,17 @@ cdef class UCS2Column_SoA(BaseColumn):
     def count(self, str substring):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
         cdef Py_ssize_t i
         cdef str s
         cdef Py_ssize_t sub_len = len(substring)
         cdef Py_ssize_t cnt, pos
         if sub_len == 0:
             for i in range(self.length):
-                res.data_c[i] = <int>(len(self[i]) + 1)
+                out_ptr[i] = <int>(len(self._get_str(i)) + 1)
             return res
         for i in range(self.length):
-            s = self[i]
+            s = self._get_str(i)
             cnt = 0
             pos = 0
             while True:
@@ -423,7 +549,7 @@ cdef class UCS2Column_SoA(BaseColumn):
                     break
                 cnt += 1
                 pos += sub_len
-            res.data_c[i] = <int>cnt
+            out_ptr[i] = <int>cnt
         return res
 
     @cython.binding(False)
@@ -431,11 +557,12 @@ cdef class UCS2Column_SoA(BaseColumn):
     def isdigit(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
-            res.data_c[i] = 1 if s.isdigit() else 0
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.isdigit() else 0
         return res
 
     @cython.binding(False)
@@ -443,11 +570,12 @@ cdef class UCS2Column_SoA(BaseColumn):
     def isalpha(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
-            res.data_c[i] = 1 if s.isalpha() else 0
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.isalpha() else 0
         return res
 
     @cython.binding(False)
@@ -455,11 +583,12 @@ cdef class UCS2Column_SoA(BaseColumn):
     def isalnum(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
-            res.data_c[i] = 1 if s.isalnum() else 0
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.isalnum() else 0
         return res
 
     @cython.binding(False)
@@ -467,11 +596,12 @@ cdef class UCS2Column_SoA(BaseColumn):
     def isspace(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
         cdef Py_ssize_t i
         cdef str s
         for i in range(self.length):
-            s = self[i]
-            res.data_c[i] = 1 if s.isspace() else 0
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.isspace() else 0
         return res
 
     @cython.binding(False)
@@ -480,8 +610,9 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef set seen = set()
         cdef list result = []
         cdef Py_ssize_t i
+        cdef str s
         for i in range(self.length):
-            s = self[i]
+            s = self._get_str(i)
             if s not in seen:
                 seen.add(s)
                 result.append(s)
@@ -493,33 +624,60 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef Py_ssize_t i
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
-        cdef str s, v
-        cdef int cmp_val
+        cdef int* out_ptr = res.data_c
+        cdef char err_buf[128]
+
         if isinstance(val, UCS2Column_SoA):
             other = <UCS2Column_SoA>val
             if other.length != self.length:
-                raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
-            for i in range(self.length):
-                s = self[i]
-                v = other[i]
-                if op == 0:   cmp_val = 1 if s < v else 0
-                elif op == 1: cmp_val = 1 if s <= v else 0
-                elif op == 2: cmp_val = 1 if s > v else 0
-                elif op == 3: cmp_val = 1 if s >= v else 0
-                elif op == 4: cmp_val = 1 if s == v else 0
-                elif op == 5: cmp_val = 1 if s != v else 0
-                res.data_c[i] = cmp_val
+                snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", self.length, other.length)
+                raise ValueError(err_buf.decode('ascii'))
+
+            cdef Py_ssize_t* s_offs = self.offsets_c
+            cdef Py_UCS2* s_chars = self.chars_c
+            cdef Py_ssize_t* o_offs = other.offsets_c
+            cdef Py_UCS2* o_chars = other.chars_c
+            cdef Py_ssize_t len_s, len_o
+            cdef int cmp_res
+
+            with nogil:
+                for i in range(self.length):
+                    len_s = s_offs[i+1] - s_offs[i]
+                    len_o = o_offs[i+1] - o_offs[i]
+                    cmp_res = _cmp_ucs2_buffers(s_chars + s_offs[i], len_s, o_chars + o_offs[i], len_o)
+
+                    if op == 0:   out_ptr[i] = 1 if cmp_res < 0 else 0
+                    elif op == 1: out_ptr[i] = 1 if cmp_res <= 0 else 0
+                    elif op == 2: out_ptr[i] = 1 if cmp_res > 0 else 0
+                    elif op == 3: out_ptr[i] = 1 if cmp_res >= 0 else 0
+                    elif op == 4: out_ptr[i] = 1 if cmp_res == 0 else 0
+                    elif op == 5: out_ptr[i] = 1 if cmp_res != 0 else 0
         else:
-            v = <str>val
-            for i in range(self.length):
-                s = self[i]
-                if op == 0:   cmp_val = 1 if s < v else 0
-                elif op == 1: cmp_val = 1 if s <= v else 0
-                elif op == 2: cmp_val = 1 if s > v else 0
-                elif op == 3: cmp_val = 1 if s >= v else 0
-                elif op == 4: cmp_val = 1 if s == v else 0
-                elif op == 5: cmp_val = 1 if s != v else 0
-                res.data_c[i] = cmp_val
+            v_str = <str>val
+            cdef Py_ssize_t v_len = PyUnicode_GET_LENGTH(v_str)
+            cdef Py_UCS2* v_buf = <Py_UCS2*>aligned_malloc(max(v_len, 1) * sizeof(Py_UCS2))
+            if not v_buf: raise MemoryError()
+
+            _copy_py_str_to_ucs2(v_str, v_buf, v_len)
+
+            cdef Py_ssize_t* s_offs2 = self.offsets_c
+            cdef Py_UCS2* s_chars2 = self.chars_c
+            cdef Py_ssize_t len_s2
+            cdef int cmp_res2
+
+            with nogil:
+                for i in range(self.length):
+                    len_s2 = s_offs2[i+1] - s_offs2[i]
+                    cmp_res2 = _cmp_ucs2_buffers(s_chars2 + s_offs2[i], len_s2, v_buf, v_len)
+
+                    if op == 0:   out_ptr[i] = 1 if cmp_res2 < 0 else 0
+                    elif op == 1: out_ptr[i] = 1 if cmp_res2 <= 0 else 0
+                    elif op == 2: out_ptr[i] = 1 if cmp_res2 > 0 else 0
+                    elif op == 3: out_ptr[i] = 1 if cmp_res2 >= 0 else 0
+                    elif op == 4: out_ptr[i] = 1 if cmp_res2 == 0 else 0
+                    elif op == 5: out_ptr[i] = 1 if cmp_res2 != 0 else 0
+
+            os_aligned_free(v_buf)
         return res
 
     @cython.always_allow_keywords(False)
@@ -547,12 +705,20 @@ cdef class UCS2Column_SoA(BaseColumn):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot & non-IntColumn mask")
         if self.length != other.length:
-            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+            cdef char err_buf[128]
+            snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", self.length, other.length)
+            raise ValueError(err_buf.decode('ascii'))
+
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef int* other_ptr = (<IntColumn>other).data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 1 if self[i] != '' and other.data_c[i] else 0
+
+        with nogil:
+            for i in range(self.length):
+                out_ptr[i] = 1 if (offs[i+1] - offs[i]) > 0 and other_ptr[i] else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -561,12 +727,20 @@ cdef class UCS2Column_SoA(BaseColumn):
         if not isinstance(other, IntColumn):
             raise TypeError("Cannot | non-IntColumn mask")
         if self.length != other.length:
-            raise ValueError(f"Length mismatch: {self.length} vs {other.length}")
+            cdef char err_buf[128]
+            snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", self.length, other.length)
+            raise ValueError(err_buf.decode('ascii'))
+
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef int* other_ptr = (<IntColumn>other).data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 1 if self[i] != '' or other.data_c[i] else 0
+
+        with nogil:
+            for i in range(self.length):
+                out_ptr[i] = 1 if (offs[i+1] - offs[i]) > 0 or other_ptr[i] else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -574,9 +748,13 @@ cdef class UCS2Column_SoA(BaseColumn):
     def __invert__(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 0 if self[i] != '' else 1
+
+        with nogil:
+            for i in range(self.length):
+                out_ptr[i] = 0 if (offs[i+1] - offs[i]) > 0 else 1
         return res
 
     @cython.always_allow_keywords(False)
@@ -584,9 +762,12 @@ cdef class UCS2Column_SoA(BaseColumn):
     def isin(self, set values):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef int* out_ptr = res.data_c
         cdef Py_ssize_t i
+        cdef str s
         for i in range(self.length):
-            res.data_c[i] = 1 if self[i] in values else 0
+            s = self._get_str(i)
+            out_ptr[i] = 1 if s in values else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -594,13 +775,18 @@ cdef class UCS2Column_SoA(BaseColumn):
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
-            raise ValueError(f"Mask length {mask.length} != column length {n}")
+            cdef char err_buf[128]
+            snprintf(err_buf, sizeof(err_buf), "Mask length %zd != column length %zd", mask.length, n)
+            raise ValueError(err_buf.decode('ascii'))
+
         cdef UCS2Column_SoA col = UCS2Column_SoA(n)
-        cdef str fill_str = str(fill)
+        cdef str fill_str = str(fill) if fill is not None else ""
+        cdef int* mask_ptr = mask.data_c
         cdef Py_ssize_t i
+
         for i in range(n):
-            if mask.data_c[i]:
-                col.append(self[i])
+            if mask_ptr[i]:
+                col.append(self._get_str(i))
             else:
                 col.append(fill_str)
         return col
@@ -611,7 +797,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef list items = []
         cdef Py_ssize_t i
         for i in range(self.length):
-            items.append(repr(self[i]))
+            items.append(repr(self._get_str(i)))
         return f"UCS2Column([{', '.join(items)}])"
 
     @cython.always_allow_keywords(False)
@@ -677,7 +863,6 @@ cdef class UCS2Column_SoA(BaseColumn):
             new_col.length = n
             return new_col
 
-
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
         cdef Py_ssize_t start_offset = self.offsets_c[row_idx]
         cdef Py_ssize_t end_offset = self.offsets_c[row_idx + 1]
@@ -709,44 +894,48 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
+
         if target_type == TYPE_INT:
             ic = IntColumn(safe_cap)
             ic.length = n
+            cdef int* ic_ptr = ic.data_c
             for i in range(n):
-                s = self[i]
-                ic.data_c[i] = int(float(s)) if s else 0
+                s = self._get_str(i)
+                ic_ptr[i] = int(float(s)) if len(s) > 0 else 0
             return ic
 
         elif target_type == TYPE_DOUBLE:
             dc = DoubleColumn(safe_cap)
             dc.length = n
+            cdef double* dc_ptr = dc.data_c
             for i in range(n):
-                s = self[i]
-                dc.data_c[i] = float(s) if s else 0.0
+                s = self._get_str(i)
+                dc_ptr[i] = float(s) if len(s) > 0 else 0.0
             return dc
 
         elif target_type == TYPE_BOOL:
             bc = BoolColumn(safe_cap)
             bc.length = n
+            cdef unsigned char* bc_ptr = bc.data_c
             for i in range(n):
-                s = self[i]
-                if s and (s == 'true' or s == 'True' or s == '1' or s == 'yes' or s == 'Yes'):
-                    bc.data_c[i] = 1
+                s = self._get_str(i)
+                if len(s) > 0 and (s == 'true' or s == 'True' or s == '1' or s == 'yes' or s == 'Yes'):
+                    bc_ptr[i] = 1
                 else:
-                    bc.data_c[i] = 0
+                    bc_ptr[i] = 0
             return bc
 
         elif target_type == TYPE_CHAR256:
             cc = Char256Column_SoA(safe_cap)
             for i in range(n):
-                cc.append(self[i])
+                cc.append(self._get_str(i))
             return cc
 
         elif target_type == TYPE_TIMESTAMP:
             tc = DateColumn(safe_cap)
             for i in range(n):
-                s = self[i]
-                if s:
+                s = self._get_str(i)
+                if len(s) > 0:
                     tc.append(s)
                 else:
                     tc.append(0)
@@ -755,14 +944,14 @@ cdef class UCS2Column_SoA(BaseColumn):
         elif target_type == TYPE_CATEGORY:
             catc = CategoryColumn(safe_cap)
             for i in range(n):
-                catc.append(self[i])
+                catc.append(self._get_str(i))
             return catc
 
         elif target_type == TYPE_DATETIME:
             dtc = DateTimeColumn(safe_cap)
             for i in range(n):
-                s = self[i]
-                if s:
+                s = self._get_str(i)
+                if len(s) > 0:
                     dtc.append(s)
                 else:
                     dtc.append('')
@@ -771,8 +960,8 @@ cdef class UCS2Column_SoA(BaseColumn):
         elif target_type == TYPE_TIME:
             tmc = TimeColumn(safe_cap)
             for i in range(n):
-                s = self[i]
-                if s:
+                s = self._get_str(i)
+                if len(s) > 0:
                     tmc.append(s)
                 else:
                     tmc.append(0)
@@ -781,4 +970,6 @@ cdef class UCS2Column_SoA(BaseColumn):
         elif target_type == TYPE_UCS2:
             return self.copy()
 
-        raise TypeError(f"Failed to cast UCS2 column to internal type id: {target_type}")
+        cdef char err_buf[128]
+        snprintf(err_buf, sizeof(err_buf), "Failed to cast UCS2 column to internal type id: %d", target_type)
+        raise TypeError(err_buf.decode('ascii'))
