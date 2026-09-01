@@ -1,9 +1,4 @@
 # cython: language_level=3
-# cython: boundscheck=False
-# cython: wraparound=False
-# cython: cdivision=True
-# cython: nonecheck=False
-# cython: initializedcheck=False
 
 cimport cython
 
@@ -12,10 +7,8 @@ from fluidframe.core.ucs2column cimport UCS2Column_SoA
 
 
 cdef class StringAccessor_UCS2:
-    """Zero-overhead .str accessor for UCS2Column_SoA.
-
-    All methods are cpdef — callable at C speed from Cython,
-    and from Python with minimal overhead.
+    """Pandas-style .str accessor for UCS2Column_SoA.
+    All methods delegate to UCS2Column_SoA.
     """
 
     cdef UCS2Column_SoA _col
@@ -23,274 +16,174 @@ cdef class StringAccessor_UCS2:
     def __cinit__(self, UCS2Column_SoA col):
         self._col = col
 
-    # ==================== Internal helpers ====================
-
-    cdef inline IntColumn _bool_mask(self):
-        cdef IntColumn res = IntColumn(max(self._col.capacity, 1))
-        res.length = self._col.length
-        return res
-
-    cdef inline UCS2Column_SoA _new_col(self):
-        cdef UCS2Column_SoA res = UCS2Column_SoA(max(self._col.capacity, 1))
-        return res
-
-    cdef inline UCS2Column_SoA _fill_from_method(self, object method):
-        cdef UCS2Column_SoA res = self._new_col()
-        cdef Py_ssize_t i
-        for i in range(self._col.length):
-            res.append(method(self._col[i]))
-        return res
-
     # ==================== Search / Match ====================
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn contains(self, object pat):
+    @cython.always_allow_keywords(False)
+    def contains(self, object pat):
         return self._col.contains(pat)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn startswith(self, prefix):
+    def startswith(self, prefix):
         return self._col.startswith(prefix)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn endswith(self, suffix):
+    def endswith(self, suffix):
         return self._col.endswith(suffix)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn find(self, str sub):
+    @cython.always_allow_keywords(False)
+    def find(self, str sub):
         return self._col.find(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn rfind(self, str sub):
+    @cython.always_allow_keywords(False)
+    def rfind(self, str sub):
         return self._col.rfind(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn index(self, str sub):
+    @cython.always_allow_keywords(False)
+    def index(self, str sub):
         return self._col.find(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn rindex(self, str sub):
+    @cython.always_allow_keywords(False)
+    def rindex(self, str sub):
         return self._col.rindex(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn count(self, str sub):
+    @cython.always_allow_keywords(False)
+    def count(self, str sub):
         return self._col.count(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn match(self, str pattern):
+    @cython.always_allow_keywords(False)
+    def match(self, str pattern):
         return self._col.match(pattern)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn fullmatch(self, str pattern):
+    @cython.always_allow_keywords(False)
+    def fullmatch(self, str pattern):
         return self._col.fullmatch(pattern)
 
     # ==================== Extract / Findall ====================
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA extract(self, str pattern, int group=1):
+    def extract(self, str pattern, int group=1):
         return self._col.extract(pattern, group)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef extractall(self, str pattern, int group=1):
+    def extractall(self, str pattern, int group=1):
         return self._col.extractall(pattern, group)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef findall(self, str pattern):
+    def findall(self, str pattern):
         return self._col.findall(pattern)
 
     # ==================== Type Check ====================
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isalpha(self):
+    @cython.always_allow_keywords(False)
+    def isalpha(self):
         return self._col.isalpha()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isnumeric(self):
+    @cython.always_allow_keywords(False)
+    def isnumeric(self):
         return self._col.isnumeric()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isalnum(self):
+    @cython.always_allow_keywords(False)
+    def isalnum(self):
         return self._col.isalnum()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isdigit(self):
+    @cython.always_allow_keywords(False)
+    def isdigit(self):
         return self._col.isdigit()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isdecimal(self):
+    @cython.always_allow_keywords(False)
+    def isdecimal(self):
         return self._col.isdecimal()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn islower(self):
+    @cython.always_allow_keywords(False)
+    def islower(self):
         return self._col.islower()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isupper(self):
+    @cython.always_allow_keywords(False)
+    def isupper(self):
         return self._col.isupper()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isspace(self):
+    @cython.always_allow_keywords(False)
+    def isspace(self):
         return self._col.isspace()
 
     # ==================== Case Conversion ====================
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA upper(self):
-        return self._fill_from_method(str.upper)
+    @cython.always_allow_keywords(False)
+    def upper(self):
+        return self._col.upper()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA lower(self):
-        return self._fill_from_method(str.lower)
+    @cython.always_allow_keywords(False)
+    def lower(self):
+        return self._col.lower()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA title(self):
-        return self._fill_from_method(str.title)
+    @cython.always_allow_keywords(False)
+    def title(self):
+        return self._col.title()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA capitalize(self):
-        return self._fill_from_method(str.capitalize)
+    @cython.always_allow_keywords(False)
+    def capitalize(self):
+        return self._col.capitalize()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA swapcase(self):
-        return self._fill_from_method(str.swapcase)
+    @cython.always_allow_keywords(False)
+    def swapcase(self):
+        return self._col.swapcase()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA casefold(self):
-        return self._fill_from_method(str.casefold)
+    @cython.always_allow_keywords(False)
+    def casefold(self):
+        return self._col.casefold()
 
     # ==================== Strip / Pad ====================
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA strip(self, chars=None):
-        cdef UCS2Column_SoA res = self._new_col()
-        cdef Py_ssize_t i
-        cdef str s
-        for i in range(self._col.length):
-            s = self._col[i]
-            if chars is not None:
-                res.append(s.strip(chars))
-            else:
-                res.append(s.strip())
-        return res
+    def strip(self, chars=None):
+        return self._col.strip(chars) if chars is not None else self._col.strip()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA lstrip(self, chars=None):
-        cdef UCS2Column_SoA res = self._new_col()
-        cdef Py_ssize_t i
-        cdef str s
-        for i in range(self._col.length):
-            s = self._col[i]
-            if chars is not None:
-                res.append(s.lstrip(chars))
-            else:
-                res.append(s.lstrip())
-        return res
+    def lstrip(self, chars=None):
+        return self._col.lstrip(chars) if chars is not None else self._col.lstrip()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA rstrip(self, chars=None):
-        cdef UCS2Column_SoA res = self._new_col()
-        cdef Py_ssize_t i
-        cdef str s
-        for i in range(self._col.length):
-            s = self._col[i]
-            if chars is not None:
-                res.append(s.rstrip(chars))
-            else:
-                res.append(s.rstrip())
-        return res
+    def rstrip(self, chars=None):
+        return self._col.rstrip(chars) if chars is not None else self._col.rstrip()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA center(self, int width, str fillchar=' '):
+    def center(self, int width, str fillchar=' '):
         return self._col.center(width, fillchar)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA ljust(self, int width, str fillchar=' '):
+    def ljust(self, int width, str fillchar=' '):
         return self._col.ljust(width, fillchar)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA rjust(self, int width, str fillchar=' '):
+    def rjust(self, int width, str fillchar=' '):
         return self._col.rjust(width, fillchar)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA pad(self, int width, str side='left', str fillchar=' '):
+    def pad(self, int width, str side='left', str fillchar=' '):
         return self._col.pad(width, side, fillchar)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA zfill(self, int width):
+    def zfill(self, int width):
         return self._col.zfill(width)
 
     # ==================== Replace ====================
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA replace(self, str old, str new, int count=-1):
+    def replace(self, str old, str new, int count=-1):
         return self._col.replace(old, new)
 
     # ==================== Split ====================
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef split(self, str sep=None, int maxsplit=-1):
+    def split(self, str sep=None, int maxsplit=-1):
         return self._col.str_split(sep, maxsplit)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef rsplit(self, str sep=None, int maxsplit=-1):
+    def rsplit(self, str sep=None, int maxsplit=-1):
         return self._col.rsplit(sep, maxsplit)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef partition(self, str sep):
+    @cython.always_allow_keywords(False)
+    def partition(self, str sep):
         return self._col.partition(sep)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef rpartition(self, str sep):
+    @cython.always_allow_keywords(False)
+    def rpartition(self, str sep):
         return self._col.rpartition(sep)
 
     # ==================== Slicing / Access ====================
 
-    cpdef UCS2Column_SoA get(self, int index, str default=''):
+    def get(self, int index, str default=''):
         return self._col.get(index, default)
 
-    cpdef UCS2Column_SoA slice(self, int start=0, int stop=-1, int step=1):
+    def slice(self, int start=0, int stop=-1, int step=1):
         return self._col.slice(start, stop, step)
 
-    cpdef IntColumn len(self):
+    @cython.always_allow_keywords(False)
+    def len(self):
         return self._col.len()
 
     def __getitem__(self, key):
@@ -298,22 +191,14 @@ cdef class StringAccessor_UCS2:
 
     # ==================== Concat ====================
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA cat(self, other, str sep=''):
+    def cat(self, other, str sep=''):
         return self._col.cat(other, sep)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA prefix(self, str pre):
+    def prefix(self, str pre):
         return self._col.prefix(pre)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA suffix(self, str suf):
+    def suffix(self, str suf):
         return self._col.suffix(suf)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef UCS2Column_SoA repeat(self, int repeats):
+    def repeat(self, int repeats):
         return self._col.repeat(repeats)

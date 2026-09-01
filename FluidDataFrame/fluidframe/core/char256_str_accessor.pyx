@@ -1,9 +1,4 @@
 # cython: language_level=3
-# cython: boundscheck=False
-# cython: wraparound=False
-# cython: cdivision=True
-# cython: nonecheck=False
-# cython: initializedcheck=False
 
 cimport cython
 
@@ -12,8 +7,8 @@ from fluidframe.core.char256column cimport Char256Column_SoA
 
 
 cdef class StringAccessor_Char256:
-    """Zero-overhead .str accessor for Char256Column_SoA.
-    All methods are cpdef — callable at C speed from Cython, and from Python with minimal overhead.
+    """Pandas-style .str accessor for Char256Column_SoA.
+    All methods delegate to Char256Column_SoA.
     """
 
     cdef Char256Column_SoA _col
@@ -21,243 +16,189 @@ cdef class StringAccessor_Char256:
     def __cinit__(self, Char256Column_SoA col):
         self._col = col
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn contains(self, pat):
+    # ==================== Search / Match ====================
+
+    @cython.always_allow_keywords(False)
+    def contains(self, pat):
         return self._col.str_contains_mask(pat)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn startswith(self, prefix):
+    def startswith(self, prefix):
         return self._col.startswith(prefix)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn endswith(self, suffix):
+    def endswith(self, suffix):
         return self._col.endswith(suffix)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn find(self, str sub):
+    @cython.always_allow_keywords(False)
+    def find(self, str sub):
         return self._col.find(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn rfind(self, str sub):
+    @cython.always_allow_keywords(False)
+    def rfind(self, str sub):
         return self._col.rfind(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn index(self, str sub):
+    @cython.always_allow_keywords(False)
+    def index(self, str sub):
         return self._col.find(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn rindex(self, str sub):
+    @cython.always_allow_keywords(False)
+    def rindex(self, str sub):
         return self._col.rindex(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn count(self, str sub):
+    @cython.always_allow_keywords(False)
+    def count(self, str sub):
         return self._col.count(sub)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn match(self, str pattern):
+    @cython.always_allow_keywords(False)
+    def match(self, str pattern):
         return self._col.match(pattern)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn fullmatch(self, str pattern):
+    @cython.always_allow_keywords(False)
+    def fullmatch(self, str pattern):
         return self._col.fullmatch(pattern)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA extract(self, str pattern, int group=1):
+    # ==================== Extract / Findall ====================
+
+    def extract(self, str pattern, int group=1):
         return self._col.extract(pattern)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef extractall(self, str pattern):
+    def extractall(self, str pattern):
         return self._col.extractall(pattern)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef findall(self, str pattern):
+    def findall(self, str pattern):
         return self._col.findall(pattern)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isalpha(self):
+    # ==================== Type Check ====================
+
+    @cython.always_allow_keywords(False)
+    def isalpha(self):
         return self._col.isalpha()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isnumeric(self):
+    @cython.always_allow_keywords(False)
+    def isnumeric(self):
         return self._col.isnumeric()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isalnum(self):
+    @cython.always_allow_keywords(False)
+    def isalnum(self):
         return self._col.isalnum()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isdigit(self):
+    @cython.always_allow_keywords(False)
+    def isdigit(self):
         return self._col.isdigit()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isdecimal(self):
+    @cython.always_allow_keywords(False)
+    def isdecimal(self):
         return self._col.isdecimal()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn islower(self):
+    @cython.always_allow_keywords(False)
+    def islower(self):
         return self._col.islower()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isupper(self):
+    @cython.always_allow_keywords(False)
+    def isupper(self):
         return self._col.isupper()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef IntColumn isspace(self):
+    @cython.always_allow_keywords(False)
+    def isspace(self):
         return self._col.isspace()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA upper(self):
+    # ==================== Case Conversion ====================
+
+    @cython.always_allow_keywords(False)
+    def upper(self):
         return self._col.upper()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA lower(self):
+    @cython.always_allow_keywords(False)
+    def lower(self):
         return self._col.lower()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA title(self):
+    @cython.always_allow_keywords(False)
+    def title(self):
         return self._col.title()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA capitalize(self):
+    @cython.always_allow_keywords(False)
+    def capitalize(self):
         return self._col.capitalize()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA swapcase(self):
+    @cython.always_allow_keywords(False)
+    def swapcase(self):
         return self._col.swapcase()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA casefold(self):
+    @cython.always_allow_keywords(False)
+    def casefold(self):
         return self._col.casefold()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA strip(self, chars=None):
-        if chars is None:
-            return self._col.strip()
-        else:
-            return self._col.strip(chars)
+    # ==================== Strip / Pad ====================
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA lstrip(self, chars=None):
-        if chars is None:
-            return self._col.lstrip()
-        else:
-            return self._col.lstrip(chars)
+    def strip(self, chars=None):
+        return self._col.strip(chars) if chars is not None else self._col.strip()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA rstrip(self, chars=None):
-        if chars is None:
-            return self._col.rstrip()
-        else:
-            return self._col.rstrip(chars)
+    def lstrip(self, chars=None):
+        return self._col.lstrip(chars) if chars is not None else self._col.lstrip()
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA center(self, int width, str fillchar=' '):
+    def rstrip(self, chars=None):
+        return self._col.rstrip(chars) if chars is not None else self._col.rstrip()
+
+    def center(self, int width, str fillchar=' '):
         return self._col.center(width, fillchar)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA ljust(self, int width, str fillchar=' '):
+    def ljust(self, int width, str fillchar=' '):
         return self._col.ljust(width, fillchar)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA rjust(self, int width, str fillchar=' '):
+    def rjust(self, int width, str fillchar=' '):
         return self._col.rjust(width, fillchar)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA pad(self, int width, str side='left', str fillchar=' '):
+    def pad(self, int width, str side='left', str fillchar=' '):
         return self._col.pad(width, side, fillchar)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA zfill(self, int width):
+    def zfill(self, int width):
         return self._col.zfill(width)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA replace(self, str old, str new, int count=-1):
+    # ==================== Replace ====================
+
+    def replace(self, str old, str new, int count=-1):
         return self._col.replace(old, new)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef split(self, str sep=None, int maxsplit=-1):
+    # ==================== Split ====================
+
+    def split(self, str sep=None, int maxsplit=-1):
         return self._col.str_split(sep, maxsplit)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef rsplit(self, str sep=None, int maxsplit=-1):
+    def rsplit(self, str sep=None, int maxsplit=-1):
         return self._col.rsplit(sep, maxsplit)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef partition(self, str sep):
+    @cython.always_allow_keywords(False)
+    def partition(self, str sep):
         return self._col.partition(sep)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef rpartition(self, str sep):
+    @cython.always_allow_keywords(False)
+    def rpartition(self, str sep):
         return self._col.rpartition(sep)
 
-    cpdef Char256Column_SoA get(self, int index, str default=''):
+    # ==================== Slicing / Access ====================
+
+    def get(self, int index, str default=''):
         return self._col.get(index, default)
 
-    cpdef Char256Column_SoA slice(self, int start=0, int stop=-1, int step=1):
+    def slice(self, int start=0, int stop=-1, int step=1):
         return self._col.slice(start, stop, step)
 
-    cpdef IntColumn len(self):
+    @cython.always_allow_keywords(False)
+    def len(self):
         return self._col.len()
 
     def __getitem__(self, key):
         return self._col.str_getitem(key)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA cat(self, other, str sep=''):
+    # ==================== Concat ====================
+
+    def cat(self, other, str sep=''):
         return self._col.cat(other, sep)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA prefix(self, str pre):
+    def prefix(self, str pre):
         return self._col.prefix(pre)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA suffix(self, str suf):
+    def suffix(self, str suf):
         return self._col.suffix(suf)
 
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    cpdef Char256Column_SoA repeat(self, int repeats):
+    def repeat(self, int repeats):
         return self._col.repeat(repeats)
