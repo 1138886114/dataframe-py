@@ -2,9 +2,12 @@
 # cython: boundscheck=False
 # cython: wraparound=False
 # cython: cdivision=True
+# cython: nonecheck=False
+# cython: initializedcheck=False
 
 cimport cython
 from libc.string cimport memcpy, memmove
+from libc.stdio cimport snprintf
 from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_CATEGORY, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -16,6 +19,11 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
 
+@cython.final
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.initializedcheck(False)
 cdef class CategoryColumn(BaseColumn):
     def __cinit__(self, Py_ssize_t capacity=0):
         self.dtype = TYPE_CATEGORY
@@ -108,19 +116,23 @@ cdef class CategoryColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
         cdef Py_ssize_t n = len(indices)
+        cdef char err_buf[128]
         if n != self.length:
-            raise ValueError("Length of indices must match column length")
+            snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
+            raise ValueError(err_buf.decode('ascii'))
 
         cdef int* new_data = <int*>aligned_malloc(max(n, 1) * sizeof(int))
         if not new_data: raise MemoryError()
+        cdef int* self_codes = self.codes_c
         cdef Py_ssize_t i, idx
         try:
             for i in range(n):
                 idx = <Py_ssize_t>indices[i]
                 if idx < 0: idx += self.length
                 if idx < 0 or idx >= self.length:
-                    raise IndexError("Index out of bounds")
-                new_data[i] = self.codes_c[idx]
+                    snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
+                    raise IndexError(err_buf.decode('ascii'))
+                new_data[i] = self_codes[idx]
         except Exception:
             os_aligned_free(new_data)
             raise
@@ -162,11 +174,13 @@ cdef class CategoryColumn(BaseColumn):
         cdef BoolColumn res
         res = BoolColumn(max(self.capacity, 1))
         res.length = self.length
+        cdef int* codes = self.codes_c
+        cdef unsigned char* res_ptr = res.data_c
         cdef Py_ssize_t i
         cdef str val
         for i in range(self.length):
-            val = self.categories[self.codes_c[i]]
-            res.data_c[i] = 1 if val in values else 0
+            val = self.categories[codes[i]]
+            res_ptr[i] = 1 if val in values else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -176,11 +190,13 @@ cdef class CategoryColumn(BaseColumn):
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
         cdef CategoryColumn col = CategoryColumn(max(n, 1))
+        cdef int* mask_ptr = mask.data_c
+        cdef int* self_codes = self.codes_c
         cdef Py_ssize_t i
         cdef str fill_str = str(fill) if fill is not None else ''
         for i in range(n):
-            if mask.data_c[i]:
-                col.codes_c[i] = col._get_or_add_code(self.categories[self.codes_c[i]])
+            if mask_ptr[i]:
+                col.codes_c[i] = col._get_or_add_code(self.categories[self_codes[i]])
             else:
                 col.codes_c[i] = col._get_or_add_code(fill_str)
         col.length = n
@@ -202,19 +218,22 @@ cdef class CategoryColumn(BaseColumn):
 
     cdef CategoryColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef Py_ssize_t i
+        cdef int* old_codes = self.codes_c
         if not inplace:
             new_col = CategoryColumn(max(n, 1))
             new_col.length = n
             new_col.categories = list(self.categories)
             new_col._cat_to_code = dict(self._cat_to_code)
-            for i in range(n):
-                new_col.codes_c[i] = self.codes_c[indices[i]]
+            with nogil:
+                for i in range(n):
+                    new_col.codes_c[i] = old_codes[indices[i]]
             return new_col
         else:
             new_codes = <int*>aligned_malloc(max(max(n, self.capacity), 1) * sizeof(int))
             if not new_codes: raise MemoryError()
-            for i in range(n):
-                new_codes[i] = self.codes_c[indices[i]]
+            with nogil:
+                for i in range(n):
+                    new_codes[i] = old_codes[indices[i]]
             os_aligned_free(self.codes_c)
             self.codes_c = new_codes
             self.capacity = max(n, self.capacity)
@@ -242,8 +261,10 @@ cdef class CategoryColumn(BaseColumn):
             return False
         if self.categories != o.categories:
             return False
+        cdef int* codes = self.codes_c
+        cdef int* o_codes = o.codes_c
         for i in range(self.length):
-            if self.codes_c[i] != o.codes_c[i]:
+            if codes[i] != o_codes[i]:
                 return False
         return True
 

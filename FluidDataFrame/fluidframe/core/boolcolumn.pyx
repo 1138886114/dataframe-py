@@ -2,10 +2,13 @@
 # cython: boundscheck=False
 # cython: wraparound=False
 # cython: cdivision=True
+# cython: nonecheck=False
+# cython: initializedcheck=False
 
 cimport cython
 from libc.string cimport memcpy, memmove
 from libc.math cimport NAN
+from libc.stdio cimport snprintf
 from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -16,6 +19,11 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
 
+@cython.final
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.initializedcheck(False)
 cdef class BoolColumn(BaseColumn):
     def __cinit__(self, Py_ssize_t capacity=0):
         self.dtype = TYPE_BOOL
@@ -94,19 +102,23 @@ cdef class BoolColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
         cdef Py_ssize_t n = len(indices)
+        cdef char err_buf[128]
         if n != self.length:
-            raise ValueError("Length of indices must match column length")
+            snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
+            raise ValueError(err_buf.decode('ascii'))
 
         cdef unsigned char* new_data = <unsigned char*>aligned_malloc(max(n, 1) * sizeof(unsigned char))
         if not new_data: raise MemoryError()
+        cdef unsigned char* self_data = self.data_c
         cdef Py_ssize_t i, idx
         try:
             for i in range(n):
                 idx = <Py_ssize_t>indices[i]
                 if idx < 0: idx += self.length
                 if idx < 0 or idx >= self.length:
-                    raise IndexError("Index out of bounds")
-                new_data[i] = self.data_c[idx]
+                    snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
+                    raise IndexError(err_buf.decode('ascii'))
+                new_data[i] = self_data[idx]
         except Exception:
             os_aligned_free(new_data)
             raise
@@ -142,9 +154,11 @@ cdef class BoolColumn(BaseColumn):
     def isin(self, set values):
         cdef BoolColumn res = BoolColumn(max(self.capacity, 1))
         res.length = self.length
+        cdef unsigned char* self_ptr = self.data_c
+        cdef unsigned char* res_ptr = res.data_c
         cdef Py_ssize_t i
         for i in range(self.length):
-            res.data_c[i] = 1 if bool(self.data_c[i]) in values else 0
+            res_ptr[i] = 1 if bool(self_ptr[i]) in values else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -156,17 +170,23 @@ cdef class BoolColumn(BaseColumn):
         cdef BoolColumn col = BoolColumn(max(n, 1))
         col.length = n
         cdef unsigned char fill_val = 1 if fill else 0
+        cdef unsigned char* self_ptr = self.data_c
+        cdef unsigned char* col_ptr = col.data_c
+        cdef int* mask_ptr = mask.data_c
         cdef Py_ssize_t i
-        for i in range(n):
-            col.data_c[i] = self.data_c[i] if mask.data_c[i] else fill_val
+        with nogil:
+            for i in range(n):
+                col_ptr[i] = self_ptr[i] if mask_ptr[i] else fill_val
         return col
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def sum(self):
         cdef Py_ssize_t i, s = 0
-        for i in range(self.length):
-            s += self.data_c[i]
+        cdef unsigned char* ptr = self.data_c
+        with nogil:
+            for i in range(self.length):
+                s += ptr[i]
         return s
 
     @cython.always_allow_keywords(False)
@@ -183,9 +203,13 @@ cdef class BoolColumn(BaseColumn):
             raise ValueError(f"Column length {other.length} != {n}")
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
+        cdef unsigned char* self_ptr = self.data_c
+        cdef unsigned char* other_ptr = other.data_c
+        cdef unsigned char* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(n):
-            res.data_c[i] = self.data_c[i] & other.data_c[i]
+        with nogil:
+            for i in range(n):
+                res_ptr[i] = self_ptr[i] & other_ptr[i]
         return res
 
     @cython.always_allow_keywords(False)
@@ -196,9 +220,13 @@ cdef class BoolColumn(BaseColumn):
             raise ValueError(f"Column length {other.length} != {n}")
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
+        cdef unsigned char* self_ptr = self.data_c
+        cdef unsigned char* other_ptr = other.data_c
+        cdef unsigned char* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(n):
-            res.data_c[i] = self.data_c[i] | other.data_c[i]
+        with nogil:
+            for i in range(n):
+                res_ptr[i] = self_ptr[i] | other_ptr[i]
         return res
 
     @cython.always_allow_keywords(False)
@@ -209,9 +237,13 @@ cdef class BoolColumn(BaseColumn):
             raise ValueError(f"Column length {other.length} != {n}")
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
+        cdef unsigned char* self_ptr = self.data_c
+        cdef unsigned char* other_ptr = other.data_c
+        cdef unsigned char* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(n):
-            res.data_c[i] = self.data_c[i] ^ other.data_c[i]
+        with nogil:
+            for i in range(n):
+                res_ptr[i] = self_ptr[i] ^ other_ptr[i]
         return res
 
     @cython.always_allow_keywords(False)
@@ -219,9 +251,12 @@ cdef class BoolColumn(BaseColumn):
     def __invert__(self):
         cdef BoolColumn res = BoolColumn(max(self.capacity, 1))
         res.length = self.length
+        cdef unsigned char* self_ptr = self.data_c
+        cdef unsigned char* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = 1 - self.data_c[i]
+        with nogil:
+            for i in range(self.length):
+                res_ptr[i] = 1 - self_ptr[i]
         return res
 
     @cython.always_allow_keywords(False)
@@ -240,19 +275,20 @@ cdef class BoolColumn(BaseColumn):
 
     cdef BoolColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef Py_ssize_t i
+        cdef unsigned char* old_data = self.data_c
         if not inplace:
             new_col = BoolColumn(max(n, 1))
             new_col.length = n
             with nogil:
                 for i in range(n):
-                    new_col.data_c[i] = self.data_c[indices[i]]
+                    new_col.data_c[i] = old_data[indices[i]]
             return new_col
         else:
             new_data = <unsigned char*>aligned_malloc(max(max(n, self.capacity), 1) * sizeof(unsigned char))
             if not new_data: raise MemoryError()
             with nogil:
                 for i in range(n):
-                    new_data[i] = self.data_c[indices[i]]
+                    new_data[i] = old_data[indices[i]]
             os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = max(n, self.capacity)
@@ -278,8 +314,10 @@ cdef class BoolColumn(BaseColumn):
         o = <BoolColumn>other
         if o.length != self.length:
             return False
+        cdef unsigned char* self_ptr = self.data_c
+        cdef unsigned char* o_ptr = o.data_c
         for i in range(self.length):
-            if self.data_c[i] != o.data_c[i]:
+            if self_ptr[i] != o_ptr[i]:
                 return False
         return True
 
@@ -296,6 +334,7 @@ cdef class BoolColumn(BaseColumn):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
         cdef Py_ssize_t safe_cap = max(n, 1)
+        cdef unsigned char* ptr = self.data_c
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef UCS2Column_SoA uc
@@ -306,40 +345,42 @@ cdef class BoolColumn(BaseColumn):
         if target_type == TYPE_INT:
             ic = IntColumn(safe_cap)
             ic.length = n
-            for i in range(n):
-                ic.data_c[i] = <int>self.data_c[i]
+            with nogil:
+                for i in range(n):
+                    ic.data_c[i] = <int>ptr[i]
             return ic
         elif target_type == TYPE_DOUBLE:
             dc = DoubleColumn(safe_cap)
             dc.length = n
-            for i in range(n):
-                dc.data_c[i] = <double>self.data_c[i]
+            with nogil:
+                for i in range(n):
+                    dc.data_c[i] = <double>ptr[i]
             return dc
         elif target_type == TYPE_UCS2:
             uc = UCS2Column_SoA(safe_cap)
             uc.length = n
             for i in range(n):
-                uc._set_item(i, 'True' if self.data_c[i] else 'False')
+                uc._set_item(i, 'True' if ptr[i] else 'False')
             return uc
         elif target_type == TYPE_CHAR256:
             cc = Char256Column_SoA(safe_cap)
             for i in range(n):
-                cc.append('True' if self.data_c[i] else 'False')
+                cc.append('True' if ptr[i] else 'False')
             return cc
         elif target_type == TYPE_CATEGORY:
             catc = CategoryColumn(safe_cap)
             for i in range(n):
-                catc.append('True' if self.data_c[i] else 'False')
+                catc.append('True' if ptr[i] else 'False')
             return catc
         elif target_type == TYPE_DATETIME:
             dtc = DateTimeColumn(safe_cap)
             for i in range(n):
-                dtc.append('True' if self.data_c[i] else 'False')
+                dtc.append('True' if ptr[i] else 'False')
             return dtc
         elif target_type == TYPE_TIME:
             tmc = TimeColumn(safe_cap)
             for i in range(n):
-                tmc.append(<int>self.data_c[i])
+                tmc.append(<int>ptr[i])
             return tmc
         elif target_type == TYPE_BOOL:
             return self.copy()
