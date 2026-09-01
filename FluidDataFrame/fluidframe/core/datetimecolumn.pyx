@@ -18,11 +18,12 @@ from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datecolumn cimport DateColumn, _date_to_daynum, _daynum_to_date
+from fluidframe.core.timecolumn cimport TimeColumn
 
 
 # Reference epoch: 2024-01-01 00:00:00 (daynum of 2024-01-01)
 
-cdef inline long long _parse_datetime_str(str s) noexcept:
+cdef inline long long _parse_datetime_str(str s) except -1:
     """Parse 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD' or 'YYYYMMDD' to microseconds since epoch."""
     cdef bytes b = s.encode('ascii', errors='ignore')
     cdef const unsigned char* buf = <const unsigned char*>b
@@ -41,7 +42,7 @@ cdef inline long long _parse_datetime_str(str s) noexcept:
         i += 1
 
     if ndigits < 8:
-        return 0  # Invalid input fallback
+        raise ValueError(f"Invalid datetime string: '{s}'")
 
     year = digits[0]*1000 + digits[1]*100 + digits[2]*10 + digits[3]
     month = digits[4]*10 + digits[5]
@@ -363,6 +364,8 @@ cdef class DateTimeColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         cdef long long* s_ptr = self.data_c
         cdef int* r_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef void* found
 
         cdef Py_ssize_t m = len(values)
         if m == 0:
@@ -384,9 +387,6 @@ cdef class DateTimeColumn(BaseColumn):
 
         if valid_m > 0:
             qsort(v_arr, valid_m, sizeof(long long), _cmp_longlong)
-
-        cdef Py_ssize_t i
-        cdef void* found
         with nogil:
             if valid_m == 0:
                 for i in range(n): r_ptr[i] = 0
@@ -516,6 +516,10 @@ cdef class DateTimeColumn(BaseColumn):
         cdef UCS2Column_SoA uc
         cdef Char256Column_SoA cc
         cdef CategoryColumn catc
+        cdef DateColumn tc
+        cdef TimeColumn tmc
+        cdef long long* tc_ptr
+        cdef int* tmc_ptr
 
         if target_type == TYPE_INT:
             ic = IntColumn(safe_cap)
@@ -568,10 +572,9 @@ cdef class DateTimeColumn(BaseColumn):
             return catc
 
         elif target_type == TYPE_TIMESTAMP:
-            from fluidframe.core.datecolumn import DateColumn as PyDateColumn
-            tc = PyDateColumn(safe_cap)
+            tc = DateColumn(safe_cap)
             tc.length = n
-            cdef long long* tc_ptr = tc.data_c
+            tc_ptr = tc.data_c
             with nogil:
                 for i in range(n):
                     _datetime_to_ymdhms(ptr[i], &y, &m, &d, &h, &mi, &s)
@@ -579,10 +582,9 @@ cdef class DateTimeColumn(BaseColumn):
             return tc
 
         elif target_type == TYPE_TIME:
-            from fluidframe.core.timecolumn import TimeColumn as PyTimeColumn
-            tmc = PyTimeColumn(safe_cap)
+            tmc = TimeColumn(safe_cap)
             tmc.length = n
-            cdef int* tmc_ptr = tmc.data_c
+            tmc_ptr = tmc.data_c
             with nogil:
                 for i in range(n):
                     _datetime_to_ymdhms(ptr[i], &y, &m, &d, &h, &mi, &s)
