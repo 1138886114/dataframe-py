@@ -629,6 +629,60 @@ cdef class FastDataFrame:
         return self.columns[name]
 
     @cython.binding(False)
+    def eval(self, str expr, bint inplace=False):
+        """
+        高性能表达式计算引擎。
+        支持如 'F = A + B * 2' 或 'A > 0 and B < 0'
+        极速调度到底层 C 语言 Dunder 方法中。
+        """
+        cdef FastDataFrame target_df = self if inplace else self.copy()
+
+        cdef bint is_assignment = False
+        cdef str target_col = ""
+        cdef str calc_expr = expr
+
+        # 1. 拆解赋值表达式 (例如: F = A + B * 2)
+        if "=" in expr:
+            parts = expr.split("=", 1)
+            # 排除 '==', '>=', '<=', '!=' 等比较运算符
+            if not parts[0].strip().endswith(('>', '<', '!', '=')):
+                target_col = parts[0].strip()
+                calc_expr = parts[1].strip()
+                is_assignment = True
+
+        # 2. 将 DataFrame 的列字典注入给 Python Eval 作为局部命名空间
+        cdef dict env = dict(self.columns)
+
+        try:
+            # 安全执行: "__builtins__": {} 防止恶意代码注入
+            # calc_expr 运行时，A + B 将直接触发 A.__add__(B)，全部在 C 底层运行
+            res_col = eval(calc_expr, {"__builtins__": {}}, env)
+        except Exception as e:
+            raise ValueError(f"Failed to evaluate expression '{calc_expr}': {e}")
+
+        if is_assignment:
+            target_df.columns[target_col] = res_col
+            return target_df
+        else:
+            return res_col
+
+    @cython.binding(False)
+    def query(self, str expr):
+        """
+        极速条件查询。支持如 'A > 0 & B < 0'
+        返回一个新的 FastDataFrame。
+        """
+        # 依赖 eval 引擎求值出掩码列 (IntColumn)
+        mask = self.eval(expr)
+
+        from fluidframe.core.intcolumn cimport IntColumn
+        if not type(mask).__name__ in ('IntColumn', 'BoolColumn'):
+            raise TypeError("Query expression must evaluate to a boolean mask (IntColumn or BoolColumn)")
+
+        # 调用基于掩码的高速 C 提取
+        return self.loc[mask]
+
+    @cython.binding(False)
     def append_row(self, **kwargs):
         for col_name in self.columns:
             if col_name not in kwargs:

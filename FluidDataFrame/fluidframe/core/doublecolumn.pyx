@@ -794,6 +794,168 @@ cdef class DoubleColumn(BaseColumn):
             raise TypeError(f"Unsupported type for div: {type(other)}")
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def __add__(self, object other):
+        # 支持 df['A'] + 2.0
+        if isinstance(other, (int, float)):
+            return self.add_val(<double>other)
+
+        cdef Py_ssize_t n = self.length
+        if other.length != n:
+            raise ValueError(f"Column length {other.length} != {n}")
+        cdef DoubleColumn res = DoubleColumn(max(n, 1))
+        res.length = n
+        cdef double* self_ptr = self.data_c
+        cdef double* res_ptr = res.data_c
+        cdef double* other_d_ptr
+        cdef int* other_i_ptr
+        cdef Py_ssize_t i
+
+        if isinstance(other, DoubleColumn):
+            other_d_ptr = (<DoubleColumn>other).data_c
+            with nogil:
+                for i in range(n): res_ptr[i] = self_ptr[i] + other_d_ptr[i]
+        elif isinstance(other, IntColumn):
+            other_i_ptr = (<IntColumn>other).data_c
+            with nogil:
+                for i in range(n): res_ptr[i] = self_ptr[i] + <double>other_i_ptr[i]
+        else:
+            return NotImplemented
+        return res
+
+    def __radd__(self, object other):
+        # 支持 2.0 + df['A']
+        return self.__add__(other)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def __sub__(self, object other):
+        if isinstance(other, (int, float)):
+            return self.sub_val(<double>other)
+
+        cdef Py_ssize_t n = self.length
+        if other.length != n:
+            raise ValueError(f"Column length {other.length} != {n}")
+        cdef DoubleColumn res = DoubleColumn(max(n, 1))
+        res.length = n
+        cdef double* self_ptr = self.data_c
+        cdef double* res_ptr = res.data_c
+        cdef double* other_d_ptr
+        cdef int* other_i_ptr
+        cdef Py_ssize_t i
+
+        if isinstance(other, DoubleColumn):
+            other_d_ptr = (<DoubleColumn>other).data_c
+            with nogil:
+                for i in range(n): res_ptr[i] = self_ptr[i] - other_d_ptr[i]
+        elif isinstance(other, IntColumn):
+            other_i_ptr = (<IntColumn>other).data_c
+            with nogil:
+                for i in range(n): res_ptr[i] = self_ptr[i] - <double>other_i_ptr[i]
+        else:
+            return NotImplemented
+        return res
+
+    def __rsub__(self, object other):
+        # 支持 10.0 - df['A']
+        if isinstance(other, (int, float)):
+            cdef Py_ssize_t n = self.length
+            cdef DoubleColumn res = DoubleColumn(max(n, 1))
+            res.length = n
+            cdef double v = <double>other
+            cdef double* s_ptr = self.data_c
+            cdef double* r_ptr = res.data_c
+            cdef Py_ssize_t i
+            with nogil:
+                for i in range(n): r_ptr[i] = v - s_ptr[i]
+            return res
+        return NotImplemented
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def __mul__(self, object other):
+        if isinstance(other, (int, float)):
+            return self.mul_val(<double>other)
+
+        cdef Py_ssize_t n = self.length
+        if other.length != n:
+            raise ValueError(f"Column length {other.length} != {n}")
+        cdef DoubleColumn res = DoubleColumn(max(n, 1))
+        res.length = n
+        cdef double* self_ptr = self.data_c
+        cdef double* res_ptr = res.data_c
+        cdef double* other_d_ptr
+        cdef int* other_i_ptr
+        cdef Py_ssize_t i
+
+        if isinstance(other, DoubleColumn):
+            other_d_ptr = (<DoubleColumn>other).data_c
+            with nogil:
+                for i in range(n): res_ptr[i] = self_ptr[i] * other_d_ptr[i]
+        elif isinstance(other, IntColumn):
+            other_i_ptr = (<IntColumn>other).data_c
+            with nogil:
+                for i in range(n): res_ptr[i] = self_ptr[i] * <double>other_i_ptr[i]
+        else:
+            return NotImplemented
+        return res
+
+    def __rmul__(self, object other):
+        return self.__mul__(other)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def __truediv__(self, object other):
+        if isinstance(other, (int, float)):
+            return self.div_val(<double>other)
+
+        cdef Py_ssize_t n = self.length
+        if other.length != n:
+            raise ValueError(f"Column length {other.length} != {n}")
+        cdef DoubleColumn res = DoubleColumn(max(n, 1))
+        res.length = n
+        cdef double* self_ptr = self.data_c
+        cdef double* res_ptr = res.data_c
+        cdef double* other_d_ptr
+        cdef int* other_i_ptr
+        cdef double val
+        cdef Py_ssize_t i
+
+        if isinstance(other, DoubleColumn):
+            other_d_ptr = (<DoubleColumn>other).data_c
+            with nogil:
+                for i in range(n):
+                    val = other_d_ptr[i]
+                    res_ptr[i] = self_ptr[i] / val if val != 0 else NAN
+        elif isinstance(other, IntColumn):
+            other_i_ptr = (<IntColumn>other).data_c
+            with nogil:
+                for i in range(n):
+                    val = <double>other_i_ptr[i]
+                    res_ptr[i] = self_ptr[i] / val if val != 0 else NAN
+        else:
+            return NotImplemented
+        return res
+
+    def __rtruediv__(self, object other):
+        # 支持 10.0 / df['A']
+        if isinstance(other, (int, float)):
+            cdef Py_ssize_t n = self.length
+            cdef DoubleColumn res = DoubleColumn(max(n, 1))
+            res.length = n
+            cdef double v = <double>other
+            cdef double* s_ptr = self.data_c
+            cdef double* r_ptr = res.data_c
+            cdef Py_ssize_t i
+            cdef double s_val
+            with nogil:
+                for i in range(n):
+                    s_val = s_ptr[i]
+                    r_ptr[i] = v / s_val if s_val != 0 else NAN
+            return res
+        return NotImplemented
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def unique(self):
