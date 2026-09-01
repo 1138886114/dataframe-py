@@ -941,6 +941,7 @@ cdef class DoubleColumn(BaseColumn):
     def isin(self, set values):
         cdef IntColumn res = IntColumn(max(self.capacity, 1))
         res.length = self.length
+        cdef Py_ssize_t i
         cdef Py_ssize_t n = self.length
         cdef double* s_ptr = self.data_c
         cdef int* r_ptr = res.data_c
@@ -963,7 +964,6 @@ cdef class DoubleColumn(BaseColumn):
         if valid_m > 0:
             qsort(v_arr, valid_m, sizeof(double), _cmp_double)
 
-        cdef Py_ssize_t i
         cdef void* found
         with nogil:
             if valid_m == 0:
