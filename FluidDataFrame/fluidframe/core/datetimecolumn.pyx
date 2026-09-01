@@ -2,9 +2,12 @@
 # cython: boundscheck=False
 # cython: wraparound=False
 # cython: cdivision=True
+# cython: nonecheck=False
+# cython: initializedcheck=False
 
 cimport cython
 from libc.string cimport memcpy, memmove
+from libc.stdio cimport snprintf
 
 from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_DATETIME, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
@@ -54,7 +57,7 @@ cdef inline long long _parse_datetime_str(str s):
     return us
 
 
-cdef inline void _datetime_to_ymdhms(long long us, int* y, int* m, int* d, int* h, int* mi, int* s) noexcept:
+cdef inline void _datetime_to_ymdhms(long long us, int* y, int* m, int* d, int* h, int* mi, int* s) noexcept nogil:
     """Convert microseconds since epoch to year, month, day, hour, minute, second."""
     cdef long long total_seconds = us // 1000000LL
     cdef long long daynum = total_seconds // 86400
@@ -80,7 +83,7 @@ cdef inline str _datetime_to_str(long long us):
     return f"{y:04d}-{m:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}"
 
 
-cdef inline int _dt_extract_field(long long us, int which) noexcept:
+cdef inline int _dt_extract_field(long long us, int which) noexcept nogil:
     cdef int y, m, d, h, mi, s
     _datetime_to_ymdhms(us, &y, &m, &d, &h, &mi, &s)
     if which == 0: return y
@@ -94,6 +97,8 @@ cdef inline int _dt_extract_field(long long us, int which) noexcept:
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.initializedcheck(False)
 cdef class DateTimeColumn(BaseColumn):
 
     @cython.binding(False)
@@ -165,8 +170,11 @@ cdef class DateTimeColumn(BaseColumn):
     def max(self):
         if self.length == 0: raise ValueError("empty column")
         cdef long long max_val = self.data_c[0]
-        for i in range(1, self.length):
-            if self.data_c[i] > max_val: max_val = self.data_c[i]
+        cdef long long* ptr = self.data_c
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(1, self.length):
+                if ptr[i] > max_val: max_val = ptr[i]
         return max_val
 
     @cython.binding(False)
@@ -174,26 +182,33 @@ cdef class DateTimeColumn(BaseColumn):
     def min(self):
         if self.length == 0: raise ValueError("empty column")
         cdef long long min_val = self.data_c[0]
-        for i in range(1, self.length):
-            if self.data_c[i] < min_val: min_val = self.data_c[i]
+        cdef long long* ptr = self.data_c
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(1, self.length):
+                if ptr[i] < min_val: min_val = ptr[i]
         return min_val
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
         cdef Py_ssize_t n = len(indices)
+        cdef char err_buf[128]
         if n != self.length:
-            raise ValueError("Length of indices must match column length")
-        cdef long long* new_data = <long long*>aligned_malloc(n * sizeof(long long))
+            snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
+            raise ValueError(err_buf.decode('ascii'))
+        cdef long long* new_data = <long long*>aligned_malloc(max(n, 1) * sizeof(long long))
         if not new_data: raise MemoryError()
+        cdef long long* self_data = self.data_c
         cdef Py_ssize_t i, idx
         try:
             for i in range(n):
                 idx = <Py_ssize_t>indices[i]
                 if idx < 0: idx += self.length
                 if idx < 0 or idx >= self.length:
-                    raise IndexError("Index out of bounds")
-                new_data[i] = self.data_c[idx]
+                    snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
+                    raise IndexError(err_buf.decode('ascii'))
+                new_data[i] = self_data[idx]
         except Exception:
             os_aligned_free(new_data)
             raise
@@ -225,9 +240,12 @@ cdef class DateTimeColumn(BaseColumn):
     def year(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef long long* ptr = self.data_c
+        cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = _dt_extract_field(self.data_c[i], 0)
+        with nogil:
+            for i in range(self.length):
+                res_ptr[i] = _dt_extract_field(ptr[i], 0)
         return res
 
     @cython.always_allow_keywords(False)
@@ -235,9 +253,12 @@ cdef class DateTimeColumn(BaseColumn):
     def month(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef long long* ptr = self.data_c
+        cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = _dt_extract_field(self.data_c[i], 1)
+        with nogil:
+            for i in range(self.length):
+                res_ptr[i] = _dt_extract_field(ptr[i], 1)
         return res
 
     @cython.always_allow_keywords(False)
@@ -245,9 +266,12 @@ cdef class DateTimeColumn(BaseColumn):
     def day(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef long long* ptr = self.data_c
+        cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = _dt_extract_field(self.data_c[i], 2)
+        with nogil:
+            for i in range(self.length):
+                res_ptr[i] = _dt_extract_field(ptr[i], 2)
         return res
 
     @cython.always_allow_keywords(False)
@@ -255,9 +279,12 @@ cdef class DateTimeColumn(BaseColumn):
     def hour(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef long long* ptr = self.data_c
+        cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = _dt_extract_field(self.data_c[i], 3)
+        with nogil:
+            for i in range(self.length):
+                res_ptr[i] = _dt_extract_field(ptr[i], 3)
         return res
 
     @cython.always_allow_keywords(False)
@@ -265,9 +292,12 @@ cdef class DateTimeColumn(BaseColumn):
     def minute(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef long long* ptr = self.data_c
+        cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = _dt_extract_field(self.data_c[i], 4)
+        with nogil:
+            for i in range(self.length):
+                res_ptr[i] = _dt_extract_field(ptr[i], 4)
         return res
 
     @cython.always_allow_keywords(False)
@@ -275,9 +305,12 @@ cdef class DateTimeColumn(BaseColumn):
     def second(self):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
+        cdef long long* ptr = self.data_c
+        cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i
-        for i in range(self.length):
-            res.data_c[i] = _dt_extract_field(self.data_c[i], 5)
+        with nogil:
+            for i in range(self.length):
+                res_ptr[i] = _dt_extract_field(ptr[i], 5)
         return res
 
     @cython.binding(False)
@@ -293,9 +326,13 @@ cdef class DateTimeColumn(BaseColumn):
             fill_val = _parse_datetime_str(<str>fill)
         elif fill is not None:
             fill_val = <long long>fill
+        cdef long long* col_ptr = col.data_c
+        cdef long long* self_ptr = self.data_c
+        cdef int* mask_ptr = mask.data_c
         cdef Py_ssize_t i
-        for i in range(n):
-            col.data_c[i] = self.data_c[i] if mask.data_c[i] else fill_val
+        with nogil:
+            for i in range(n):
+                col_ptr[i] = self_ptr[i] if mask_ptr[i] else fill_val
         return col
 
     @cython.always_allow_keywords(False)
@@ -329,17 +366,20 @@ cdef class DateTimeColumn(BaseColumn):
 
     cdef DateTimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef Py_ssize_t i
+        cdef long long* old_data = self.data_c
         if not inplace:
             new_col = DateTimeColumn(max(n, 1))
             new_col.length = n
-            for i in range(n):
-                new_col.data_c[i] = self.data_c[indices[i]]
+            with nogil:
+                for i in range(n):
+                    new_col.data_c[i] = old_data[indices[i]]
             return new_col
         else:
             new_data = <long long*>aligned_malloc(max(n, self.capacity) * sizeof(long long))
             if not new_data: raise MemoryError()
-            for i in range(n):
-                new_data[i] = self.data_c[indices[i]]
+            with nogil:
+                for i in range(n):
+                    new_data[i] = old_data[indices[i]]
             os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = max(n, self.capacity)
@@ -353,6 +393,7 @@ cdef class DateTimeColumn(BaseColumn):
         cdef Py_ssize_t i, n = self.length
         cdef Py_ssize_t safe_cap = max(n, 1)
         cdef int y, m, d, h, mi, s
+        cdef long long* ptr = self.data_c
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef UCS2Column_SoA uc
@@ -361,36 +402,38 @@ cdef class DateTimeColumn(BaseColumn):
         if target_type == TYPE_INT:
             ic = IntColumn(safe_cap)
             ic.length = n
-            for i in range(n):
-                ic.data_c[i] = <int>(self.data_c[i] / 1000000LL)
+            with nogil:
+                for i in range(n):
+                    ic.data_c[i] = <int>(ptr[i] / 1000000LL)
             return ic
         elif target_type == TYPE_DOUBLE:
             dc = DoubleColumn(safe_cap)
             dc.length = n
-            for i in range(n):
-                dc.data_c[i] = <double>self.data_c[i] / 1000000.0
+            with nogil:
+                for i in range(n):
+                    dc.data_c[i] = <double>ptr[i] / 1000000.0
             return dc
         elif target_type == TYPE_UCS2:
             uc = UCS2Column_SoA(safe_cap)
             uc.length = n
             for i in range(n):
-                uc._set_item(i, _datetime_to_str(self.data_c[i]))
+                uc._set_item(i, _datetime_to_str(ptr[i]))
             return uc
         elif target_type == TYPE_CHAR256:
             cc = Char256Column_SoA(safe_cap)
             for i in range(n):
-                cc.append(_datetime_to_str(self.data_c[i]))
+                cc.append(_datetime_to_str(ptr[i]))
             return cc
         elif target_type == TYPE_CATEGORY:
             catc = CategoryColumn(safe_cap)
             for i in range(n):
-                catc.append(_datetime_to_str(self.data_c[i]))
+                catc.append(_datetime_to_str(ptr[i]))
             return catc
         elif target_type == TYPE_TIMESTAMP:
             from fluidframe.core.datecolumn import DateColumn as PyDateColumn
             tc = PyDateColumn(safe_cap)
             for i in range(n):
-                _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
+                _datetime_to_ymdhms(ptr[i], &y, &m, &d, &h, &mi, &s)
                 tc.append(f"{y:04d}{m:02d}{d:02d}")
             return tc
         elif target_type == TYPE_DATETIME:
@@ -399,7 +442,7 @@ cdef class DateTimeColumn(BaseColumn):
             from fluidframe.core.timecolumn import TimeColumn as PyTimeColumn
             tmc = PyTimeColumn(safe_cap)
             for i in range(n):
-                _datetime_to_ymdhms(self.data_c[i], &y, &m, &d, &h, &mi, &s)
+                _datetime_to_ymdhms(ptr[i], &y, &m, &d, &h, &mi, &s)
                 tmc.append(h * 3600 + mi * 60 + s)
             return tmc
         raise TypeError(f"Failed to cast DATETIME column to internal type id: {target_type}")

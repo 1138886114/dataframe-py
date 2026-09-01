@@ -3,7 +3,7 @@ cimport cython
 from fluidframe.core._base cimport BaseColumn
 
 cdef long long _parse_datetime_str(str s)
-cdef void _datetime_to_ymdhms(long long us, int* y, int* m, int* d, int* h, int* mi, int* s) noexcept
+cdef void _datetime_to_ymdhms(long long us, int* y, int* m, int* d, int* h, int* mi, int* s) noexcept nogil
 
 @cython.final
 @cython.boundscheck(False)
