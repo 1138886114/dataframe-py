@@ -7,7 +7,6 @@ cimport cython
 from libc.string cimport memcpy, memset
 from libc.math cimport sqrt, fabs, NAN
 from libc.stdlib cimport malloc, free
-from cython.parallel cimport prange
 
 from fluidframe.core._base cimport BaseColumn, TYPE_INT, TYPE_DOUBLE, aligned_malloc, os_aligned_free
 from fluidframe.core.fastdataframe cimport FastDataFrame
@@ -348,7 +347,7 @@ def norm(FastDataFrame df, str ord_type="frobenius"):
 #  Pairwise distance / similarity metrics
 # ============================================================
 def euclidean_dist(FastDataFrame df):
-    """Pairwise Euclidean distance between rows. (SIMD & Parallel Optimized)"""
+    """Pairwise Euclidean distance between rows."""
     cdef Py_ssize_t rows = 0, cols = 0
     cdef Py_ssize_t i, j, k
     cdef double* A = NULL
@@ -362,14 +361,9 @@ def euclidean_dist(FastDataFrame df):
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
-        if rows == 0:
-            return _from_contiguous(D, rows, rows)
-
         with nogil:
             for i in range(rows):
                 D[i * rows + i] = 0.0
-
-            for i in prange(rows, schedule='guided'):
                 row_i = A + i * cols
                 for j in range(i + 1, rows):
                     row_j = A + j * cols
@@ -381,15 +375,14 @@ def euclidean_dist(FastDataFrame df):
                     D[i * rows + j] = s
                     D[j * rows + i] = s
 
-        res = _from_contiguous(D, rows, rows)
-        return res
+        return _from_contiguous(D, rows, rows)
     finally:
         if A != NULL: os_aligned_free(A)
         if D != NULL: os_aligned_free(D)
 
 
 def manhattan_dist(FastDataFrame df):
-    """Pairwise Manhattan distance between rows. Returns n×n DataFrame."""
+    """Pairwise Manhattan distance between rows."""
     cdef Py_ssize_t rows = 0, cols = 0
     cdef Py_ssize_t i, j, k
     cdef double* A = NULL
@@ -403,14 +396,9 @@ def manhattan_dist(FastDataFrame df):
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
-        if rows == 0:
-            return _from_contiguous(D, rows, rows)
-
         with nogil:
             for i in range(rows):
                 D[i * rows + i] = 0.0
-
-            for i in prange(rows, schedule='guided'):
                 row_i = A + i * cols
                 for j in range(i + 1, rows):
                     row_j = A + j * cols
@@ -427,7 +415,7 @@ def manhattan_dist(FastDataFrame df):
 
 
 def cosine_dist(FastDataFrame df):
-    """Pairwise cosine distance (1 - cosine_similarity). between rows."""
+    """Pairwise cosine distance (1 - cosine_similarity) between rows."""
     cdef Py_ssize_t rows = 0, cols = 0
     cdef Py_ssize_t i, j, k
     cdef double* A = NULL
@@ -443,11 +431,8 @@ def cosine_dist(FastDataFrame df):
         norms = <double*>aligned_malloc(max(rows, 1) * sizeof(double))
         if not D or not norms: raise MemoryError()
 
-        if rows == 0:
-            return _from_contiguous(D, rows, rows)
-
         with nogil:
-            for i in prange(rows, schedule='static'):
+            for i in range(rows):
                 row_i = A + i * cols
                 norm_sq = 0.0
                 for k in range(cols):
@@ -456,8 +441,6 @@ def cosine_dist(FastDataFrame df):
 
             for i in range(rows):
                 D[i * rows + i] = 0.0
-
-            for i in prange(rows, schedule='guided'):
                 row_i = A + i * cols
                 for j in range(i + 1, rows):
                     row_j = A + j * cols
@@ -481,7 +464,7 @@ def cosine_dist(FastDataFrame df):
 
 
 def hamming_dist(FastDataFrame df):
-    """Pairwise Hamming distance. (Branchless + Zero-div safe)"""
+    """Pairwise Hamming distance (fraction of differing elements) between rows."""
     cdef Py_ssize_t rows = 0, cols = 0
     cdef Py_ssize_t i, j, k
     cdef double* A = NULL
@@ -496,7 +479,7 @@ def hamming_dist(FastDataFrame df):
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
-        if rows == 0 or cols == 0:
+        if cols == 0:
             for i in range(rows * rows):
                 D[i] = 0.0
             return _from_contiguous(D, rows, rows)
@@ -506,8 +489,6 @@ def hamming_dist(FastDataFrame df):
         with nogil:
             for i in range(rows):
                 D[i * rows + i] = 0.0
-
-            for i in prange(rows, schedule='guided'):
                 row_i = A + i * cols
                 for j in range(i + 1, rows):
                     row_j = A + j * cols
@@ -524,7 +505,7 @@ def hamming_dist(FastDataFrame df):
 
 
 def jaccard_sim(FastDataFrame df):
-    """Pairwise Jaccard similarity for binary data (non-zero = 1). Returns n×n DataFrame."""
+    """Pairwise Jaccard similarity for binary data (non-zero = 1)."""
     cdef Py_ssize_t rows = 0, cols = 0
     cdef Py_ssize_t i, j, k
     cdef double* A = NULL
@@ -539,20 +520,14 @@ def jaccard_sim(FastDataFrame df):
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
-        if rows == 0:
-            return _from_contiguous(D, rows, rows)
-
         with nogil:
             for i in range(rows):
                 D[i * rows + i] = 1.0
-
-            for i in prange(rows, schedule='guided'):
                 row_i = A + i * cols
                 for j in range(i + 1, rows):
                     row_j = A + j * cols
                     intersection = 0
                     union_cnt = 0
-                    # 无分支位运算，流水线满载
                     for k in range(cols):
                         b_i = (row_i[k] != 0.0)
                         b_j = (row_j[k] != 0.0)
@@ -569,3 +544,51 @@ def jaccard_sim(FastDataFrame df):
     finally:
         if A != NULL: os_aligned_free(A)
         if D != NULL: os_aligned_free(D)
+
+
+def cosine_similarity(FastDataFrame df):
+    """Pairwise cosine similarity between rows."""
+    cdef Py_ssize_t rows = 0, cols = 0
+    cdef Py_ssize_t i, j, k
+    cdef double* A = NULL
+    cdef double* D = NULL
+    cdef double* norms = NULL
+    cdef const double* row_i
+    cdef const double* row_j
+    cdef double dot_val, norm_prod, norm_sq
+
+    try:
+        A = _to_contiguous(df, &rows, &cols)
+        D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
+        norms = <double*>aligned_malloc(max(rows, 1) * sizeof(double))
+        if not D or not norms: raise MemoryError()
+
+        with nogil:
+            for i in range(rows):
+                row_i = A + i * cols
+                norm_sq = 0.0
+                for k in range(cols):
+                    norm_sq += row_i[k] * row_i[k]
+                norms[i] = sqrt(norm_sq)
+
+            for i in range(rows):
+                D[i * rows + i] = 1.0
+                row_i = A + i * cols
+                for j in range(i + 1, rows):
+                    row_j = A + j * cols
+                    norm_prod = norms[i] * norms[j]
+                    if norm_prod > 0.0:
+                        dot_val = 0.0
+                        for k in range(cols):
+                            dot_val += row_i[k] * row_j[k]
+                        D[i * rows + j] = clip_val(dot_val / norm_prod, -1.0, 1.0)
+                        D[j * rows + i] = D[i * rows + j]
+                    else:
+                        D[i * rows + j] = 0.0
+                        D[j * rows + i] = 0.0
+
+        return _from_contiguous(D, rows, rows)
+    finally:
+        if A != NULL: os_aligned_free(A)
+        if D != NULL: os_aligned_free(D)
+        if norms != NULL: os_aligned_free(norms)

@@ -14,7 +14,7 @@ from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 
 
-cdef int _cmp_double(const void* a, const void* b) nograd nogil:
+cdef int _cmp_double(const void* a, const void* b) noexcept nogil:
     cdef double da = (<double*>a)[0]
     cdef double db = (<double*>b)[0]
     if da < db: return -1
