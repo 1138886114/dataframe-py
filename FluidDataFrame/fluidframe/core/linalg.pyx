@@ -547,21 +547,23 @@ def jaccard_sim(FastDataFrame df):
 
 
 def cosine_similarity(FastDataFrame df):
-    """Pairwise cosine similarity between rows."""
+    """Pairwise cosine similarity between rows. In-place L2 normalization then dot product."""
     cdef Py_ssize_t rows = 0, cols = 0
     cdef Py_ssize_t i, j, k
     cdef double* A = NULL
     cdef double* D = NULL
-    cdef double* norms = NULL
-    cdef const double* row_i
+    cdef double* row_i
     cdef const double* row_j
-    cdef double dot_val, norm_prod, norm_sq
+    cdef double dot_val, norm_sq, inv_norm
 
     try:
         A = _to_contiguous(df, &rows, &cols)
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
-        norms = <double*>aligned_malloc(max(rows, 1) * sizeof(double))
-        if not D or not norms: raise MemoryError()
+        if not D:
+            raise MemoryError()
+
+        if rows == 0:
+            return _from_contiguous(D, rows, rows)
 
         with nogil:
             for i in range(rows):
@@ -569,26 +571,30 @@ def cosine_similarity(FastDataFrame df):
                 norm_sq = 0.0
                 for k in range(cols):
                     norm_sq += row_i[k] * row_i[k]
-                norms[i] = sqrt(norm_sq)
+
+                if norm_sq > 0.0:
+                    inv_norm = 1.0 / sqrt(norm_sq)
+                    for k in range(cols):
+                        row_i[k] *= inv_norm
+                else:
+                    for k in range(cols):
+                        row_i[k] = 0.0
 
             for i in range(rows):
                 D[i * rows + i] = 1.0
+
+            for i in range(rows):
                 row_i = A + i * cols
                 for j in range(i + 1, rows):
                     row_j = A + j * cols
-                    norm_prod = norms[i] * norms[j]
-                    if norm_prod > 0.0:
-                        dot_val = 0.0
-                        for k in range(cols):
-                            dot_val += row_i[k] * row_j[k]
-                        D[i * rows + j] = clip_val(dot_val / norm_prod, -1.0, 1.0)
-                        D[j * rows + i] = D[i * rows + j]
-                    else:
-                        D[i * rows + j] = 0.0
-                        D[j * rows + i] = 0.0
+                    dot_val = 0.0
+                    for k in range(cols):
+                        dot_val += row_i[k] * row_j[k]
+                    dot_val = clip_val(dot_val, -1.0, 1.0)
+                    D[i * rows + j] = dot_val
+                    D[j * rows + i] = dot_val
 
         return _from_contiguous(D, rows, rows)
     finally:
         if A != NULL: os_aligned_free(A)
         if D != NULL: os_aligned_free(D)
-        if norms != NULL: os_aligned_free(norms)
