@@ -6,7 +6,8 @@
 # cython: initializedcheck=False
 
 cimport cython
-from libc.string cimport memcpy, memmove
+from libc.string cimport memcpy, memmove, memset, memcmp
+from libc.stdint cimport uint64_t
 from libc.math cimport NAN
 from libc.stdio cimport snprintf
 from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
@@ -18,6 +19,7 @@ from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
+cdef tuple BOOL_STRS = ('False', 'True')
 
 @cython.final
 @cython.boundscheck(False)
@@ -32,6 +34,7 @@ cdef class BoolColumn(BaseColumn):
         if self.capacity > 0:
             self.data_c = <unsigned char*>aligned_malloc(self.capacity * sizeof(unsigned char))
             if not self.data_c: raise MemoryError()
+            memset(self.data_c, 0, self.capacity)
         else:
             self.data_c = NULL
 
@@ -46,6 +49,7 @@ cdef class BoolColumn(BaseColumn):
         cdef unsigned char* new_data = <unsigned char*>aligned_realloc(
             self.data_c, self.capacity * sizeof(unsigned char), new_cap * sizeof(unsigned char))
         if not new_data: raise MemoryError()
+        memset(new_data + self.capacity, 0, new_cap - self.capacity)
         self.data_c = new_data
         self.capacity = new_cap
 
@@ -199,64 +203,113 @@ cdef class BoolColumn(BaseColumn):
     @cython.binding(False)
     def __and__(self, BoolColumn other):
         cdef Py_ssize_t n = self.length
+        cdef char err_buf[128]
         if other.length != n:
-            raise ValueError(f"Column length {other.length} != {n}")
+            snprintf(err_buf, sizeof(err_buf), "Column length %zd != %zd", other.length, n)
+            raise ValueError(err_buf.decode('ascii'))
+
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
-        cdef unsigned char* self_ptr = self.data_c
-        cdef unsigned char* other_ptr = other.data_c
-        cdef unsigned char* res_ptr = res.data_c
+
+        cdef Py_ssize_t n_blocks = n // 8
         cdef Py_ssize_t i
+        cdef uint64_t* s_64 = <uint64_t*>self.data_c
+        cdef uint64_t* o_64 = <uint64_t*>other.data_c
+        cdef uint64_t* r_64 = <uint64_t*>res.data_c
+
+        cdef unsigned char* s_ptr = self.data_c
+        cdef unsigned char* o_ptr = other.data_c
+        cdef unsigned char* r_ptr = res.data_c
+
         with nogil:
-            for i in range(n):
-                res_ptr[i] = self_ptr[i] & other_ptr[i]
+            if n_blocks > 0:
+                for i in range(n_blocks):
+                    r_64[i] = s_64[i] & o_64[i]
+            for i in range(n_blocks * 8, n):
+                r_ptr[i] = s_ptr[i] & o_ptr[i]
         return res
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __or__(self, BoolColumn other):
         cdef Py_ssize_t n = self.length
+        cdef char err_buf[128]
         if other.length != n:
-            raise ValueError(f"Column length {other.length} != {n}")
+            snprintf(err_buf, sizeof(err_buf), "Column length %zd != %zd", other.length, n)
+            raise ValueError(err_buf.decode('ascii'))
+
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
-        cdef unsigned char* self_ptr = self.data_c
-        cdef unsigned char* other_ptr = other.data_c
-        cdef unsigned char* res_ptr = res.data_c
+
+        cdef Py_ssize_t n_blocks = n // 8
         cdef Py_ssize_t i
+        cdef uint64_t* s_64 = <uint64_t*>self.data_c
+        cdef uint64_t* o_64 = <uint64_t*>other.data_c
+        cdef uint64_t* r_64 = <uint64_t*>res.data_c
+
+        cdef unsigned char* s_ptr = self.data_c
+        cdef unsigned char* o_ptr = other.data_c
+        cdef unsigned char* r_ptr = res.data_c
+
         with nogil:
-            for i in range(n):
-                res_ptr[i] = self_ptr[i] | other_ptr[i]
+            if n_blocks > 0:
+                for i in range(n_blocks):
+                    r_64[i] = s_64[i] | o_64[i]
+            for i in range(n_blocks * 8, n):
+                r_ptr[i] = s_ptr[i] | o_ptr[i]
         return res
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __xor__(self, BoolColumn other):
         cdef Py_ssize_t n = self.length
+        cdef char err_buf[128]
         if other.length != n:
-            raise ValueError(f"Column length {other.length} != {n}")
+            snprintf(err_buf, sizeof(err_buf), "Column length %zd != %zd", other.length, n)
+            raise ValueError(err_buf.decode('ascii'))
+
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
-        cdef unsigned char* self_ptr = self.data_c
-        cdef unsigned char* other_ptr = other.data_c
-        cdef unsigned char* res_ptr = res.data_c
+
+        cdef Py_ssize_t n_blocks = n // 8
         cdef Py_ssize_t i
+        cdef uint64_t* s_64 = <uint64_t*>self.data_c
+        cdef uint64_t* o_64 = <uint64_t*>other.data_c
+        cdef uint64_t* r_64 = <uint64_t*>res.data_c
+
+        cdef unsigned char* s_ptr = self.data_c
+        cdef unsigned char* o_ptr = other.data_c
+        cdef unsigned char* r_ptr = res.data_c
+
         with nogil:
-            for i in range(n):
-                res_ptr[i] = self_ptr[i] ^ other_ptr[i]
+            if n_blocks > 0:
+                for i in range(n_blocks):
+                    r_64[i] = s_64[i] ^ o_64[i]
+            for i in range(n_blocks * 8, n):
+                r_ptr[i] = s_ptr[i] ^ o_ptr[i]
         return res
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __invert__(self):
+        cdef Py_ssize_t n = self.length
         cdef BoolColumn res = BoolColumn(max(self.capacity, 1))
-        res.length = self.length
-        cdef unsigned char* self_ptr = self.data_c
-        cdef unsigned char* res_ptr = res.data_c
+        res.length = n
+
+        cdef Py_ssize_t n_blocks = n // 8
         cdef Py_ssize_t i
+        cdef uint64_t* s_64 = <uint64_t*>self.data_c
+        cdef uint64_t* r_64 = <uint64_t*>res.data_c
+
+        cdef unsigned char* s_ptr = self.data_c
+        cdef unsigned char* r_ptr = res.data_c
+
         with nogil:
-            for i in range(self.length):
-                res_ptr[i] = 1 - self_ptr[i]
+            if n_blocks > 0:
+                for i in range(n_blocks):
+                    r_64[i] = s_64[i] ^ 0x0101010101010101ULL
+            for i in range(n_blocks * 8, n):
+                r_ptr[i] = s_ptr[i] ^ 1
         return res
 
     @cython.always_allow_keywords(False)
@@ -265,7 +318,7 @@ cdef class BoolColumn(BaseColumn):
         cdef list items = []
         cdef Py_ssize_t i
         for i in range(self.length):
-            items.append(str(bool(self.data_c[i])))
+            items.append(BOOL_STRS[self.data_c[i]])
         return f"BoolColumn([{', '.join(items)}])"
 
     @cython.always_allow_keywords(False)
@@ -307,19 +360,12 @@ cdef class BoolColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __eq__(self, other):
-        cdef BoolColumn o
-        cdef Py_ssize_t i
         if not isinstance(other, BoolColumn):
             return NotImplemented
-        o = <BoolColumn>other
+        cdef BoolColumn o = <BoolColumn>other
         if o.length != self.length:
             return False
-        cdef unsigned char* self_ptr = self.data_c
-        cdef unsigned char* o_ptr = o.data_c
-        for i in range(self.length):
-            if self_ptr[i] != o_ptr[i]:
-                return False
-        return True
+        return memcmp(self.data_c, o.data_c, self.length * sizeof(unsigned char)) == 0
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -360,22 +406,22 @@ cdef class BoolColumn(BaseColumn):
             uc = UCS2Column_SoA(safe_cap)
             uc.length = n
             for i in range(n):
-                uc._set_item(i, 'True' if ptr[i] else 'False')
+                uc._set_item(i, BOOL_STRS[ptr[i]])
             return uc
         elif target_type == TYPE_CHAR256:
             cc = Char256Column_SoA(safe_cap)
             for i in range(n):
-                cc.append('True' if ptr[i] else 'False')
+                cc.append(BOOL_STRS[ptr[i]])
             return cc
         elif target_type == TYPE_CATEGORY:
             catc = CategoryColumn(safe_cap)
             for i in range(n):
-                catc.append('True' if ptr[i] else 'False')
+                catc.append(BOOL_STRS[ptr[i]])
             return catc
         elif target_type == TYPE_DATETIME:
             dtc = DateTimeColumn(safe_cap)
             for i in range(n):
-                dtc.append('True' if ptr[i] else 'False')
+                dtc.append(BOOL_STRS[ptr[i]])
             return dtc
         elif target_type == TYPE_TIME:
             tmc = TimeColumn(safe_cap)
