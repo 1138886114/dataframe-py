@@ -148,6 +148,7 @@ from fluidframe.core.timecolumn cimport TimeColumn
 from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex, INDEX_RANGE, INDEX_INT, INDEX_MULTI
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
 from fluidframe.core._base cimport TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
+from fluidframe.core.rolling cimport RollingWindow
 
 from fluidframe._schema_types import Char256, Timestamp, Bool, Category, DateTime, Time, _parse_schema
 
@@ -2836,6 +2837,64 @@ cdef class FastDataFrame:
         self._col_to_double_buffer(col_b, buf_b.data_c, n)
         return _c_cov(buf_a.data_c, buf_b.data_c, n)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pearson_sim(self):
+        """Pairwise Pearson similarity (correlation) between all numeric columns."""
+        cdef list num_names = []
+        cdef list num_cols = []
+        cdef str name
+        cdef BaseColumn col
+        cdef Py_ssize_t n_cols, n_rows, i, j, k
+        cdef double* buf_i = NULL
+        cdef double* buf_j = NULL
+        cdef DoubleColumn result_col
+        cdef FastDataFrame result
+
+        for name, col in self.columns.items():
+            if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+                num_names.append(name)
+                num_cols.append(col)
+
+        n_cols = len(num_names)
+        if n_cols < 2:
+            raise ValueError("Need at least 2 numeric columns")
+        n_rows = self.df_length
+
+        result = FastDataFrame()
+        result.df_length = n_cols
+        result.index = RangeIndex(0, n_cols)
+
+        buf_i = <double*>aligned_malloc(max(n_rows, 1) * sizeof(double))
+        if not buf_i: raise MemoryError()
+        buf_j = <double*>aligned_malloc(max(n_rows, 1) * sizeof(double))
+        if not buf_j: raise MemoryError()
+        try:
+            for i in range(n_cols):
+                result_col = DoubleColumn(max(n_cols, 1))
+                result_col.length = n_cols
+                self._col_to_double_buffer(<BaseColumn>num_cols[i], buf_i, n_rows)
+                for j in range(n_cols):
+                    if i == j:
+                        result_col.data_c[j] = 1.0
+                    else:
+                        self._col_to_double_buffer(<BaseColumn>num_cols[j], buf_j, n_rows)
+                        result_col.data_c[j] = _c_corr(buf_i, buf_j, n_rows)
+                result.columns[num_names[i]] = result_col
+            return result
+        finally:
+            os_aligned_free(buf_i)
+            os_aligned_free(buf_j)
+
+    def rolling(self, Py_ssize_t window, str col_name):
+        """Create a RollingWindow for the given column."""
+        if col_name not in self.columns:
+            raise KeyError(f"Column '{col_name}' not found")
+        cdef BaseColumn col = self.columns[col_name]
+        cdef int col_dtype = col.dtype
+        if col_dtype != TYPE_INT and col_dtype != TYPE_DOUBLE:
+            raise TypeError(f"Rolling window requires numeric column, got '{col_name}'")
+        return RollingWindow(col, window)
 
     def value_counts(self, str col_name):
         if col_name not in self.columns:
