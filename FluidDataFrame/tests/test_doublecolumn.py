@@ -203,6 +203,63 @@ def test_bitwise():
     m_and = m1 & m2
     check('and', [m_and[i] for i in range(m_and.length)] == [0, 1, 0])
 
+def test_dunder_add():
+    a = DoubleColumn(); a.append(1.0); a.append(2.0); a.append(3.0)
+    b = DoubleColumn(); b.append(10.0); b.append(20.0); b.append(30.0)
+    r = a + b
+    check('__add__ col-col', r[0] == 11.0 and r[1] == 22.0 and r[2] == 33.0)
+    r = a + 5.0
+    check('__add__ scalar', r[0] == 6.0 and r[1] == 7.0 and r[2] == 8.0)
+    r = 100.0 + a
+    check('__radd__ scalar', r[0] == 101.0 and r[1] == 102.0 and r[2] == 103.0)
+    a_d = DoubleColumn(); a_d.append(1.5); a_d.append(2.5)
+    b_i = IntColumn(); b_i.append(10); b_i.append(20)
+    r = a_d + b_i
+    check('__add__ double+int', r[0] == 11.5 and r[1] == 22.5)
+
+def test_dunder_sub():
+    a = DoubleColumn(); a.append(10.0); a.append(20.0); a.append(30.0)
+    b = DoubleColumn(); b.append(1.0); b.append(2.0); b.append(3.0)
+    r = a - b
+    check('__sub__ col-col', r[0] == 9.0 and r[1] == 18.0 and r[2] == 27.0)
+    r = a - 5.0
+    check('__sub__ scalar', r[0] == 5.0 and r[1] == 15.0 and r[2] == 25.0)
+    r = 100.0 - a
+    check('__rsub__ scalar', r[0] == 90.0 and r[1] == 80.0 and r[2] == 70.0)
+
+def test_dunder_mul():
+    a = DoubleColumn(); a.append(2.0); a.append(3.0); a.append(4.0)
+    b = DoubleColumn(); b.append(10.0); b.append(20.0); b.append(30.0)
+    r = a * b
+    check('__mul__ col-col', r[0] == 20.0 and r[1] == 60.0 and r[2] == 120.0)
+    r = a * 3.0
+    check('__mul__ scalar', r[0] == 6.0 and r[1] == 9.0 and r[2] == 12.0)
+    r = 3.0 * a
+    check('__rmul__ scalar', r[0] == 6.0 and r[1] == 9.0 and r[2] == 12.0)
+
+def test_dunder_div():
+    a = DoubleColumn(); a.append(10.0); a.append(20.0); a.append(30.0)
+    b = DoubleColumn(); b.append(2.0); b.append(4.0); b.append(5.0)
+    r = a / b
+    check('__truediv__ col-col', r[0] == 5.0 and r[1] == 5.0 and r[2] == 6.0)
+    r = a / 3.0
+    check('__truediv__ scalar', r[0] == 10.0/3 and r[1] == 20.0/3 and r[2] == 10.0)
+    r = 60.0 / a
+    check('__rtruediv__ scalar', r[0] == 6.0 and r[1] == 3.0 and r[2] == 2.0)
+    r = a / 0.0
+    check('__truediv__ div by zero', math.isnan(r[0]))
+    r = 0.0 / a
+    check('__rtruediv__ zero numerator', r[0] == 0.0)
+
+def test_dunder_notimplemented():
+    a = DoubleColumn(); a.append(1.0)
+    check('__add__ NotImplemented', type(a).__add__(a, "x") is NotImplemented)
+    check('__sub__ NotImplemented', type(a).__sub__(a, "x") is NotImplemented)
+    check('__mul__ NotImplemented', type(a).__mul__(a, "x") is NotImplemented)
+    check('__truediv__ NotImplemented', type(a).__truediv__(a, "x") is NotImplemented)
+    check('__rsub__ NotImplemented', type(a).__rsub__(a, "x") is NotImplemented)
+    check('__rtruediv__ NotImplemented', type(a).__rtruediv__(a, "x") is NotImplemented)
+
 def run_all():
     print('=== DoubleColumn Tests ===')
     test_empty()
@@ -232,6 +289,11 @@ def run_all():
     test_growth()
     test_comparison()
     test_bitwise()
+    test_dunder_add()
+    test_dunder_sub()
+    test_dunder_mul()
+    test_dunder_div()
+    test_dunder_notimplemented()
     print(f'\nResults: {passed} passed, {failed} failed')
     if failed: sys.exit(1)
 

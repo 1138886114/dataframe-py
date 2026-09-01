@@ -463,8 +463,10 @@ def where(IntColumn cond, object true_val, object false_val):
     cdef Py_ssize_t n = cond.length
     cdef Py_ssize_t i
     cdef int* cond_ptr = cond.data_c
+    cdef double v_t, v_f
+    cdef double* res_ptr
+    cdef DoubleColumn res_dbl
 
-    # 场景 1: 双字符串标量 ('positive', 'negative')
     if isinstance(true_val, str) and isinstance(false_val, str):
         res_str = UCS2Column_SoA(max(n, 1))
         res_str.length = n
@@ -475,19 +477,17 @@ def where(IntColumn cond, object true_val, object false_val):
                 res_str._set_item(i, false_val)
         return res_str
 
-    # 场景 2: 双数值标量 (10.0, -1.0)
     elif isinstance(true_val, (int, float)) and isinstance(false_val, (int, float)):
         res_dbl = DoubleColumn(max(n, 1))
         res_dbl.length = n
-        cdef double v_t = <double>true_val
-        cdef double v_f = <double>false_val
-        cdef double* res_ptr = res_dbl.data_c
+        v_t = <double>true_val
+        v_f = <double>false_val
+        res_ptr = res_dbl.data_c
         with nogil:
             for i in range(n):
                 res_ptr[i] = v_t if cond_ptr[i] else v_f
         return res_dbl
 
-    # 场景 3: 掩码覆盖法 (列与标量)
     elif type(true_val).__name__ in ('DoubleColumn', 'IntColumn'):
         return true_val.mask(~cond, false_val)
 

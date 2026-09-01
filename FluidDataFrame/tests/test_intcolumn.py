@@ -2,6 +2,7 @@ import math
 import sys
 sys.path.insert(0, '..')
 from fluidframe.core.intcolumn import IntColumn
+from fluidframe.core.doublecolumn import DoubleColumn
 
 passed = 0
 failed = 0
@@ -269,6 +270,63 @@ def test_bitwise():
     m_not = ~m1
     check('invert', [m_not[i] for i in range(m_not.length)] == [0, 0, 1, 0])
 
+def test_dunder_add():
+    a = IntColumn(); a.append(1); a.append(2); a.append(3)
+    b = IntColumn(); b.append(10); b.append(20); b.append(30)
+    r = a + b
+    check('__add__ col-col', r[0] == 11 and r[1] == 22 and r[2] == 33)
+    r = a + 5
+    check('__add__ scalar', r[0] == 6 and r[1] == 7 and r[2] == 8)
+    r = 100 + a
+    check('__radd__ scalar', r[0] == 101 and r[1] == 102 and r[2] == 103)
+    a_d = DoubleColumn(); a_d.append(1.5); a_d.append(2.5)
+    b_i = IntColumn(); b_i.append(10); b_i.append(20)
+    r = a_d + b_i
+    check('__radd__ double+int', r[0] == 11.5 and r[1] == 22.5)
+
+def test_dunder_sub():
+    a = IntColumn(); a.append(10); a.append(20); a.append(30)
+    b = IntColumn(); b.append(1); b.append(2); b.append(3)
+    r = a - b
+    check('__sub__ col-col', r[0] == 9 and r[1] == 18 and r[2] == 27)
+    r = a - 5
+    check('__sub__ scalar', r[0] == 5 and r[1] == 15 and r[2] == 25)
+    r = 100 - a
+    check('__rsub__ scalar', r[0] == 90 and r[1] == 80 and r[2] == 70)
+
+def test_dunder_mul():
+    a = IntColumn(); a.append(2); a.append(3); a.append(4)
+    b = IntColumn(); b.append(10); b.append(20); b.append(30)
+    r = a * b
+    check('__mul__ col-col', r[0] == 20 and r[1] == 60 and r[2] == 120)
+    r = a * 3
+    check('__mul__ scalar', r[0] == 6 and r[1] == 9 and r[2] == 12)
+    r = 3 * a
+    check('__rmul__ scalar', r[0] == 6 and r[1] == 9 and r[2] == 12)
+
+def test_dunder_div():
+    a = IntColumn(); a.append(10); a.append(20); a.append(30)
+    b = IntColumn(); b.append(2); b.append(4); b.append(5)
+    r = a / b
+    check('__truediv__ col-col', r[0] == 5.0 and r[1] == 5.0 and r[2] == 6.0)
+    r = a / 3
+    check('__truediv__ scalar', abs(r[0] - 10.0/3) < 1e-9 and abs(r[1] - 20.0/3) < 1e-9 and r[2] == 10.0)
+    r = 60 / a
+    check('__rtruediv__ scalar', r[0] == 6.0 and r[1] == 3.0 and r[2] == 2.0)
+    r = a / 0
+    check('__truediv__ div by zero', math.isnan(r[0]))
+    r = 0 / a
+    check('__rtruediv__ zero numerator', r[0] == 0.0)
+
+def test_dunder_notimplemented():
+    a = IntColumn(); a.append(1)
+    check('__add__ NotImplemented', type(a).__add__(a, "x") is NotImplemented)
+    check('__sub__ NotImplemented', type(a).__sub__(a, "x") is NotImplemented)
+    check('__mul__ NotImplemented', type(a).__mul__(a, "x") is NotImplemented)
+    check('__truediv__ NotImplemented', type(a).__truediv__(a, "x") is NotImplemented)
+    check('__rsub__ NotImplemented', type(a).__rsub__(a, "x") is NotImplemented)
+    check('__rtruediv__ NotImplemented', type(a).__rtruediv__(a, "x") is NotImplemented)
+
 def run_all():
     print('=== IntColumn Tests ===')
     test_empty()
@@ -303,6 +361,11 @@ def run_all():
     test_reorder()
     test_comparison()
     test_bitwise()
+    test_dunder_add()
+    test_dunder_sub()
+    test_dunder_mul()
+    test_dunder_div()
+    test_dunder_notimplemented()
     print(f'\nResults: {passed} passed, {failed} failed')
     if failed: sys.exit(1)
 

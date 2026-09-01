@@ -675,7 +675,6 @@ cdef class FastDataFrame:
         # 依赖 eval 引擎求值出掩码列 (IntColumn)
         mask = self.eval(expr)
 
-        from fluidframe.core.intcolumn cimport IntColumn
         if not type(mask).__name__ in ('IntColumn', 'BoolColumn'):
             raise TypeError("Query expression must evaluate to a boolean mask (IntColumn or BoolColumn)")
 

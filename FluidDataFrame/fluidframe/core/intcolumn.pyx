@@ -731,6 +731,87 @@ cdef class IntColumn(BaseColumn):
             raise TypeError(f"Unsupported type for div: {type(other)}")
         return res
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def __add__(self, object other):
+        if isinstance(other, int):
+            return self.add_val(other)
+        if isinstance(other, (IntColumn, DoubleColumn)):
+            return self.add(other)
+        return NotImplemented
+
+    def __radd__(self, object other):
+        return self.__add__(other)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def __sub__(self, object other):
+        if isinstance(other, int):
+            return self.sub_val(other)
+        if isinstance(other, (IntColumn, DoubleColumn)):
+            return self.sub(other)
+        return NotImplemented
+
+    def __rsub__(self, object other):
+        cdef Py_ssize_t n = self.length
+        cdef IntColumn res
+        cdef int v
+        cdef int* s_ptr
+        cdef int* r_ptr
+        cdef Py_ssize_t i
+        if isinstance(other, int):
+            v = <int>other
+            res = IntColumn(self.capacity)
+            res.length = n
+            s_ptr = self.data_c
+            r_ptr = res.data_c
+            with nogil:
+                for i in range(n): r_ptr[i] = v - s_ptr[i]
+            return res
+        return NotImplemented
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def __mul__(self, object other):
+        if isinstance(other, int):
+            return self.mul_val(other)
+        if isinstance(other, (IntColumn, DoubleColumn)):
+            return self.mul(other)
+        return NotImplemented
+
+    def __rmul__(self, object other):
+        return self.__mul__(other)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def __truediv__(self, object other):
+        if isinstance(other, int):
+            return self.div_val(other)
+        if isinstance(other, (IntColumn, DoubleColumn)):
+            return self.div(other)
+        return NotImplemented
+
+    def __rtruediv__(self, object other):
+        cdef Py_ssize_t n = self.length
+        cdef DoubleColumn res
+        cdef double v
+        cdef int* s_ptr
+        cdef double* r_ptr
+        cdef Py_ssize_t i
+        cdef int s_val
+        if isinstance(other, int):
+            res = DoubleColumn(self.capacity)
+            res.length = n
+            v = <double>other
+            s_ptr = self.data_c
+            r_ptr = res.data_c
+            with nogil:
+                for i in range(n):
+                    s_val = s_ptr[i]
+                    r_ptr[i] = v / <double>s_val if s_val != 0 else NAN
+            return res
+        return NotImplemented
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _reorder(self, list indices):
