@@ -573,6 +573,47 @@ cdef class DoubleColumn(BaseColumn):
         self._central_moments(&m, &m2, &m3, &m4)
         return sqrt(m2 / ((<double>self.length - 1) * <double>self.length))
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def count(self):
+        return self.length
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def kurtosis(self):
+        return self.kurt()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cumprod(self):
+        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1))
+        res.length = self.length
+        cdef double total = 1
+        cdef double* ptr = self.data_c
+        cdef double* res_ptr = res.data_c
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(self.length):
+                total *= ptr[i]
+                res_ptr[i] = total
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def describe(self):
+        if self.length == 0:
+            return {"count": 0, "mean": NAN, "std": NAN, "min": NAN,
+                    "25%": NAN, "50%": NAN, "75%": NAN, "max": NAN}
+        cdef double m = self.mean()
+        cdef double s = self.std()
+        cdef double mn = self.min()
+        cdef double mx = self.max()
+        cdef double q25 = self.quantile(0.25)
+        cdef double q50 = self.quantile(0.5)
+        cdef double q75 = self.quantile(0.75)
+        return {"count": self.length, "mean": m, "std": s, "min": mn,
+                "25%": q25, "50%": q50, "75%": q75, "max": mx}
+
     cdef double _sum_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
         cdef double total = 0
         cdef Py_ssize_t i

@@ -1321,6 +1321,86 @@ cdef class FastDataFrame:
                 }
         return stats
 
+    def _numeric_agg(self, str method):
+        cdef dict result = {}
+        cdef str name
+        cdef object col
+        for name, col in self.columns.items():
+            if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+                result[name] = getattr(col, method)()
+        return result
+
+    def _numeric_agg_arg(self, str method, arg):
+        cdef dict result = {}
+        cdef str name
+        cdef object col
+        for name, col in self.columns.items():
+            if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+                result[name] = getattr(col, method)(arg)
+        return result
+
+    def mean(self):
+        return self._numeric_agg('mean')
+
+    def median(self):
+        return self._numeric_agg('median')
+
+    def mode(self):
+        cdef dict result = {}
+        cdef str name
+        cdef object col
+        for name, col in self.columns.items():
+            if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+                result[name] = col.mode()
+        return result
+
+    def std(self):
+        return self._numeric_agg('std')
+
+    def var(self):
+        return self._numeric_agg('var')
+
+    def max(self):
+        return self._numeric_agg('max')
+
+    def min(self):
+        return self._numeric_agg('min')
+
+    def sum(self):
+        return self._numeric_agg('sum')
+
+    def count(self):
+        cdef dict result = {}
+        cdef str name
+        cdef object col
+        for name, col in self.columns.items():
+            result[name] = col.length
+        return result
+
+    def quantile(self, double q):
+        return self._numeric_agg_arg('quantile', q)
+
+    def skew(self):
+        return self._numeric_agg('skew')
+
+    def kurt(self):
+        return self._numeric_agg('kurt')
+
+    def kurtosis(self):
+        return self._numeric_agg('kurt')
+
+    def cumsum(self):
+        return self._numeric_agg('cumsum')
+
+    def cumprod(self):
+        return self._numeric_agg('cumprod')
+
+    def cummax(self):
+        return self._numeric_agg('cummax')
+
+    def cummin(self):
+        return self._numeric_agg('cummin')
+
     @cython.binding(False)
     def isnull(self):
         cdef FastDataFrame result = FastDataFrame()
