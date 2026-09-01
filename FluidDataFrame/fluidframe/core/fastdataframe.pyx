@@ -1321,6 +1321,8 @@ cdef class FastDataFrame:
                 }
         return stats
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def _numeric_agg(self, str method):
         cdef dict result = {}
         cdef str name
@@ -1330,6 +1332,8 @@ cdef class FastDataFrame:
                 result[name] = getattr(col, method)()
         return result
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def _numeric_agg_arg(self, str method, arg):
         cdef dict result = {}
         cdef str name
@@ -1339,12 +1343,18 @@ cdef class FastDataFrame:
                 result[name] = getattr(col, method)(arg)
         return result
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mean(self):
         return self._numeric_agg('mean')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def median(self):
         return self._numeric_agg('median')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mode(self):
         cdef dict result = {}
         cdef str name
@@ -1354,21 +1364,33 @@ cdef class FastDataFrame:
                 result[name] = col.mode()
         return result
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def std(self):
         return self._numeric_agg('std')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def var(self):
         return self._numeric_agg('var')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def max(self):
         return self._numeric_agg('max')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def min(self):
         return self._numeric_agg('min')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sum(self):
         return self._numeric_agg('sum')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def count(self):
         cdef dict result = {}
         cdef str name
@@ -1377,27 +1399,43 @@ cdef class FastDataFrame:
             result[name] = col.length
         return result
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def quantile(self, double q):
         return self._numeric_agg_arg('quantile', q)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def skew(self):
         return self._numeric_agg('skew')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def kurt(self):
         return self._numeric_agg('kurt')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def kurtosis(self):
         return self._numeric_agg('kurt')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cumsum(self):
         return self._numeric_agg('cumsum')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cumprod(self):
         return self._numeric_agg('cumprod')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cummax(self):
         return self._numeric_agg('cummax')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cummin(self):
         return self._numeric_agg('cummin')
 
