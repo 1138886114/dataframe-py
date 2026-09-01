@@ -27,6 +27,7 @@ from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
+from fluidframe.core.char256_str_accessor import StringAccessor_Char256
 
 cdef inline bint _c_str_contains(char* source, const char* target) noexcept nogil:
     return strstr(source, target) != NULL
@@ -48,6 +49,47 @@ cdef inline void _c_str_replace_inplace(char* buffer, const char* old_sub, const
         if new_len > 0:
             memcpy(match, new_sub, new_len)
         match = strstr(match + new_len, old_sub)
+
+cdef inline Py_ssize_t _c_find(char *data, char *pat, Py_ssize_t pat_len) noexcept nogil:
+    cdef Py_ssize_t i, n = <Py_ssize_t>strlen(data)
+    if pat_len > n:
+        return -1
+    cdef Py_ssize_t limit = n - pat_len + 1
+    for i in range(limit):
+        if strncmp(&data[i], pat, pat_len) == 0:
+            return i
+    return -1
+
+cdef inline Py_ssize_t _c_rfind(char *data, char *pat, Py_ssize_t pat_len) noexcept nogil:
+    cdef Py_ssize_t i, n = <Py_ssize_t>strlen(data)
+    if pat_len > n:
+        return -1
+    cdef Py_ssize_t limit = n - pat_len + 1
+    for i in range(limit - 1, -1, -1):
+        if strncmp(&data[i], pat, pat_len) == 0:
+            return i
+    return -1
+
+cdef inline Py_ssize_t _c_count(char *data, char *pat, Py_ssize_t pat_len) noexcept nogil:
+    cdef Py_ssize_t cnt = 0, i, n = <Py_ssize_t>strlen(data)
+    if pat_len == 0 or pat_len > n:
+        return 0
+    cdef Py_ssize_t limit = n - pat_len + 1
+    for i in range(limit):
+        if strncmp(&data[i], pat, pat_len) == 0:
+            cnt += 1
+    return cnt
+
+cdef inline int _c_startswith(char *data, char *pat, Py_ssize_t pat_len) noexcept nogil:
+    if <Py_ssize_t>strlen(data) < pat_len:
+        return 0
+    return strncmp(data, pat, pat_len) == 0
+
+cdef inline int _c_endswith(char *data, char *pat, Py_ssize_t pat_len) noexcept nogil:
+    cdef Py_ssize_t n = <Py_ssize_t>strlen(data)
+    if n < pat_len:
+        return 0
+    return strncmp(&data[n - pat_len], pat, pat_len) == 0
 
 @cython.final
 @cython.boundscheck(False)
@@ -260,38 +302,76 @@ cdef class Char256Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def startswith(self, str prefix):
-        cdef bytes b_pre = prefix.encode('ascii')
-        cdef const char* c_pre = b_pre
-        cdef Py_ssize_t pre_len = strlen(c_pre)
+    def startswith(self, prefix):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
-        cdef Py_ssize_t i
-        with nogil:
+        cdef Py_ssize_t i, j, plen
+        cdef bytes pbytes
+        cdef char* slot
+
+        if isinstance(prefix, list):
             for i in range(self.length):
-                out_ptr[i] = 1 if strncmp(data + i * 256, c_pre, pre_len) == 0 else 0
+                s = self._get_str(i)
+                matched = False
+                for p in prefix:
+                    if s.startswith(p):
+                        matched = True
+                        break
+                out_ptr[i] = 1 if matched else 0
+            return res
+
+        if isinstance(prefix, str):
+            pbytes = prefix.encode('ascii', errors='ignore')
+            plen = len(pbytes)
+            for i in range(self.length):
+                slot = data + (i * 256)
+                out_ptr[i] = _c_startswith(slot, pbytes, plen)
+        else:
+            prefix_str = str(prefix)
+            pbytes = prefix_str.encode('ascii', errors='ignore')
+            plen = len(pbytes)
+            for i in range(self.length):
+                slot = data + (i * 256)
+                out_ptr[i] = _c_startswith(slot, pbytes, plen)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def endswith(self, str suffix):
-        cdef bytes b_suf = suffix.encode('ascii')
-        cdef const char* c_suf = b_suf
-        cdef Py_ssize_t suf_len = strlen(c_suf)
+    def endswith(self, suffix):
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
-        cdef Py_ssize_t i, curr_len
-        with nogil:
+        cdef Py_ssize_t i, j, slen
+        cdef bytes sbytes
+        cdef char* slot
+
+        if isinstance(suffix, list):
             for i in range(self.length):
-                curr_len = strlen(data + i * 256)
-                if curr_len >= suf_len and strncmp(data + i * 256 + curr_len - suf_len, c_suf, suf_len) == 0:
-                    out_ptr[i] = 1
-                else:
-                    out_ptr[i] = 0
+                s = self._get_str(i)
+                matched = False
+                for p in suffix:
+                    if s.endswith(p):
+                        matched = True
+                        break
+                out_ptr[i] = 1 if matched else 0
+            return res
+
+        if isinstance(suffix, str):
+            sbytes = suffix.encode('ascii', errors='ignore')
+            slen = len(sbytes)
+            for i in range(self.length):
+                slot = data + (i * 256)
+                out_ptr[i] = _c_endswith(slot, sbytes, slen)
+        else:
+            suffix_str = str(suffix)
+            sbytes = suffix_str.encode('ascii', errors='ignore')
+            slen = len(sbytes)
+            for i in range(self.length):
+                slot = data + (i * 256)
+                out_ptr[i] = _c_endswith(slot, sbytes, slen)
         return res
 
     @cython.binding(False)
@@ -633,6 +713,348 @@ cdef class Char256Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
+    def rfind(self, str substring):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef bytes b_sub = substring.encode('ascii')
+        cdef Py_ssize_t sub_len = len(b_sub)
+        cdef char* ptr
+        cdef Py_ssize_t curr_len
+        cdef Py_ssize_t n = self.length
+        cdef char* data = self.data_c
+        cdef Py_ssize_t j, k
+        cdef bint bmatch
+
+        if sub_len == 0:
+            for i in range(n):
+                out_ptr[i] = <int>strlen(data + i * 256)
+            return res
+
+        cdef char* c_sub = <char*>aligned_malloc(sub_len + 1)
+        if not c_sub: raise MemoryError()
+        memcpy(c_sub, <const char*>b_sub, sub_len)
+        c_sub[sub_len] = 0
+
+        for i in range(n):
+            ptr = data + i * 256
+            curr_len = strlen(ptr)
+            out_ptr[i] = -1
+            if sub_len <= curr_len:
+                for j in range(curr_len - sub_len, -1, -1):
+                    bmatch = True
+                    for k in range(sub_len):
+                        if ptr[j + k] != c_sub[k]:
+                            bmatch = False
+                            break
+                    if bmatch:
+                        out_ptr[i] = <int>j
+                        break
+
+        os_aligned_free(c_sub)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def rindex(self, str substring):
+        cdef IntColumn res = self.rfind(substring)
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            if out_ptr[i] == -1:
+                raise ValueError(f"substring '{substring}' not found")
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def match(self, str pattern):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        for i in range(self.length):
+            out_ptr[i] = 1 if compiled.match(self._get_str(i)) is not None else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def fullmatch(self, str pattern):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        for i in range(self.length):
+            out_ptr[i] = 1 if compiled.fullmatch(self._get_str(i)) is not None else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def isnumeric(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.isnumeric() else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def isdecimal(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.isdecimal() else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def title(self):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).title())
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def capitalize(self):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).capitalize())
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def swapcase(self):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).swapcase())
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def casefold(self):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).casefold())
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def center(self, int width, str fillchar=' '):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).center(width, fillchar))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ljust(self, int width, str fillchar=' '):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).ljust(width, fillchar))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def rjust(self, int width, str fillchar=' '):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).rjust(width, fillchar))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pad(self, int width, str side='left', str fillchar=' '):
+        if side == 'left':
+            return self.rjust(width, fillchar)
+        elif side == 'right':
+            return self.ljust(width, fillchar)
+        elif side == 'both':
+            return self.center(width, fillchar)
+        raise ValueError(f"Invalid side: '{side}'")
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def rsplit(self, str sep=None, int maxsplit=-1):
+        cdef list res = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            s = self._get_str(i)
+            if maxsplit >= 0:
+                res.append(s.rsplit(sep, maxsplit))
+            else:
+                res.append(s.rsplit(sep))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def partition(self, str sep):
+        cdef list res = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).partition(sep))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def rpartition(self, str sep):
+        cdef list res = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).rpartition(sep))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def get(self, int index, str default=''):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self._get_str(i)
+            if 0 <= index < len(s):
+                res.append(s[index])
+            else:
+                res.append(default)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def slice(self, int start=0, int stop=-1, int step=1):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            s = self._get_str(i)
+            if stop < 0:
+                res.append(s[start::step] if step != 0 else s[start:stop:step])
+            else:
+                res.append(s[start:stop:step])
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cat(self, other, str sep=''):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i, n = self.length
+        if isinstance(other, Char256Column_SoA):
+            other_cc = <Char256Column_SoA>other
+            if other_cc.length != n:
+                raise ValueError(f"Length mismatch: {n} vs {other_cc.length}")
+            for i in range(n):
+                if sep:
+                    res.append(self._get_str(i) + sep + other_cc._get_str(i))
+                else:
+                    res.append(self._get_str(i) + other_cc._get_str(i))
+        elif isinstance(other, list):
+            if len(other) != n:
+                raise ValueError(f"Length mismatch: {n} vs {len(other)}")
+            for i in range(n):
+                if sep:
+                    res.append(self._get_str(i) + sep + str(other[i]))
+                else:
+                    res.append(self._get_str(i) + str(other[i]))
+        else:
+            for i in range(n):
+                if sep:
+                    res.append(self._get_str(i) + sep + str(other))
+                else:
+                    res.append(self._get_str(i) + str(other))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def prefix(self, str pre):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(pre + self._get_str(i))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def suffix(self, str suf):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i) + suf)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def repeat(self, int repeats):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i) * repeats)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def findall(self, str pattern):
+        import re
+        cdef list res = []
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        for i in range(self.length):
+            res.append(compiled.findall(self._get_str(i)))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def extract(self, str pattern, int group=1):
+        cdef Char256Column_SoA res = Char256Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        cdef str s, val
+        for i in range(self.length):
+            s = self._get_str(i)
+            m = compiled.search(s)
+            if m is not None:
+                try:
+                    val = m.group(group)
+                except IndexError:
+                    val = ''
+                res.append(val if val is not None else '')
+            else:
+                res.append('')
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def extractall(self, str pattern, int group=1):
+        import re
+        cdef list res = []
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        for i in range(self.length):
+            matches = []
+            for m in compiled.finditer(self._get_str(i)):
+                try:
+                    val = m.group(group)
+                except IndexError:
+                    val = ''
+                if val is not None:
+                    matches.append(val)
+            res.append(matches)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self):
         cdef set seen = set()
         cdef list result = []
@@ -785,6 +1207,10 @@ cdef class Char256Column_SoA(BaseColumn):
             dest[i * 256 + 255] = 0
         return col
 
+    @property
+    def str(self):
+        return StringAccessor_Char256(self)
+
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __str__(self):
@@ -910,3 +1336,60 @@ cdef class Char256Column_SoA(BaseColumn):
         elif target_type == TYPE_CHAR256:
             return self.copy()
         raise TypeError(f"Failed to cast CHAR256 column to internal type id: {target_type}")
+
+    def str_split(self, sep=None, int maxsplit=-1):
+        cdef list res = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            s = self._get_str(i)
+            if maxsplit >= 0:
+                res.append(s.split(sep, maxsplit))
+            else:
+                res.append(s.split(sep))
+        return res
+
+    def str_getitem(self, key):
+        cdef list res = []
+        cdef Py_ssize_t i
+        cdef str s
+        if isinstance(key, int):
+            idx = key
+            for i in range(self.length):
+                s = self._get_str(i)
+                if idx < 0:
+                    idx_abs = len(s) + idx
+                else:
+                    idx_abs = idx
+                if 0 <= idx_abs < len(s):
+                    res.append(s[idx_abs])
+                else:
+                    res.append('')
+            col = Char256Column_SoA(max(self.length, 1))
+            for v in res:
+                col.append(v)
+            return col
+        elif isinstance(key, slice):
+            for i in range(self.length):
+                s = self._get_str(i)
+                res.append(s[key])
+            col = Char256Column_SoA(max(self.length, 1))
+            for v in res:
+                col.append(v)
+            return col
+        raise TypeError(f"Invalid index type: {type(key)}")
+
+    def str_contains_mask(self, object pat):
+        cdef IntColumn res = IntColumn(max(self.capacity, 1))
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef object compiled
+        if isinstance(pat, str):
+            compiled = re.compile(pat)
+        elif hasattr(pat, 'search'):
+            compiled = pat
+        else:
+            compiled = re.compile(str(pat))
+        for i in range(self.length):
+            out_ptr[i] = 1 if compiled.search(self._get_str(i)) is not None else 0
+        return res

@@ -17,6 +17,8 @@ extensions = [
     Extension("fluidframe.core.fastdataframe", ["fluidframe/core/fastdataframe.pyx"]),
     Extension("fluidframe.core.groupby", ["fluidframe/core/groupby.pyx"], language="c++"),
     Extension("fluidframe.core.linalg", ["fluidframe/core/linalg.pyx"]),
+    Extension("fluidframe.core.ucs2_str_accessor", ["fluidframe/core/ucs2_str_accessor.pyx"]),
+    Extension("fluidframe.core.char256_str_accessor", ["fluidframe/core/char256_str_accessor.pyx"]),
     Extension("fluidframe.core.fluidframe", ["fluidframe/core/fluidframe.pyx"]),
 ]
 

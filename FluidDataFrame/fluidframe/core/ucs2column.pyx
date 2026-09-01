@@ -18,6 +18,7 @@ from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
+from fluidframe.core.ucs2_str_accessor import StringAccessor_UCS2
 
 from cpython.unicode cimport (
     PyUnicode_1BYTE_KIND, PyUnicode_2BYTE_KIND, PyUnicode_4BYTE_KIND,
@@ -603,6 +604,388 @@ cdef class UCS2Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
+    def rfind(self, str substring):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i, start, str_len
+        cdef Py_ssize_t sub_len = PyUnicode_GET_LENGTH(substring)
+
+        if sub_len == 0:
+            for i in range(self.length):
+                start = self.offsets_c[i]
+                out_ptr[i] = <int>(self.offsets_c[i + 1] - start)
+            return res
+
+        cdef Py_UCS2* n_buf = <Py_UCS2*>aligned_malloc(sub_len * sizeof(Py_UCS2))
+        if not n_buf: raise MemoryError()
+        _copy_py_str_to_ucs2(substring, n_buf, sub_len)
+
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_UCS2* chars = self.chars_c
+        cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t j, k
+        cdef bint bmatch
+
+        for i in range(n):
+            start = offs[i]
+            str_len = offs[i+1] - start
+            out_ptr[i] = -1
+            if sub_len <= str_len:
+                for j in range(str_len - sub_len, -1, -1):
+                    bmatch = True
+                    for k in range(sub_len):
+                        if chars[start + j + k] != n_buf[k]:
+                            bmatch = False
+                            break
+                    if bmatch:
+                        out_ptr[i] = <int>j
+                        break
+
+        os_aligned_free(n_buf)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def rindex(self, str substring):
+        cdef IntColumn res = self.rfind(substring)
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            if out_ptr[i] == -1:
+                raise ValueError(f"substring '{substring}' not found")
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def title(self):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).title())
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def capitalize(self):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).capitalize())
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def swapcase(self):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).swapcase())
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def casefold(self):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).casefold())
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def islower(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.islower() else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def isupper(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.isupper() else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def isnumeric(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.isnumeric() else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def isdecimal(self):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self._get_str(i)
+            out_ptr[i] = 1 if len(s) > 0 and s.isdecimal() else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def match(self, str pattern):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        cdef str s
+        for i in range(self.length):
+            s = self._get_str(i)
+            out_ptr[i] = 1 if compiled.match(s) is not None else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def fullmatch(self, str pattern):
+        cdef IntColumn res = IntColumn(self.capacity)
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        cdef str s
+        for i in range(self.length):
+            s = self._get_str(i)
+            out_ptr[i] = 1 if compiled.fullmatch(s) is not None else 0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def center(self, int width, str fillchar=' '):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).center(width, fillchar))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ljust(self, int width, str fillchar=' '):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).ljust(width, fillchar))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def rjust(self, int width, str fillchar=' '):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).rjust(width, fillchar))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pad(self, int width, str side='left', str fillchar=' '):
+        if side == 'left':
+            return self.rjust(width, fillchar)
+        elif side == 'right':
+            return self.ljust(width, fillchar)
+        elif side == 'both':
+            return self.center(width, fillchar)
+        raise ValueError(f"Invalid side: '{side}'")
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def zfill(self, int width):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).zfill(width))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def rsplit(self, str sep=None, int maxsplit=-1):
+        cdef list res = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            s = self._get_str(i)
+            if maxsplit >= 0:
+                res.append(s.rsplit(sep, maxsplit))
+            else:
+                res.append(s.rsplit(sep))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def partition(self, str sep):
+        cdef list res = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).partition(sep))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def rpartition(self, str sep):
+        cdef list res = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i).rpartition(sep))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def get(self, int index, str default=''):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self._get_str(i)
+            if 0 <= index < len(s):
+                res.append(s[index])
+            else:
+                res.append(default)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def slice(self, int start=0, int stop=-1, int step=1):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            s = self._get_str(i)
+            if stop < 0:
+                res.append(s[start::step] if step != 0 else s[start:stop:step])
+            else:
+                res.append(s[start:stop:step])
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cat(self, other, str sep=''):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i, n = self.length
+        if isinstance(other, UCS2Column_SoA):
+            other_uc = <UCS2Column_SoA>other
+            if other_uc.length != n:
+                raise ValueError(f"Length mismatch: {n} vs {other_uc.length}")
+            for i in range(n):
+                if sep:
+                    res.append(self._get_str(i) + sep + other_uc._get_str(i))
+                else:
+                    res.append(self._get_str(i) + other_uc._get_str(i))
+        elif isinstance(other, list):
+            if len(other) != n:
+                raise ValueError(f"Length mismatch: {n} vs {len(other)}")
+            for i in range(n):
+                if sep:
+                    res.append(self._get_str(i) + sep + str(other[i]))
+                else:
+                    res.append(self._get_str(i) + str(other[i]))
+        else:
+            for i in range(n):
+                if sep:
+                    res.append(self._get_str(i) + sep + str(other))
+                else:
+                    res.append(self._get_str(i) + str(other))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def prefix(self, str pre):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(pre + self._get_str(i))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def suffix(self, str suf):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i) + suf)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def repeat(self, int repeats):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            res.append(self._get_str(i) * repeats)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def findall(self, str pattern):
+        import re
+        cdef list res = []
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        for i in range(self.length):
+            res.append(compiled.findall(self._get_str(i)))
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def extract(self, str pattern, int group=1):
+        cdef UCS2Column_SoA res = UCS2Column_SoA(self.capacity)
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        cdef str s, val
+        for i in range(self.length):
+            s = self._get_str(i)
+            m = compiled.search(s)
+            if m is not None:
+                try:
+                    val = m.group(group)
+                except IndexError:
+                    val = ''
+                res.append(val if val is not None else '')
+            else:
+                res.append('')
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def extractall(self, str pattern, int group=1):
+        import re
+        cdef list res = []
+        cdef Py_ssize_t i
+        cdef object compiled = re.compile(pattern)
+        for i in range(self.length):
+            matches = []
+            for m in compiled.finditer(self._get_str(i)):
+                try:
+                    val = m.group(group)
+                except IndexError:
+                    val = ''
+                if val is not None:
+                    matches.append(val)
+            res.append(matches)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self):
         cdef set seen = set()
         cdef list result = []
@@ -780,6 +1163,10 @@ cdef class UCS2Column_SoA(BaseColumn):
             else:
                 col.append(fill_str)
         return col
+
+    @property
+    def str(self):
+        return StringAccessor_UCS2(self)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -966,3 +1353,44 @@ cdef class UCS2Column_SoA(BaseColumn):
         cdef char err_buf[128]
         snprintf(err_buf, sizeof(err_buf), "Failed to cast UCS2 column to internal type id: %d", target_type)
         raise TypeError(err_buf.decode('ascii'))
+
+    def str_split(self, sep=None, int maxsplit=-1):
+        cdef list res = []
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            s = self._get_str(i)
+            if maxsplit >= 0:
+                res.append(s.split(sep, maxsplit))
+            else:
+                res.append(s.split(sep))
+        return res
+
+    def str_getitem(self, key):
+        cdef list res = []
+        cdef Py_ssize_t i
+        cdef str s
+        if isinstance(key, int):
+            idx = key
+            for i in range(self.length):
+                s = self._get_str(i)
+                if idx < 0:
+                    idx_abs = len(s) + idx
+                else:
+                    idx_abs = idx
+                if 0 <= idx_abs < len(s):
+                    res.append(s[idx_abs])
+                else:
+                    res.append('')
+            col = UCS2Column_SoA(max(self.length, 1))
+            for v in res:
+                col.append(v)
+            return col
+        elif isinstance(key, slice):
+            for i in range(self.length):
+                s = self._get_str(i)
+                res.append(s[key])
+            col = UCS2Column_SoA(max(self.length, 1))
+            for v in res:
+                col.append(v)
+            return col
+        raise TypeError(f"Invalid index type: {type(key)}")
