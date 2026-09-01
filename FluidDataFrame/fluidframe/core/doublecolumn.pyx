@@ -71,6 +71,25 @@ cdef double _c_cov(double* a, double* b, Py_ssize_t n) noexcept nogil:
         cov_val += (a[k] - mean_i) * (b[k] - mean_j)
     return cov_val / n
 
+
+cdef void _col_to_double(object col, double* buf, Py_ssize_t n) except *:
+    cdef Py_ssize_t i
+    cdef int* int_data
+    cdef double* double_data
+
+    if isinstance(col, DoubleColumn):
+        double_data = (<DoubleColumn>col).data_c
+        if n > 0:
+            memcpy(buf, double_data, n * sizeof(double))
+    elif isinstance(col, IntColumn):
+        int_data = (<IntColumn>col).data_c
+        with nogil:
+            for i in range(n):
+                buf[i] = <double>int_data[i]
+    else:
+        raise TypeError("Expected IntColumn or DoubleColumn")
+
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -1266,6 +1285,26 @@ cdef class DoubleColumn(BaseColumn):
 
     cdef double cov_with(self, double* other, Py_ssize_t n):
         return _c_cov(self.data_c, other, n)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pearson_corr_with(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n < 2: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        _col_to_double(other, temp.data_c, n)
+        return self.corr_with(temp.data_c, n)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pearson_cov_with(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n < 2: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        _col_to_double(other, temp.data_c, n)
+        return self.cov_with(temp.data_c, n)
 
     cdef DoubleColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, double sentinel):
         cdef DoubleColumn new_col = DoubleColumn(max(n, 1))

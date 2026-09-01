@@ -2788,6 +2788,54 @@ cdef class FastDataFrame:
                         os_aligned_free(data[i])
                 os_aligned_free(data)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def corrwith(self, other):
+        cdef dict result = {}
+        cdef str name
+        cdef BaseColumn col
+        cdef Py_ssize_t n = self.df_length
+        cdef DoubleColumn temp, other_buf
+        if n == 0: return result
+
+        other_buf = DoubleColumn(max(n, 1))
+        other_buf.length = n
+        self._col_to_double_buffer(other, other_buf.data_c, n)
+
+        for name, col in self.columns.items():
+            if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+                temp = DoubleColumn(max(n, 1))
+                temp.length = n
+                self._col_to_double_buffer(col, temp.data_c, n)
+                result[name] = _c_corr(temp.data_c, other_buf.data_c, n)
+        return result
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def corrcoef(self, col_a, col_b):
+        cdef Py_ssize_t n = min(col_a.length, col_b.length)
+        if n < 2: return NAN
+        cdef DoubleColumn buf_a = DoubleColumn(max(n, 1))
+        cdef DoubleColumn buf_b = DoubleColumn(max(n, 1))
+        buf_a.length = n
+        buf_b.length = n
+        self._col_to_double_buffer(col_a, buf_a.data_c, n)
+        self._col_to_double_buffer(col_b, buf_b.data_c, n)
+        return _c_corr(buf_a.data_c, buf_b.data_c, n)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cov_withcols(self, col_a, col_b):
+        cdef Py_ssize_t n = min(col_a.length, col_b.length)
+        if n < 2: return NAN
+        cdef DoubleColumn buf_a = DoubleColumn(max(n, 1))
+        cdef DoubleColumn buf_b = DoubleColumn(max(n, 1))
+        buf_a.length = n
+        buf_b.length = n
+        self._col_to_double_buffer(col_a, buf_a.data_c, n)
+        self._col_to_double_buffer(col_b, buf_b.data_c, n)
+        return _c_cov(buf_a.data_c, buf_b.data_c, n)
+
 
     def value_counts(self, str col_name):
         if col_name not in self.columns:
