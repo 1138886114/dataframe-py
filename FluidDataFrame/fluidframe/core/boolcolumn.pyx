@@ -30,6 +30,7 @@ cdef tuple BOOL_STRS = ('False', 'True')
 @cython.nonecheck(False)
 @cython.initializedcheck(False)
 cdef class BoolColumn(BaseColumn):
+    @cython.always_allow_keywords(False)
     def __cinit__(self, Py_ssize_t capacity=0):
         self.dtype = TYPE_BOOL
         self.capacity = capacity if capacity > 0 else 0

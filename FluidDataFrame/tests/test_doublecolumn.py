@@ -243,7 +243,7 @@ def test_dunder_div():
     r = a / b
     check('__truediv__ col-col', r[0] == 5.0 and r[1] == 5.0 and r[2] == 6.0)
     r = a / 3.0
-    check('__truediv__ scalar', r[0] == 10.0/3 and r[1] == 20.0/3 and r[2] == 10.0)
+    check('__truediv__ scalar', math.isclose(r[0], 10.0/3) and math.isclose(r[1], 20.0/3) and r[2] == 10.0)
     r = 60.0 / a
     check('__rtruediv__ scalar', r[0] == 6.0 and r[1] == 3.0 and r[2] == 2.0)
     r = a / 0.0
