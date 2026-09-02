@@ -6,6 +6,7 @@
 # cython: initializedcheck=False
 
 cimport cython
+from libc.stdint cimport int32_t, uint32_t, int64_t
 from libc.string cimport memcpy, memmove, memset
 from libc.stdio cimport snprintf
 from libc.stdlib cimport malloc, free
@@ -24,7 +25,7 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
 # ============================================================
-#  静态查找表与常量结构（彻底消除 if-elif 分支与运行时计算）
+#  静态常量查找表（彻底消除分支预测失败）
 # ============================================================
 
 cdef struct NameEntry:
@@ -60,14 +61,10 @@ cdef NameEntry[13] _MONTH_NAMES = [
 cdef int[13] _MONTH_DAYS_NORMAL = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 cdef int[13] _DOY_CUMULATIVE_NORMAL = [0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
 
-# ------------------------------------------------------------
-# 核心算术优化：单次连除提取 Y/M/D，消除多余的 /100 和 %100 冗余运算
-# ------------------------------------------------------------
-cdef inline void _split_ymd(long long val, int* y, int* m, int* d) noexcept nogil:
-    cdef long long ym = val / 100
-    d[0] = <int>(val - ym * 100)
-    y[0] = <int>(ym / 100)
-    m[0] = <int>(ym - (<long long>y[0]) * 100)
+# ============================================================
+#  现代顶级历法算法 (Howard Hinnant Algorithm)
+#  专为 1970-01-01 纪元设计，无除法常数表、无循环、零分支
+# ============================================================
 
 cdef inline bint _is_leap_year(int y) noexcept nogil:
     return (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)
@@ -79,39 +76,50 @@ cdef inline int _days_in_month(int y, int m) noexcept nogil:
         return _MONTH_DAYS_NORMAL[m]
     return 30
 
-cdef inline long long _date_to_daynum(int y, int m, int d) noexcept nogil:
-    """将 YYYY-MM-DD 转换为连续日编号（基于标准天文学算法）"""
-    cdef int a, y2, m2
-    a = (14 - m) / 12
-    y2 = y + 4800 - a
-    m2 = m + 12 * a - 3
-    return d + (153 * m2 + 2) / 5 + 365 * y2 + y2 / 4 - y2 / 100 + y2 / 400 - 32045
+cdef inline int32_t _ymd_to_days(int y, int m, int d) noexcept nogil:
+    """YYYY-MM-DD -> 1970-01-01 起的天数 (Days since Unix Epoch)"""
+    y -= 1 if m <= 2 else 0
+    cdef int32_t era = (y if y >= 0 else y - 399) / 400
+    cdef uint32_t yoe = <uint32_t>(y - era * 400)
+    cdef uint32_t doy = (153 * (m + (9 if m > 2 else -3)) + 2) / 5 + d - 1
+    cdef uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return <int32_t>(era * 146097 + <int32_t>doe - 719468)
 
-cdef inline void _daynum_to_date(long long daynum, int* y, int* m, int* d) noexcept nogil:
-    """将连续日编号逆运算回 YYYY-MM-DD"""
-    cdef long long a, b, c, d2, e, m2
-    a = daynum + 32044
-    b = (4 * a + 3) / 146097
-    c = a - 146097 * b / 4
-    d2 = (4 * c + 3) / 1461
-    e = c - 1461 * d2 / 4
-    m2 = (5 * e + 2) / 153
-    d[0] = <int>(e - (153 * m2 + 2) / 5 + 1)
-    m[0] = <int>(m2 + 3 - 12 * (m2 / 10))
-    y[0] = <int>(100 * b + d2 - 4800 + m2 / 10)
+cdef inline void _days_to_ymd(int32_t days, int* y, int* m, int* d) noexcept nogil:
+    """1970-01-01 起的天数 -> YYYY-MM-DD"""
+    cdef int64_t z = days + 719468
+    cdef int64_t era = (z if z >= 0 else z - 146096) / 146097
+    cdef uint32_t doe = <uint32_t>(z - era * 146097)
+    cdef uint32_t yoe = (doe - doe / 1024 + doe / 1461 - doe / 146096) / 365
+    cdef int32_t y_val = <int32_t>yoe + <int32_t>(era * 400)
+    cdef uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    cdef uint32_t mp = (5 * doy + 2) / 153
+    d[0] = <int>(doy - (153 * mp + 2) / 5 + 1)
+    m[0] = <int>(mp + 3 if mp < 10 else mp - 9)
+    y[0] = <int>(y_val + (1 if m[0] <= 2 else 0))
 
-cdef inline long long _parse_date_str(str s) noexcept:
-    """极速解析 'YYYYMMDD' 或 'YYYY-MM-DD' 为整数 20260902"""
+cdef inline int32_t _parse_date_str(str s) noexcept:
+    """极速解析 'YYYYMMDD' 或 'YYYY-MM-DD' 字符串为 Unix 纪元天数"""
     cdef bytes b = s.encode('ascii', errors='ignore')
     cdef const unsigned char* buf = <const unsigned char*>b
-    cdef long long val = 0
-    cdef int i = 0, n = len(b)
-    while i < n:
+    cdef int digits[10]
+    cdef int nd = 0, i = 0, n = len(b)
+    while i < n and nd < 8:
         if buf[i] >= 48 and buf[i] <= 57:
-            val = val * 10 + (buf[i] - 48)
+            digits[nd] = buf[i] - 48
+            nd += 1
         i += 1
-    return val
+    if nd < 8:
+        return 0
+    cdef int y = digits[0] * 1000 + digits[1] * 100 + digits[2] * 10 + digits[3]
+    cdef int m = digits[4] * 10 + digits[5]
+    cdef int d = digits[6] * 10 + digits[7]
+    return _ymd_to_days(y, m, d)
 
+
+# ============================================================
+#  DateColumn 类实现
+# ============================================================
 
 @cython.final
 @cython.boundscheck(False)
@@ -126,7 +134,7 @@ cdef class DateColumn(BaseColumn):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_TIMESTAMP
-        self.data_c = <long long*>aligned_malloc(self.capacity * sizeof(long long))
+        self.data_c = <int32_t*>aligned_malloc(self.capacity * sizeof(int32_t))
         if not self.data_c:
             raise MemoryError()
 
@@ -138,20 +146,30 @@ cdef class DateColumn(BaseColumn):
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap <= self.capacity:
             return
-        cdef long long* new_ptr = <long long*>aligned_realloc(
-            self.data_c, self.capacity * sizeof(long long), new_cap * sizeof(long long))
+        cdef int32_t* new_ptr = <int32_t*>aligned_realloc(
+            self.data_c, self.capacity * sizeof(int32_t), new_cap * sizeof(int32_t))
         if not new_ptr:
             raise MemoryError()
         self.data_c = new_ptr
         self.capacity = new_cap
 
+    cdef inline int32_t _resolve_date(self, date) except *:
+        if isinstance(date, str):
+            return _parse_date_str(<str>date)
+        return <int32_t>date
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, val):
-        cdef long long v = _parse_date_str(<str>val) if isinstance(val, str) else <long long>val
+        cdef int32_t v
+        if isinstance(val, str):
+            v = _parse_date_str(<str>val)
+        else:
+            v = <int32_t>val
+
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
-        self.data_c[self.length] = v
+        (<int32_t*>self.data_c)[self.length] = v
         self.length += 1
 
     @cython.binding(False)
@@ -160,7 +178,7 @@ cdef class DateColumn(BaseColumn):
         cdef DateColumn new_col = DateColumn(max(self.length, 1))
         new_col.length = self.length
         if self.length > 0:
-            memcpy(new_col.data_c, self.data_c, self.length * sizeof(long long))
+            memcpy(new_col.data_c, self.data_c, self.length * sizeof(int32_t))
         return new_col
 
     @cython.binding(False)
@@ -169,16 +187,16 @@ cdef class DateColumn(BaseColumn):
         if self.length == 0:
             raise IndexError("pop from empty column")
         self.length -= 1
-        return self.data_c[self.length]
+        return (<int32_t*>self.data_c)[self.length]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_front(self):
         if self.length == 0:
             raise IndexError("pop from empty column")
-        cdef long long val = self.data_c[0]
+        cdef int32_t val = (<int32_t*>self.data_c)[0]
         if self.length > 1:
-            memmove(self.data_c, self.data_c + 1, (self.length - 1) * sizeof(long long))
+            memmove(self.data_c, <int32_t*>self.data_c + 1, (self.length - 1) * sizeof(int32_t))
         self.length -= 1
         return val
 
@@ -189,15 +207,15 @@ cdef class DateColumn(BaseColumn):
         if other_len == 0: return
         cdef Py_ssize_t new_len = self.length + other_len
         self._reserve(new_len)
-        memcpy(self.data_c + self.length, other.data_c, other_len * sizeof(long long))
+        memcpy(<int32_t*>self.data_c + self.length, other.data_c, other_len * sizeof(int32_t))
         self.length = new_len
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def max(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef long long max_val = self.data_c[0]
-        cdef long long* ptr = self.data_c
+        cdef int32_t max_val = (<int32_t*>self.data_c)[0]
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(1, n):
@@ -209,8 +227,8 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def min(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef long long min_val = self.data_c[0]
-        cdef long long* ptr = self.data_c
+        cdef int32_t min_val = (<int32_t*>self.data_c)[0]
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(1, n):
@@ -228,9 +246,9 @@ cdef class DateColumn(BaseColumn):
             raise ValueError(err_buf.decode('ascii'))
         if n == 0: return
 
-        cdef long long* new_data = <long long*>aligned_malloc(n * sizeof(long long))
+        cdef int32_t* new_data = <int32_t*>aligned_malloc(n * sizeof(int32_t))
         if not new_data: raise MemoryError()
-        cdef long long* self_data = self.data_c
+        cdef int32_t* self_data = <int32_t*>self.data_c
         cdef Py_ssize_t i, idx
         try:
             for i in range(n):
@@ -253,7 +271,7 @@ cdef class DateColumn(BaseColumn):
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError("Index out of bounds")
-        return self.data_c[idx]
+        return (<int32_t*>self.data_c)[idx]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -261,25 +279,30 @@ cdef class DateColumn(BaseColumn):
         cdef set seen = set()
         cdef list result = []
         cdef Py_ssize_t i, n = self.length
-        cdef long long val
+        cdef int32_t* ptr = <int32_t*>self.data_c
         for i in range(n):
-            val = self.data_c[i]
+            val = ptr[i]
             if val not in seen:
                 seen.add(val)
                 result.append(val)
         return result
 
+    # ------------------------------------------------------------
+    # 年/月/日/季度 提取
+    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def year(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
+        cdef int y, m, d
         with nogil:
             for i in range(n):
-                res_ptr[i] = <int>(ptr[i] / 10000)
+                _days_to_ymd(ptr[i], &y, &m, &d)
+                res_ptr[i] = y
         return res
 
     @cython.binding(False)
@@ -287,12 +310,14 @@ cdef class DateColumn(BaseColumn):
     def month(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
+        cdef int y, m, d
         with nogil:
             for i in range(n):
-                res_ptr[i] = <int>((ptr[i] / 100) % 100)
+                _days_to_ymd(ptr[i], &y, &m, &d)
+                res_ptr[i] = m
         return res
 
     @cython.binding(False)
@@ -300,12 +325,14 @@ cdef class DateColumn(BaseColumn):
     def day(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
+        cdef int y, m, d
         with nogil:
             for i in range(n):
-                res_ptr[i] = <int>(ptr[i] % 100)
+                _days_to_ymd(ptr[i], &y, &m, &d)
+                res_ptr[i] = d
         return res
 
     @cython.binding(False)
@@ -313,13 +340,13 @@ cdef class DateColumn(BaseColumn):
     def quarter(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
-        cdef int m
+        cdef int y, m, d
         with nogil:
             for i in range(n):
-                m = <int>((ptr[i] / 100) % 100)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 res_ptr[i] = (m - 1) / 3 + 1
         return res
 
@@ -334,7 +361,7 @@ cdef class DateColumn(BaseColumn):
         res.length = self.length
 
         cdef Py_ssize_t i, n = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int y, m, d
         cdef char* dest
         cdef int f_idx, d_idx
@@ -342,7 +369,7 @@ cdef class DateColumn(BaseColumn):
 
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 dest = res.data_c + (i * 256)
                 f_idx = 0
                 d_idx = 0
@@ -381,18 +408,16 @@ cdef class DateColumn(BaseColumn):
                 dest[d_idx] = 0
         return res
 
-    cdef inline long long _resolve_date(self, date) except *:
-        if isinstance(date, str):
-            return _parse_date_str(<str>date)
-        return <long long>date
-
+    # ------------------------------------------------------------
+    # 过滤算子 (纯 32 位整数比较，100% AVX2/AVX-512 SIMD 向量化)
+    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def filter_greater(self, date):
-        cdef long long target = self._resolve_date(date)
+        cdef int32_t target = self._resolve_date(date)
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
@@ -403,10 +428,10 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def filter_greater_equal(self, date):
-        cdef long long target = self._resolve_date(date)
+        cdef int32_t target = self._resolve_date(date)
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
@@ -417,10 +442,10 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def filter_less(self, date):
-        cdef long long target = self._resolve_date(date)
+        cdef int32_t target = self._resolve_date(date)
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
@@ -431,10 +456,10 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def filter_less_equal(self, date):
-        cdef long long target = self._resolve_date(date)
+        cdef int32_t target = self._resolve_date(date)
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
@@ -445,10 +470,10 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def filter_equal(self, date):
-        cdef long long target = self._resolve_date(date)
+        cdef int32_t target = self._resolve_date(date)
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
@@ -459,10 +484,10 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def filter_not_equal(self, date):
-        cdef long long target = self._resolve_date(date)
+        cdef int32_t target = self._resolve_date(date)
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
@@ -473,11 +498,11 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def filter_between(self, start, end):
-        cdef long long lo = self._resolve_date(start)
-        cdef long long hi = self._resolve_date(end)
+        cdef int32_t lo = self._resolve_date(start)
+        cdef int32_t hi = self._resolve_date(end)
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
@@ -495,9 +520,9 @@ cdef class DateColumn(BaseColumn):
         col.length = n
         if n == 0: return col
 
-        cdef long long fill_val = self._resolve_date(fill)
-        cdef long long* col_ptr = col.data_c
-        cdef long long* self_ptr = self.data_c
+        cdef int32_t fill_val = self._resolve_date(fill)
+        cdef int32_t* col_ptr = <int32_t*>col.data_c
+        cdef int32_t* self_ptr = <int32_t*>self.data_c
         cdef int* mask_ptr = mask.data_c
         cdef Py_ssize_t i
         with nogil:
@@ -505,23 +530,21 @@ cdef class DateColumn(BaseColumn):
                 col_ptr[i] = self_ptr[i] if mask_ptr[i] != 0 else fill_val
         return col
 
+    # ------------------------------------------------------------
+    # 加减天数：退化为极致的单指令加法（彻底消灭历法转换）
+    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def add_days(self, int n):
         cdef Py_ssize_t length = self.length
         cdef DateColumn res = DateColumn(max(length, 1))
         res.length = length
-        cdef long long* ptr = self.data_c
-        cdef long long* res_ptr = res.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
+        cdef int32_t* res_ptr = <int32_t*>res.data_c
         cdef Py_ssize_t i
-        cdef int y, m, d
-        cdef long long daynum
         with nogil:
             for i in range(length):
-                _split_ymd(ptr[i], &y, &m, &d)
-                daynum = _date_to_daynum(y, m, d) + n
-                _daynum_to_date(daynum, &y, &m, &d)
-                res_ptr[i] = <long long>y * 10000 + m * 100 + d
+                res_ptr[i] = ptr[i] + n
         return res
 
     @cython.binding(False)
@@ -535,13 +558,13 @@ cdef class DateColumn(BaseColumn):
         cdef Py_ssize_t length = self.length
         cdef DateColumn res = DateColumn(max(length, 1))
         res.length = length
-        cdef long long* ptr = self.data_c
-        cdef long long* res_ptr = res.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
+        cdef int32_t* res_ptr = <int32_t*>res.data_c
         cdef Py_ssize_t i
         cdef int y, m, d, total, new_m, new_y, max_d
         with nogil:
             for i in range(length):
-                _split_ymd(ptr[i], &y, &m, &d)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 total = (m - 1) + n
                 new_y = y + total / 12
                 new_m = total % 12 + 1
@@ -551,7 +574,7 @@ cdef class DateColumn(BaseColumn):
                 max_d = _days_in_month(new_y, new_m)
                 if d > max_d:
                     d = max_d
-                res_ptr[i] = <long long>new_y * 10000 + new_m * 100 + d
+                res_ptr[i] = _ymd_to_days(new_y, new_m, d)
         return res
 
     @cython.binding(False)
@@ -565,18 +588,18 @@ cdef class DateColumn(BaseColumn):
         cdef Py_ssize_t length = self.length
         cdef DateColumn res = DateColumn(max(length, 1))
         res.length = length
-        cdef long long* ptr = self.data_c
-        cdef long long* res_ptr = res.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
+        cdef int32_t* res_ptr = <int32_t*>res.data_c
         cdef Py_ssize_t i
         cdef int y, m, d, new_y, max_d
         with nogil:
             for i in range(length):
-                _split_ymd(ptr[i], &y, &m, &d)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 new_y = y + n
                 max_d = _days_in_month(new_y, m)
                 if d > max_d:
                     d = max_d
-                res_ptr[i] = <long long>new_y * 10000 + m * 100 + d
+                res_ptr[i] = _ymd_to_days(new_y, m, d)
         return res
 
     @cython.binding(False)
@@ -584,21 +607,36 @@ cdef class DateColumn(BaseColumn):
     def sub_years(self, int n):
         return self.add_years(-n)
 
+    # ------------------------------------------------------------
+    # 星期与历法判定 (1970-01-01 是 Thursday = 3)
+    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def day_of_week(self):
+        """返回 0=Monday .. 6=Sunday"""
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
-        cdef int y, m, d
-        cdef long long daynum
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
-                daynum = _date_to_daynum(y, m, d)
-                res_ptr[i] = <int>(((daynum % 7) + 7) % 7)
+                res_ptr[i] = <int>(((ptr[i] + 3) % 7 + 7) % 7)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def is_weekend(self):
+        cdef IntColumn res = IntColumn(max(self.length, 1))
+        res.length = self.length
+        cdef int32_t* ptr = <int32_t*>self.data_c
+        cdef int* res_ptr = res.data_c
+        cdef Py_ssize_t i, n = self.length
+        cdef int dow
+        with nogil:
+            for i in range(n):
+                dow = <int>(((ptr[i] + 3) % 7 + 7) % 7)
+                res_ptr[i] = 1 if (dow == 5 or dow == 6) else 0
         return res
 
     @cython.binding(False)
@@ -606,13 +644,13 @@ cdef class DateColumn(BaseColumn):
     def day_of_year(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         cdef int y, m, d, doy
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 doy = _DOY_CUMULATIVE_NORMAL[m] + d
                 if m > 2 and _is_leap_year(y):
                     doy += 1
@@ -624,13 +662,13 @@ cdef class DateColumn(BaseColumn):
     def days_in_month(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         cdef int y, m, d
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 res_ptr[i] = _days_in_month(y, m)
         return res
 
@@ -639,30 +677,14 @@ cdef class DateColumn(BaseColumn):
     def is_leap_year(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
+        cdef int y, m, d
         with nogil:
             for i in range(n):
-                res_ptr[i] = 1 if _is_leap_year(<int>(ptr[i] / 10000)) else 0
-        return res
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def is_weekend(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
-        res.length = self.length
-        cdef long long* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        cdef int y, m, d, dow
-        cdef long long daynum
-        with nogil:
-            for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
-                daynum = _date_to_daynum(y, m, d)
-                dow = <int>(((daynum % 7) + 7) % 7)
-                res_ptr[i] = 1 if (dow == 5 or dow == 6) else 0
+                _days_to_ymd(ptr[i], &y, &m, &d)
+                res_ptr[i] = 1 if _is_leap_year(y) else 0
         return res
 
     @cython.binding(False)
@@ -670,12 +692,14 @@ cdef class DateColumn(BaseColumn):
     def is_month_start(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
+        cdef int y, m, d
         with nogil:
             for i in range(n):
-                res_ptr[i] = 1 if (ptr[i] % 100) == 1 else 0
+                _days_to_ymd(ptr[i], &y, &m, &d)
+                res_ptr[i] = 1 if d == 1 else 0
         return res
 
     @cython.binding(False)
@@ -683,13 +707,13 @@ cdef class DateColumn(BaseColumn):
     def is_month_end(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         cdef int y, m, d
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 res_ptr[i] = 1 if d == _days_in_month(y, m) else 0
         return res
 
@@ -698,12 +722,14 @@ cdef class DateColumn(BaseColumn):
     def is_year_start(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
+        cdef int y, m, d
         with nogil:
             for i in range(n):
-                res_ptr[i] = 1 if (ptr[i] % 10000) == 101 else 0
+                _days_to_ymd(ptr[i], &y, &m, &d)
+                res_ptr[i] = 1 if (m == 1 and d == 1) else 0
         return res
 
     @cython.binding(False)
@@ -711,12 +737,14 @@ cdef class DateColumn(BaseColumn):
     def is_year_end(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
+        cdef int y, m, d
         with nogil:
             for i in range(n):
-                res_ptr[i] = 1 if (ptr[i] % 10000) == 1231 else 0
+                _days_to_ymd(ptr[i], &y, &m, &d)
+                res_ptr[i] = 1 if (m == 12 and d == 31) else 0
         return res
 
     @cython.binding(False)
@@ -724,13 +752,13 @@ cdef class DateColumn(BaseColumn):
     def is_quarter_start(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         cdef int y, m, d
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 res_ptr[i] = 1 if ((m == 1 or m == 4 or m == 7 or m == 10) and d == 1) else 0
         return res
 
@@ -739,78 +767,68 @@ cdef class DateColumn(BaseColumn):
     def is_quarter_end(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         cdef int y, m, d
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 if m == 3 or m == 6 or m == 9 or m == 12:
                     res_ptr[i] = 1 if d == _days_in_month(y, m) else 0
                 else:
                     res_ptr[i] = 0
         return res
 
-    cdef inline int _week_of_year_impl(self, int y, int m, int d) noexcept nogil:
-        cdef long long daynum = _date_to_daynum(y, m, d)
-        cdef long long day4jan = _date_to_daynum(y, 1, 4)
-        cdef int dow4jan = <int>(((day4jan % 7) + 7) % 7)
-        cdef long long week1_start = day4jan - dow4jan
-        cdef long long next_jan4, next_week1_start
-        cdef int next_jan4_dow, week, max_week
+    cdef inline int _iso_week_of_year(self, int32_t days, int* iso_y) noexcept nogil:
+        cdef int y, m, d
+        _days_to_ymd(days, &y, &m, &d)
+        cdef int32_t d4jan = _ymd_to_days(y, 1, 4)
+        cdef int dow4jan = <int>(((d4jan + 3) % 7 + 7) % 7)
+        cdef int32_t week1_start = d4jan - dow4jan
 
-        if daynum < week1_start:
-            return self._week_of_year_impl(y - 1, 12, 31)
+        if days < week1_start:
+            y -= 1
+            d4jan = _ymd_to_days(y, 1, 4)
+            dow4jan = <int>(((d4jan + 3) % 7 + 7) % 7)
+            week1_start = d4jan - dow4jan
+        else:
+            d4jan = _ymd_to_days(y + 1, 1, 4)
+            dow4jan = <int>(((d4jan + 3) % 7 + 7) % 7)
+            if days >= d4jan - dow4jan:
+                y += 1
+                week1_start = d4jan - dow4jan
 
-        next_jan4 = _date_to_daynum(y + 1, 1, 4)
-        next_jan4_dow = <int>(((next_jan4 % 7) + 7) % 7)
-        next_week1_start = next_jan4 - next_jan4_dow
-
-        if daynum >= next_week1_start:
-            return 1
-
-        max_week = 53 if _is_leap_year(y) else 52
-        week = <int>((daynum - week1_start) / 7) + 1
-        return max_week if week > max_week else week
-
-    cdef inline int _week_of_year(self, int y, int m, int d) noexcept nogil:
-        return self._week_of_year_impl(y, m, d)
+        if iso_y != NULL:
+            iso_y[0] = y
+        return <int>((days - week1_start) / 7) + 1
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def week_of_year(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
-        cdef int y, m, d
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
-                res_ptr[i] = self._week_of_year(y, m, d)
+                res_ptr[i] = self._iso_week_of_year(ptr[i], NULL)
         return res
 
-    # ------------------------------------------------------------
-    # 查找表零分支优化：day_name & month_name
-    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def day_name(self):
         cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
         res.length = self.length
         cdef Py_ssize_t i, n = self.length
-        cdef long long* ptr = self.data_c
-        cdef int y, m, d, dow
-        cdef long long daynum
+        cdef int32_t* ptr = <int32_t*>self.data_c
+        cdef int dow
         cdef char* dest
 
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
-                daynum = _date_to_daynum(y, m, d)
-                dow = <int>(((daynum % 7) + 7) % 7)
+                dow = <int>(((ptr[i] + 3) % 7 + 7) % 7)
                 dest = res.data_c + (i * 256)
                 memcpy(dest, _DAY_NAMES[dow].name, _DAY_NAMES[dow].len)
                 dest[_DAY_NAMES[dow].len] = 0
@@ -822,13 +840,13 @@ cdef class DateColumn(BaseColumn):
         cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
         res.length = self.length
         cdef Py_ssize_t i, n = self.length
-        cdef int m
+        cdef int32_t* ptr = <int32_t*>self.data_c
+        cdef int y, m, d
         cdef char* dest
-        cdef long long* ptr = self.data_c
 
         with nogil:
             for i in range(n):
-                m = <int>((ptr[i] / 100) % 100)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 dest = res.data_c + (i * 256)
                 if m >= 1 and m <= 12:
                     memcpy(dest, _MONTH_NAMES[m].name, _MONTH_NAMES[m].len)
@@ -842,15 +860,15 @@ cdef class DateColumn(BaseColumn):
     def last_day_of_month(self):
         cdef DateColumn res = DateColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
-        cdef long long* res_ptr = res.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
+        cdef int32_t* res_ptr = <int32_t*>res.data_c
         cdef Py_ssize_t i, n = self.length
         cdef int y, m, d, max_d
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
+                _days_to_ymd(ptr[i], &y, &m, &d)
                 max_d = _days_in_month(y, m)
-                res_ptr[i] = <long long>y * 10000 + m * 100 + max_d
+                res_ptr[i] = _ymd_to_days(y, m, max_d)
         return res
 
     @cython.binding(False)
@@ -862,78 +880,73 @@ cdef class DateColumn(BaseColumn):
         res_y.length = self.length
         res_w.length = self.length
         res_d.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* ry_ptr = res_y.data_c
         cdef int* rw_ptr = res_w.data_c
         cdef int* rd_ptr = res_d.data_c
         cdef Py_ssize_t i, n = self.length
-        cdef int y, m, d, dow
-        cdef long long daynum
+        cdef int iso_y
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
-                daynum = _date_to_daynum(y, m, d)
-                dow = <int>(((daynum % 7) + 7) % 7) + 1
-                ry_ptr[i] = y
-                rw_ptr[i] = self._week_of_year(y, m, d)
-                rd_ptr[i] = dow
+                rw_ptr[i] = self._iso_week_of_year(ptr[i], &iso_y)
+                ry_ptr[i] = iso_y
+                rd_ptr[i] = <int>(((ptr[i] + 3) % 7 + 7) % 7) + 1
         return (res_y, res_w, res_d)
+
+    # ------------------------------------------------------------
+    # 日期差值计算 (diff_days 直接减法，SIMD 向量化)
+    # ------------------------------------------------------------
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def diff_days(self, date):
+        cdef int32_t target = self._resolve_date(date)
+        cdef IntColumn res = IntColumn(max(self.length, 1))
+        res.length = self.length
+        cdef int32_t* ptr = <int32_t*>self.data_c
+        cdef int* res_ptr = res.data_c
+        cdef Py_ssize_t i, n = self.length
+        with nogil:
+            for i in range(n):
+                res_ptr[i] = <int>(ptr[i] - target)
+        return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def diff_months(self, date):
-        cdef long long target = self._resolve_date(date)
+        cdef int32_t target = self._resolve_date(date)
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         cdef int y1, m1, d1, y2, m2, d2
-        _split_ymd(target, &y2, &m2, &d2)
+        _days_to_ymd(target, &y2, &m2, &d2)
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y1, &m1, &d1)
+                _days_to_ymd(ptr[i], &y1, &m1, &d1)
                 res_ptr[i] = (y1 - y2) * 12 + (m1 - m2) - (1 if d1 < d2 else 0)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def diff_years(self, date):
-        cdef long long target = self._resolve_date(date)
+        cdef int32_t target = self._resolve_date(date)
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef long long* ptr = self.data_c
+        cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         cdef int y1, m1, d1, y2, m2, d2
-        _split_ymd(target, &y2, &m2, &d2)
+        _days_to_ymd(target, &y2, &m2, &d2)
         with nogil:
             for i in range(n):
-                _split_ymd(ptr[i], &y1, &m1, &d1)
+                _days_to_ymd(ptr[i], &y1, &m1, &d1)
                 res_ptr[i] = y1 - y2 - (1 if (m1 < m2 or (m1 == m2 and d1 < d2)) else 0)
         return res
 
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def diff_days(self, date):
-        cdef long long target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
-        res.length = self.length
-        cdef long long* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        cdef int y, m, d
-        cdef long long target_daynum
-
-        _split_ymd(target, &y, &m, &d)
-        target_daynum = _date_to_daynum(y, m, d)
-
-        with nogil:
-            for i in range(n):
-                _split_ymd(ptr[i], &y, &m, &d)
-                res_ptr[i] = <int>(_date_to_daynum(y, m, d) - target_daynum)
-        return res
-
+    # ------------------------------------------------------------
+    # 纯 C 32 位整数比较算子 (完全向量化)
+    # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def _cmp_op(self, val, int op):
@@ -941,11 +954,11 @@ cdef class DateColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(n, 1))
         res.length = n
 
-        cdef long long* s_ptr = self.data_c
-        cdef long long* o_ptr
+        cdef int32_t* s_ptr = <int32_t*>self.data_c
+        cdef int32_t* o_ptr
         cdef int* r_ptr = res.data_c
         cdef char err_buf[128]
-        cdef long long v
+        cdef int32_t v
         cdef DateColumn other
 
         if isinstance(val, DateColumn):
@@ -953,7 +966,7 @@ cdef class DateColumn(BaseColumn):
             if other.length != n:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", n, other.length)
                 raise ValueError(err_buf.decode('ascii'))
-            o_ptr = other.data_c
+            o_ptr = <int32_t*>other.data_c
             with nogil:
                 if op == 0:
                     for i in range(n): r_ptr[i] = 1 if s_ptr[i] < o_ptr[i] else 0
@@ -1008,8 +1021,13 @@ cdef class DateColumn(BaseColumn):
     def __str__(self):
         cdef list items = []
         cdef Py_ssize_t i, n = self.length
+        cdef int32_t* ptr = <int32_t*>self.data_c
+        cdef int y, m, d
+        cdef char str_buf[16]
         for i in range(n):
-            items.append(str(self.data_c[i]))
+            _days_to_ymd(ptr[i], &y, &m, &d)
+            snprintf(str_buf, sizeof(str_buf), "%04d-%02d-%02d", y, m, d)
+            items.append(str_buf.decode('ascii'))
         return f"DateColumn([{', '.join(items)}])"
 
     @cython.always_allow_keywords(False)
@@ -1024,8 +1042,8 @@ cdef class DateColumn(BaseColumn):
 
     cdef DateColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef Py_ssize_t i
-        cdef long long* old_data = self.data_c
-        cdef long long* new_data
+        cdef int32_t* old_data = <int32_t*>self.data_c
+        cdef int32_t* new_data
         cdef DateColumn new_col
 
         if not inplace:
@@ -1033,10 +1051,10 @@ cdef class DateColumn(BaseColumn):
             new_col.length = n
             with nogil:
                 for i in range(n):
-                    new_col.data_c[i] = old_data[indices[i]]
+                    (<int32_t*>new_col.data_c)[i] = old_data[indices[i]]
             return new_col
         else:
-            new_data = <long long*>aligned_malloc(max(n, 1) * sizeof(long long))
+            new_data = <int32_t*>aligned_malloc(max(n, 1) * sizeof(int32_t))
             if not new_data: raise MemoryError()
             with nogil:
                 for i in range(n):
@@ -1051,13 +1069,13 @@ cdef class DateColumn(BaseColumn):
         if row_idx < 0:
             row_idx += self.length
         if rem_len > 0:
-            memmove(self.data_c + row_idx,
-                    self.data_c + row_idx + 1,
-                    rem_len * sizeof(long long))
+            memmove(<int32_t*>self.data_c + row_idx,
+                    <int32_t*>self.data_c + row_idx + 1,
+                    rem_len * sizeof(int32_t))
         self.length -= 1
 
     # ------------------------------------------------------------
-    # astype: 使用纯 C 格式化与零分配直写替换 f-string
+    # 类型转换 astype (无 Python 堆分配直写)
     # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -1075,7 +1093,7 @@ cdef class DateColumn(BaseColumn):
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
-        cdef long long* s_ptr = self.data_c
+        cdef int32_t* s_ptr = <int32_t*>self.data_c
 
         if target_type == TYPE_INT:
             ic = IntColumn(safe_cap)
@@ -1096,7 +1114,7 @@ cdef class DateColumn(BaseColumn):
             cc.length = n
             with nogil:
                 for i in range(n):
-                    _split_ymd(s_ptr[i], &y, &m, &d)
+                    _days_to_ymd(s_ptr[i], &y, &m, &d)
                     cc.data_c[i * 256 + 0] = <char>(48 + ((y / 1000) % 10))
                     cc.data_c[i * 256 + 1] = <char>(48 + ((y / 100) % 10))
                     cc.data_c[i * 256 + 2] = <char>(48 + ((y / 10) % 10))
@@ -1113,23 +1131,23 @@ cdef class DateColumn(BaseColumn):
             uc = UCS2Column_SoA(safe_cap)
             uc.length = n
             for i in range(n):
-                _split_ymd(s_ptr[i], &y, &m, &d)
+                _days_to_ymd(s_ptr[i], &y, &m, &d)
                 snprintf(str_buf, sizeof(str_buf), "%04d-%02d-%02d", y, m, d)
                 uc._set_item(i, str_buf.decode('ascii'))
             return uc
         elif target_type == TYPE_CATEGORY:
             catc = CategoryColumn(safe_cap)
             for i in range(n):
-                _split_ymd(s_ptr[i], &y, &m, &d)
+                _days_to_ymd(s_ptr[i], &y, &m, &d)
                 snprintf(str_buf, sizeof(str_buf), "%04d-%02d-%02d", y, m, d)
                 catc.append(str_buf.decode('ascii'))
             return catc
         elif target_type == TYPE_DATETIME:
             dtc = DateTimeColumn(safe_cap)
-            for i in range(n):
-                _split_ymd(s_ptr[i], &y, &m, &d)
-                snprintf(str_buf, sizeof(str_buf), "%04d-%02d-%02d", y, m, d)
-                dtc.append(str_buf.decode('ascii'))
+            dtc.length = n
+            with nogil:
+                for i in range(n):
+                    (<int64_t*>dtc.data_c)[i] = <int64_t>s_ptr[i] * 86400000000LL
             return dtc
         elif target_type == TYPE_TIME:
             tmc = TimeColumn(safe_cap)
