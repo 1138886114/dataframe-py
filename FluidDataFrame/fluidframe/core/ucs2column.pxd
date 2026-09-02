@@ -23,7 +23,7 @@ cdef class UCS2Column_SoA(BaseColumn):
     cdef Py_ssize_t* offsets_c
     cdef public Py_ssize_t char_capacity
     cdef public Py_ssize_t char_length
-    cpdef Py_ssize_t get_size(self)
+    cdef Py_ssize_t get_size(self)
     cdef void _reserve_rows(self, Py_ssize_t new_cap) except *
     cdef void _reserve_chars(self, Py_ssize_t new_char_cap) except *
     cdef UCS2Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)

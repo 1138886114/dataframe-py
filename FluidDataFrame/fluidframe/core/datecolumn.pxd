@@ -19,7 +19,7 @@ cdef class DateColumn(BaseColumn):
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef int32_t* data_c
-    cpdef Py_ssize_t get_size(self)
+    cdef Py_ssize_t get_size(self)
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef inline int32_t _resolve_date(self, date) except *
     cdef inline int32_t _to_ymd_int(self, int32_t epoch_days) noexcept nogil

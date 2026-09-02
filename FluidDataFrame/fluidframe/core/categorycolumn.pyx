@@ -47,7 +47,7 @@ cdef class CategoryColumn(BaseColumn):
             os_aligned_free(self.codes_c)
             self.codes_c = NULL
 
-    cpdef Py_ssize_t get_size(self):
+    cdef Py_ssize_t get_size(self):
         return self.capacity * sizeof(int) + len(self.categories) * sizeof(void*)
 
     cdef void _reserve(self, Py_ssize_t new_cap):

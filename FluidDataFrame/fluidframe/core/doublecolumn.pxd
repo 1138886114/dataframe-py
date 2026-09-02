@@ -21,7 +21,7 @@ cdef class DoubleColumn(BaseColumn):
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef double* data_c
-    cpdef Py_ssize_t get_size(self)
+    cdef Py_ssize_t get_size(self)
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef double _sum_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
     cdef double _mean_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil

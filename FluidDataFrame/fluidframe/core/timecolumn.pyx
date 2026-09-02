@@ -145,7 +145,7 @@ cdef class TimeColumn(BaseColumn):
         if not self.data_c:
             raise MemoryError()
 
-    cpdef Py_ssize_t get_size(self):
+    cdef Py_ssize_t get_size(self):
         return self.capacity * sizeof(int32_t)
 
     def __dealloc__(self):

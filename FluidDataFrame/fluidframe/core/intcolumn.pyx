@@ -55,7 +55,7 @@ cdef class IntColumn(BaseColumn):
             os_aligned_free(self.data_c)
             self.data_c = NULL
 
-    cpdef Py_ssize_t get_size(self):
+    cdef Py_ssize_t get_size(self):
         return self.capacity * sizeof(int)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
