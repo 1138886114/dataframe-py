@@ -129,7 +129,6 @@ cdef int _cmp_int32(const void* a, const void* b) noexcept nogil:
 #  TimeColumn 类实现 (全面 int32_t 与 SIMD 向量化优化)
 # ============================================================
 
-@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
@@ -146,7 +145,7 @@ cdef class TimeColumn(BaseColumn):
         if not self.data_c:
             raise MemoryError()
 
-    cdef Py_ssize_t get_size(self):
+    cpdef Py_ssize_t get_size(self):
         return self.capacity * sizeof(int32_t)
 
     def __dealloc__(self):

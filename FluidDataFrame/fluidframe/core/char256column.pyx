@@ -102,7 +102,6 @@ cdef inline Py_ssize_t _c_count(const char *data, const char *pat, size_t pat_le
 #  Char256Column_SoA 类定义
 # ============================================================
 
-@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
@@ -124,6 +123,9 @@ cdef class Char256Column_SoA(BaseColumn):
         if self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
+
+    cpdef Py_ssize_t get_size(self):
+        return self.capacity * 256
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap <= self.capacity:

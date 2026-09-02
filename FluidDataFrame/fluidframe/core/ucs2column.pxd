@@ -14,7 +14,6 @@ from fluidframe.core.intcolumn cimport IntColumn
 cdef int _ucs2_len(Py_UCS2* string) noexcept nogil
 cdef Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle, int n_len) noexcept nogil
 
-@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class UCS2Column_SoA(BaseColumn):
@@ -24,6 +23,7 @@ cdef class UCS2Column_SoA(BaseColumn):
     cdef Py_ssize_t* offsets_c
     cdef public Py_ssize_t char_capacity
     cdef public Py_ssize_t char_length
+    cpdef Py_ssize_t get_size(self)
     cdef void _reserve_rows(self, Py_ssize_t new_cap) except *
     cdef void _reserve_chars(self, Py_ssize_t new_char_cap) except *
     cdef UCS2Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)

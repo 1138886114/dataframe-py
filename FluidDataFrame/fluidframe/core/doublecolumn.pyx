@@ -199,7 +199,6 @@ cdef void _col_to_double(object col, double* buf, Py_ssize_t n) except *:
         raise TypeError("Expected IntColumn or DoubleColumn")
 
 
-@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
@@ -219,6 +218,9 @@ cdef class DoubleColumn(BaseColumn):
         if self.data_c is not NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
+
+    cpdef Py_ssize_t get_size(self):
+        return self.capacity * sizeof(double)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap > self.capacity:

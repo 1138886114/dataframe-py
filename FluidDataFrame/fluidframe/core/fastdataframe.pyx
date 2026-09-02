@@ -261,13 +261,6 @@ cdef dict _TYPE_PYCLASSES = {
     TYPE_CATEGORY: Category, TYPE_DATETIME: DateTime, TYPE_TIME: Time,
 }
 
-cdef dict _TYPE_BYTES = {
-    TYPE_INT: 4, TYPE_DOUBLE: 8, TYPE_CHAR256: 256,
-    TYPE_UCS2: 2, TYPE_TIMESTAMP: 4,
-    TYPE_BOOL: 1, TYPE_CATEGORY: 4,
-    TYPE_DATETIME: 8, TYPE_TIME: 4,
-}
-
 
 @cython.final
 @cython.boundscheck(False)
@@ -2793,7 +2786,7 @@ cdef class FastDataFrame:
 
         for name, col in self.columns.items():
             type_name = self._type_name(col)
-            col_bytes = col.length * self._col_bytes(col)
+            col_bytes = col.get_size()
             _c_fmt_bytes(bytes_buf, sizeof(bytes_buf), col_bytes)
             lines.append(f" {idx}   {name:<10}{col.length:<10}{type_name:<10}{bytes_buf.decode('ascii')}")
             idx += 1
@@ -2802,18 +2795,6 @@ cdef class FastDataFrame:
         lines.append(f"dtypes: {self._dtype_summary()}")
         lines.append(f"memory usage: {bytes_buf.decode('ascii')}")
         return '\n'.join(lines)
-
-    cdef Py_ssize_t _col_bytes(self, BaseColumn col):
-        if col.dtype == TYPE_INT: return 4
-        elif col.dtype == TYPE_DOUBLE: return 8
-        elif col.dtype == TYPE_CHAR256: return 256
-        elif col.dtype == TYPE_UCS2: return 2
-        elif col.dtype == TYPE_TIMESTAMP: return 4
-        elif col.dtype == TYPE_BOOL: return 1
-        elif col.dtype == TYPE_CATEGORY: return 4
-        elif col.dtype == TYPE_DATETIME: return 8
-        elif col.dtype == TYPE_TIME: return 4
-        return 0
 
     cdef str _dtype_summary(self):
         cdef dict counts = {}
@@ -2825,15 +2806,9 @@ cdef class FastDataFrame:
 
     def memory_usage(self):
         cdef Py_ssize_t total = 0
-        cdef str name
         cdef BaseColumn col
-        for name, col in self.columns.items():
-            if col.dtype == TYPE_UCS2:
-                total += col.capacity * sizeof(Py_UCS2) + (col.capacity + 1) * sizeof(Py_ssize_t)
-            elif col.dtype == TYPE_CATEGORY:
-                total += col.capacity * self._col_bytes(col) + len((<CategoryColumn>col).categories) * sizeof(void*)
-            else:
-                total += col.capacity * self._col_bytes(col)
+        for col in self.columns.values():
+            total += col.get_size()
         return total
 
     def apply(self, object func, str axis='columns'):

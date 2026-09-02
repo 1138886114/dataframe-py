@@ -120,7 +120,6 @@ cdef inline int32_t _parse_date_str(str s) noexcept:
 #  DateColumn 类实现
 # ============================================================
 
-@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
@@ -141,6 +140,9 @@ cdef class DateColumn(BaseColumn):
         if self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
+
+    cpdef Py_ssize_t get_size(self):
+        return self.capacity * sizeof(int32_t)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap <= self.capacity:

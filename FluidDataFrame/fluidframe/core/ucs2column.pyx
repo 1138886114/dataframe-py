@@ -104,7 +104,6 @@ cdef inline int _cmp_ucs2_buffers(Py_UCS2* a, Py_ssize_t len_a, Py_UCS2* b, Py_s
     return 0
 
 
-@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
@@ -131,6 +130,9 @@ cdef class UCS2Column_SoA(BaseColumn):
     def __dealloc__(self):
         if self.offsets_c is not NULL: os_aligned_free(self.offsets_c)
         if self.chars_c is not NULL: os_aligned_free(self.chars_c)
+
+    cpdef Py_ssize_t get_size(self):
+        return self.capacity * sizeof(Py_UCS2) + (self.capacity + 1) * sizeof(Py_ssize_t)
 
     cdef void _reserve_rows(self, Py_ssize_t new_cap) except *:
         cdef Py_ssize_t* new_ptr

@@ -128,7 +128,6 @@ cdef int _cmp_int64(const void* a, const void* b) noexcept nogil:
     return 0
 
 
-@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
@@ -149,6 +148,9 @@ cdef class DateTimeColumn(BaseColumn):
         if self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
+
+    cpdef Py_ssize_t get_size(self):
+        return self.capacity * sizeof(int64_t)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap <= self.capacity:

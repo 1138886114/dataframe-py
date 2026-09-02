@@ -24,7 +24,6 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
 
-@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
@@ -47,6 +46,9 @@ cdef class CategoryColumn(BaseColumn):
         if self.codes_c != NULL:
             os_aligned_free(self.codes_c)
             self.codes_c = NULL
+
+    cpdef Py_ssize_t get_size(self):
+        return self.capacity * sizeof(int) + len(self.categories) * sizeof(void*)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap <= self.capacity:

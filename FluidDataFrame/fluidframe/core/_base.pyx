@@ -65,7 +65,8 @@ cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t a
 
 
 cdef class BaseColumn:
-    pass
+    cpdef Py_ssize_t get_size(self):
+        return self.capacity * sizeof(int)
 
 
 cdef int _resolve_astype_target(object target) except -1:

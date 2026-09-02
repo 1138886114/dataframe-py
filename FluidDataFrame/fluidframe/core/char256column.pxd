@@ -8,13 +8,13 @@ from fluidframe.core.intcolumn cimport IntColumn
 cdef bint _c_str_contains(const char* source, const char* target) noexcept nogil
 cdef void _c_str_replace_inplace(char* buffer, const char* old_sub, const char* new_sub, size_t old_len, size_t new_len) noexcept nogil
 
-@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class Char256Column_SoA(BaseColumn):
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef char* data_c
+    cpdef Py_ssize_t get_size(self)
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef inline str _get_str(self, Py_ssize_t idx)
     cdef void _set_item(self, Py_ssize_t idx, str val) except *
