@@ -120,12 +120,12 @@ cdef class CategoryColumn(BaseColumn):
         if not code_map: raise MemoryError()
 
         cdef Py_ssize_t j, i
+        cdef int* self_codes = self.codes_c + self.length
+        cdef int* other_codes = other.codes_c
         try:
             for j in range(num_other_cats):
                 code_map[j] = self._get_or_add_code(other.categories[j])
 
-            cdef int* self_codes = self.codes_c + self.length
-            cdef int* other_codes = other.codes_c
             with nogil:
                 for i in range(other_len):
                     self_codes[i] = code_map[other_codes[i]]
@@ -221,12 +221,12 @@ cdef class CategoryColumn(BaseColumn):
         if not match_table: raise MemoryError()
 
         cdef Py_ssize_t k, i
+        cdef int* codes = self.codes_c
+        cdef unsigned char* res_ptr = res.data_c
         try:
             for k in range(num_cats):
                 match_table[k] = 1 if self.categories[k] in values else 0
 
-            cdef int* codes = self.codes_c
-            cdef unsigned char* res_ptr = res.data_c
             with nogil:
                 for i in range(n):
                     res_ptr[i] = match_table[codes[i]]
@@ -335,6 +335,9 @@ cdef class CategoryColumn(BaseColumn):
 
         cdef Py_ssize_t j, i
         cdef bint match = True
+        cdef int* s_c = self.codes_c
+        cdef int* o_c = o.codes_c
+        cdef Py_ssize_t n = self.length
         try:
             for j in range(num_o_cats):
                 cat = o.categories[j]
@@ -343,9 +346,6 @@ cdef class CategoryColumn(BaseColumn):
                 else:
                     o_to_self[j] = -1
 
-            cdef int* s_c = self.codes_c
-            cdef int* o_c = o.codes_c
-            cdef Py_ssize_t n = self.length
             with nogil:
                 for i in range(n):
                     if s_c[i] != o_to_self[o_c[i]]:
