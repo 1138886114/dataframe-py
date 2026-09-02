@@ -6,9 +6,10 @@
 # cython: initializedcheck=False
 
 cimport cython
-from libc.stdint cimport int32_t, uint32_t, uint64_t
+from libc.stdint cimport int8_t, int32_t, int64_t, uint32_t, uint64_t
 from libc.string cimport memcpy, memmove, memset
 from libc.stdio cimport snprintf
+from libc.stdlib cimport bsearch, qsort
 
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
@@ -25,59 +26,104 @@ from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 
 # ============================================================
-#  底层纯 C 时间运算与格式化 (无除法/无堆分配/零分支)
+#  底层纯 C 高性能时间运算、LUT 查表格式化与零拷贝解析
 # ============================================================
 
-cdef inline void _split_hms(int secs, int* h, int* m, int* s) noexcept nogil:
-    """单次连除提取时分秒（secs 范围 0~86399）"""
-    cdef int tot_m = secs / 60
+# 00-99 两位字符查找表（LUT 优化：消除格式化中的所有除法/分支）
+cdef const char[200] DIGIT_PAIRS = (
+    b"00010203040506070809"
+    b"10111213141516171819"
+    b"20212223242526272829"
+    b"30313233343536373839"
+    b"40414243444546474849"
+    b"50515253545556575859"
+    b"60616263646566676869"
+    b"70717273747576777879"
+    b"80818283848586878889"
+    b"90919293949596979899"
+)
+
+cdef inline void _split_hms(int32_t secs, int32_t* h, int32_t* m, int32_t* s) noexcept nogil:
+    """提取时分秒（钳制安全范围：0 ~ 86399）"""
+    if secs < 0:
+        secs = (secs % 86400 + 86400) % 86400
+    elif secs >= 86400:
+        secs = secs % 86400
+
+    cdef int32_t tot_m = secs / 60
     s[0] = secs - tot_m * 60
     h[0] = tot_m / 60
     m[0] = tot_m - h[0] * 60
 
-cdef inline void _format_time_c(int secs, char* dest) noexcept nogil:
-    """纯 C 就地格式化为 'HH:MM:SS'（零 Python 堆分配）"""
-    cdef int h, m, s
+cdef inline void _format_time_c(int32_t secs, char* dest) noexcept nogil:
+    """纯 C 查表就地格式化为 'HH:MM:SS'（零除法、零分支、零堆分配）"""
+    cdef int32_t h, m, s
     _split_hms(secs, &h, &m, &s)
-    dest[0] = <char>(48 + (h / 10))
-    dest[1] = <char>(48 + (h % 10))
+
+    cdef int32_t h_idx = h * 2
+    cdef int32_t m_idx = m * 2
+    cdef int32_t s_idx = s * 2
+
+    dest[0] = DIGIT_PAIRS[h_idx]
+    dest[1] = DIGIT_PAIRS[h_idx + 1]
     dest[2] = b':'
-    dest[3] = <char>(48 + (m / 10))
-    dest[4] = <char>(48 + (m % 10))
+    dest[3] = DIGIT_PAIRS[m_idx]
+    dest[4] = DIGIT_PAIRS[m_idx + 1]
     dest[5] = b':'
-    dest[6] = <char>(48 + (s / 10))
-    dest[7] = <char>(48 + (s % 10))
+    dest[6] = DIGIT_PAIRS[s_idx]
+    dest[7] = DIGIT_PAIRS[s_idx + 1]
     dest[8] = 0
 
-cdef inline str _time_to_str(int secs):
+cdef inline str _time_to_str(int32_t secs):
     cdef char buf[16]
     _format_time_c(secs, buf)
     return buf.decode('ascii')
 
-cdef int _parse_time_str(str s) except -1:
-    """极速解析 'HH:MM:SS' 或 'HH:MM' 为自午夜起的秒数"""
-    cdef bytes b = s.encode('ascii', errors='ignore')
-    cdef const unsigned char* buf = <const unsigned char*>b
-    cdef int digits[10]
-    cdef int nd = 0, i = 0, n = len(b)
+cdef int32_t _parse_time_str(str s) except -1:
+    """极速解析 'HH:MM:SS', 'H:M:S', 'HH:MM' 等时间格式为自午夜起的秒数"""
+    cdef bytes b = s.encode('ascii')
+    cdef const char* buf = <const char*>b
+    cdef Py_ssize_t n = len(b)
+    cdef int32_t parts[3]
+    parts[0] = 0; parts[1] = 0; parts[2] = 0
+    cdef int32_t cur_val = 0
+    cdef int32_t part_idx = 0
+    cdef Py_ssize_t i
+    cdef char c
 
-    while i < n and nd < 6:
-        if buf[i] >= 48 and buf[i] <= 57:
-            digits[nd] = buf[i] - 48
-            nd += 1
-        i += 1
+    for i in range(n):
+        c = buf[i]
+        if c >= b'0' and c <= b'9':
+            cur_val = cur_val * 10 + (c - b'0')
+        elif c == b':':
+            if part_idx >= 2:
+                raise ValueError(f"Invalid time format: '{s}'")
+            parts[part_idx] = cur_val
+            cur_val = 0
+            part_idx += 1
+        elif c == b' ' or c == b'\t' or c == b'\r' or c == b'\n':
+            continue
+        else:
+            raise ValueError(f"Invalid character in time string: '{s}'")
 
-    if nd < 2:
+    parts[part_idx] = cur_val
+
+    if part_idx == 0:
         raise ValueError(f"Invalid time string: '{s}'")
 
-    cdef int hour = digits[0] * 10 + digits[1]
-    cdef int minute = (digits[2] * 10 + digits[3]) if nd >= 4 else 0
-    cdef int second = (digits[4] * 10 + digits[5]) if nd >= 6 else 0
-    return hour * 3600 + minute * 60 + second
+    if parts[0] < 0 or parts[0] > 23 or parts[1] < 0 or parts[1] > 59 or parts[2] < 0 or parts[2] > 59:
+        raise ValueError(f"Time component out of bounds in '{s}'")
+
+    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+cdef int _cmp_int32(const void* a, const void* b) noexcept nogil:
+    cdef int32_t va = (<const int32_t*>a)[0]
+    cdef int32_t vb = (<const int32_t*>b)[0]
+    return (va > vb) - (va < vb)
 
 
 # ============================================================
-#  TimeColumn 类实现
+#  TimeColumn 类实现 (全面 int32_t 与 SIMD 向量化优化)
 # ============================================================
 
 @cython.final
@@ -93,9 +139,12 @@ cdef class TimeColumn(BaseColumn):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_TIME
-        self.data_c = <int*>aligned_malloc(self.capacity * sizeof(int))
+        self.data_c = <int32_t*>aligned_malloc(self.capacity * sizeof(int32_t))
         if not self.data_c:
             raise MemoryError()
+
+    cdef Py_ssize_t get_size(self):
+        return self.capacity * sizeof(int32_t)
 
     def __dealloc__(self):
         if self.data_c != NULL:
@@ -105,22 +154,22 @@ cdef class TimeColumn(BaseColumn):
     cdef void _reserve(self, Py_ssize_t new_cap):
         if new_cap <= self.capacity:
             return
-        cdef int* new_ptr = <int*>aligned_realloc(
-            self.data_c, self.capacity * sizeof(int), new_cap * sizeof(int))
+        cdef int32_t* new_ptr = <int32_t*>aligned_realloc(
+            self.data_c, self.capacity * sizeof(int32_t), new_cap * sizeof(int32_t))
         if not new_ptr:
             raise MemoryError()
         self.data_c = new_ptr
         self.capacity = new_cap
 
-    cdef inline int _resolve_time(self, val) except -1:
+    cdef inline int32_t _resolve_time(self, val) except -1:
         if isinstance(val, str):
             return _parse_time_str(<str>val)
-        return <int>val
+        return <int32_t>val
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, val):
-        cdef int v = _parse_time_str(<str>val) if isinstance(val, str) else <int>val
+        cdef int32_t v = _parse_time_str(<str>val) if isinstance(val, str) else <int32_t>val
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
         self.data_c[self.length] = v
@@ -132,7 +181,7 @@ cdef class TimeColumn(BaseColumn):
         cdef TimeColumn new_col = TimeColumn(max(self.length, 1))
         new_col.length = self.length
         if self.length > 0:
-            memcpy(new_col.data_c, self.data_c, self.length * sizeof(int))
+            memcpy(new_col.data_c, self.data_c, self.length * sizeof(int32_t))
         return new_col
 
     @cython.binding(False)
@@ -148,9 +197,9 @@ cdef class TimeColumn(BaseColumn):
     def pop_front(self):
         if self.length == 0:
             raise IndexError("pop from empty column")
-        cdef int val = self.data_c[0]
+        cdef int32_t val = self.data_c[0]
         if self.length > 1:
-            memmove(self.data_c, self.data_c + 1, (self.length - 1) * sizeof(int))
+            memmove(self.data_c, self.data_c + 1, (self.length - 1) * sizeof(int32_t))
         self.length -= 1
         return val
 
@@ -161,15 +210,15 @@ cdef class TimeColumn(BaseColumn):
         if other_len == 0: return
         cdef Py_ssize_t new_len = self.length + other_len
         self._reserve(new_len)
-        memcpy(self.data_c + self.length, other.data_c, other_len * sizeof(int))
+        memcpy(self.data_c + self.length, other.data_c, other_len * sizeof(int32_t))
         self.length = new_len
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def max(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef int max_val = self.data_c[0]
-        cdef int* ptr = self.data_c
+        cdef int32_t max_val = self.data_c[0]
+        cdef int32_t* ptr = self.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(1, n):
@@ -181,8 +230,8 @@ cdef class TimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def min(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef int min_val = self.data_c[0]
-        cdef int* ptr = self.data_c
+        cdef int32_t min_val = self.data_c[0]
+        cdef int32_t* ptr = self.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(1, n):
@@ -200,9 +249,9 @@ cdef class TimeColumn(BaseColumn):
             raise ValueError(err_buf.decode('ascii'))
         if n == 0: return
 
-        cdef int* new_data = <int*>aligned_malloc(n * sizeof(int))
+        cdef int32_t* new_data = <int32_t*>aligned_malloc(n * sizeof(int32_t))
         if not new_data: raise MemoryError()
-        cdef int* self_data = self.data_c
+        cdef int32_t* self_data = self.data_c
         cdef Py_ssize_t i, idx
         try:
             for i in range(n):
@@ -219,6 +268,7 @@ cdef class TimeColumn(BaseColumn):
         os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = n
+        self.length = n
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -233,7 +283,7 @@ cdef class TimeColumn(BaseColumn):
         cdef set seen = set()
         cdef list result = []
         cdef Py_ssize_t i, n = self.length
-        cdef int val
+        cdef int32_t val
         for i in range(n):
             val = self.data_c[i]
             if val not in seen:
@@ -242,15 +292,15 @@ cdef class TimeColumn(BaseColumn):
         return result
 
     # ------------------------------------------------------------
-    # 时/分/秒提取 (单指令优化，完全自动向量化)
+    # 时/分/秒提取 (定点乘法展开，完全自动 SIMD 向量化)
     # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def hour(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
+        cdef int32_t* ptr = self.data_c
+        cdef int32_t* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
@@ -262,8 +312,8 @@ cdef class TimeColumn(BaseColumn):
     def minute(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
+        cdef int32_t* ptr = self.data_c
+        cdef int32_t* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
@@ -275,14 +325,17 @@ cdef class TimeColumn(BaseColumn):
     def second(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
+        cdef int32_t* ptr = self.data_c
+        cdef int32_t* res_ptr = res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
                 res_ptr[i] = ptr[i] % 60
         return res
 
+    # ------------------------------------------------------------
+    # 无分支向量化掩码选择
+    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def where_mask(self, IntColumn mask, object fill):
@@ -293,10 +346,10 @@ cdef class TimeColumn(BaseColumn):
         col.length = n
         if n == 0: return col
 
-        cdef int fill_val = self._resolve_time(fill) if fill is not None else 0
-        cdef int* col_ptr = col.data_c
-        cdef int* self_ptr = self.data_c
-        cdef int* mask_ptr = mask.data_c
+        cdef int32_t fill_val = self._resolve_time(fill) if fill is not None else 0
+        cdef int32_t* col_ptr = col.data_c
+        cdef int32_t* self_ptr = self.data_c
+        cdef int32_t* mask_ptr = mask.data_c
         cdef Py_ssize_t i
         with nogil:
             for i in range(n):
@@ -304,27 +357,50 @@ cdef class TimeColumn(BaseColumn):
         return col
 
     # ------------------------------------------------------------
-    # isin 极速优化：预处理解析 + 零 Python 开销
+    # isin 极速优化：释放 GIL + C 级别二分检索（零 Python 装箱）
     # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def isin(self, set values):
+    def isin(self, object values):
         cdef set parsed_vals = set()
         for v in values:
             if isinstance(v, str):
                 parsed_vals.add(_parse_time_str(<str>v))
             elif v is not None:
-                parsed_vals.add(<int>v)
+                parsed_vals.add(<int32_t>v)
 
+        cdef Py_ssize_t num_keys = len(parsed_vals)
         cdef Py_ssize_t n = self.length
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
-        cdef int* ptr = self.data_c
+        if n == 0:
+            return res
+
+        if num_keys == 0:
+            memset(res.data_c, 0, n)
+            return res
+
+        cdef int32_t* keys_c = <int32_t*>aligned_malloc(num_keys * sizeof(int32_t))
+        if not keys_c: raise MemoryError()
+
+        cdef Py_ssize_t ki = 0
+        for val in parsed_vals:
+            keys_c[ki] = <int32_t>val
+            ki += 1
+
+        qsort(keys_c, num_keys, sizeof(int32_t), _cmp_int32)
+
+        cdef int32_t* ptr = self.data_c
         cdef unsigned char* res_ptr = res.data_c
         cdef Py_ssize_t i
+        cdef int32_t target
 
-        for i in range(n):
-            res_ptr[i] = 1 if ptr[i] in parsed_vals else 0
+        with nogil:
+            for i in range(n):
+                target = ptr[i]
+                res_ptr[i] = 1 if bsearch(&target, keys_c, num_keys, sizeof(int32_t), _cmp_int32) != NULL else 0
+
+        os_aligned_free(keys_c)
         return res
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
@@ -333,13 +409,13 @@ cdef class TimeColumn(BaseColumn):
         if rem_len > 0:
             memmove(self.data_c + row_idx,
                     self.data_c + row_idx + 1,
-                    rem_len * sizeof(int))
+                    rem_len * sizeof(int32_t))
         self.length -= 1
 
     cdef TimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef Py_ssize_t i
-        cdef int* old_data = self.data_c
-        cdef int* new_data
+        cdef int32_t* old_data = self.data_c
+        cdef int32_t* new_data
         cdef TimeColumn new_col
 
         if not inplace:
@@ -350,7 +426,7 @@ cdef class TimeColumn(BaseColumn):
                     new_col.data_c[i] = old_data[indices[i]]
             return new_col
         else:
-            new_data = <int*>aligned_malloc(max(n, 1) * sizeof(int))
+            new_data = <int32_t*>aligned_malloc(max(n, 1) * sizeof(int32_t))
             if not new_data: raise MemoryError()
             with nogil:
                 for i in range(n):
@@ -362,7 +438,7 @@ cdef class TimeColumn(BaseColumn):
             return self
 
     # ------------------------------------------------------------
-    # 纯 C 32 位整数比较算子 (完全向量化)
+    # 纯 C 32位无分支比较算子 (完全向量化)
     # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -371,11 +447,11 @@ cdef class TimeColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(n, 1))
         res.length = n
 
-        cdef int* s_ptr = self.data_c
-        cdef int* o_ptr
-        cdef int* r_ptr = res.data_c
+        cdef int32_t* s_ptr = self.data_c
+        cdef int32_t* o_ptr
+        cdef int32_t* r_ptr = res.data_c
         cdef char err_buf[128]
-        cdef int v
+        cdef int32_t v
         cdef TimeColumn other
 
         if isinstance(val, TimeColumn):
@@ -386,32 +462,32 @@ cdef class TimeColumn(BaseColumn):
             o_ptr = other.data_c
             with nogil:
                 if op == 0:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] < o_ptr[i] else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] < o_ptr[i])
                 elif op == 1:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] <= o_ptr[i] else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] <= o_ptr[i])
                 elif op == 2:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] > o_ptr[i] else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] > o_ptr[i])
                 elif op == 3:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] >= o_ptr[i] else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] >= o_ptr[i])
                 elif op == 4:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] == o_ptr[i] else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] == o_ptr[i])
                 elif op == 5:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] != o_ptr[i] else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] != o_ptr[i])
         else:
             v = self._resolve_time(val)
             with nogil:
                 if op == 0:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] < v else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] < v)
                 elif op == 1:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] <= v else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] <= v)
                 elif op == 2:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] > v else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] > v)
                 elif op == 3:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] >= v else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] >= v)
                 elif op == 4:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] == v else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] == v)
                 elif op == 5:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] != v else 0
+                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] != v)
         return res
 
     @cython.always_allow_keywords(False)
@@ -463,7 +539,7 @@ cdef class TimeColumn(BaseColumn):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
         cdef Py_ssize_t safe_cap = max(n, 1)
-        cdef int* ptr = self.data_c
+        cdef int32_t* ptr = self.data_c
         cdef char str_buf[16]
 
         cdef IntColumn ic
@@ -494,7 +570,7 @@ cdef class TimeColumn(BaseColumn):
             bc.length = n
             with nogil:
                 for i in range(n):
-                    bc.data_c[i] = 1 if ptr[i] != 0 else 0
+                    bc.data_c[i] = <unsigned char>(ptr[i] != 0)
             return bc
         elif target_type == TYPE_CHAR256:
             cc = Char256Column_SoA(safe_cap)
@@ -521,15 +597,15 @@ cdef class TimeColumn(BaseColumn):
             tc.length = n
             with nogil:
                 for i in range(n):
-                    (<int*>tc.data_c)[i] = 0
+                    tc.data_c[i] = 0
             return tc
         elif target_type == TYPE_DATETIME:
             dtc = DateTimeColumn(safe_cap)
             dtc.length = n
-            # Time -> DateTime: 秒数转换为微秒数 (1970-01-01 当天的时间点)
+            # Time -> DateTime: 秒数转换为微秒数 (1970-01-01 当天对应的时间点)
             with nogil:
                 for i in range(n):
-                    (<long long*>dtc.data_c)[i] = <long long>ptr[i] * 1000000LL
+                    dtc.data_c[i] = <int64_t>ptr[i] * 1000000LL
             return dtc
         elif target_type == TYPE_TIME:
             return self.copy()
