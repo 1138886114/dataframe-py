@@ -24,21 +24,18 @@ cdef extern from *:
     #include <time.h>
     #include <math.h>
 
-    // 使用跨平台宏定义线程局部变量，防范 nogil 下的多线程数据竞争
     #if defined(_MSC_VER) || defined(_WIN32)
         #define THREAD_LOCAL __declspec(thread)
     #else
         #define THREAD_LOCAL __thread
     #endif
 
-    // 赋予非零的默认状态，防止用户未调用 seed() 时产生全 0 死锁
     static THREAD_LOCAL unsigned long long _xorshift128plus_state[2] = {
         0x8a5cd789635d2dffULL,
         0x121fd2155c472f96ULL
     };
 
     static inline void _xorshift128plus_seed(unsigned long long seed) {
-        // 使用 SplitMix64 算法处理种子，避免相近种子产生相近序列
         unsigned long long z = (seed + 0x9e3779b97f4a7c15ULL);
         z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
         z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
@@ -49,7 +46,6 @@ cdef extern from *:
         z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
         _xorshift128plus_state[1] = z ^ (z >> 31);
 
-        // 确保状态绝对不全为 0
         if (_xorshift128plus_state[0] == 0 && _xorshift128plus_state[1] == 0) {
             _xorshift128plus_state[0] = 1ULL;
         }
@@ -78,6 +74,7 @@ cdef extern from *:
         return sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265358979323846 * u2);
     }
 
+    // 严格检查目标缓冲区的剩余容量，防止栈溢出
     static inline size_t _csv_write_field(char* dest, size_t dest_cap, size_t pos, const char* field, size_t field_len, char sep) {
         size_t i;
         int need_quote = 0;
@@ -385,7 +382,6 @@ cdef class FastDataFrame:
         return w
 
     cdef str _truncate_str(self, str s, int max_display_width=40):
-        """基于真实显示宽度的安全截断，防止中文字符被从中间切断导致乱码"""
         cdef int w = 0
         cdef Py_ssize_t i = 0
         cdef Py_UCS4 c
@@ -423,7 +419,7 @@ cdef class FastDataFrame:
             return buf[:sz].decode('ascii')
 
         elif dt == TYPE_TIMESTAMP:
-            date_ptr = (<DateColumn>col).data_c
+            date_ptr = <int32_t*>(<DateColumn>col).data_c
             _days_to_ymd(date_ptr[i], &dy, &dm, &dd)
             sz = snprintf(buf, sizeof(buf), "%04d-%02d-%02d", dy, dm, dd)
             return buf[:sz].decode('ascii')
@@ -759,12 +755,9 @@ cdef class FastDataFrame:
         if set(self.columns.keys()) != set(other.columns.keys()):
             raise ValueError("Schema mismatch during concat")
 
-        try:
-            for col_name, col_obj in self.columns.items():
-                col_obj.concat(other.columns[col_name])
-            self.df_length += other.df_length
-        except Exception:
-            raise RuntimeError("Concat failed halfway, dataframe is corrupted.")
+        for col_name, col_obj in self.columns.items():
+            col_obj.concat(other.columns[col_name])
+        self.df_length += other.df_length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -804,7 +797,7 @@ cdef class FastDataFrame:
                     _c_argsort_ucs2((<UCS2Column_SoA>col).chars_c, (<UCS2Column_SoA>col).offsets_c, indices_c, 0, n - 1)
             elif col.dtype == TYPE_TIMESTAMP:
                 with nogil:
-                    _c_argsort_numeric(<int32_t*>(<DateColumn>col).data_c, indices_c, 0, n - 1)
+                    _c_argsort_numeric(<int*>(<DateColumn>col).data_c, indices_c, 0, n - 1)
             elif col.dtype == TYPE_DATETIME:
                 with nogil:
                     _c_argsort_numeric(<long long*>(<DateTimeColumn>col).data_c, indices_c, 0, n - 1)
@@ -1015,9 +1008,8 @@ cdef class FastDataFrame:
                 ri = <RangeIndex>self.index
                 if row_idx == 0:
                     ri.start += ri.step
-                    self.index.length -= 1
                 elif row_idx == self.index.length - 1:
-                    self.index.length -= 1
+                    pass
                 else:
                     rem_len_idx = self.index.length - row_idx - 1
                     tmp_col = IntColumn(self.index.length)
@@ -1029,6 +1021,7 @@ cdef class FastDataFrame:
                             rem_len_idx * sizeof(int))
                     tmp_col.length = self.index.length - 1
                     self.index = IntIndex(tmp_col)
+                    return
             elif self.index.index_type == INDEX_INT:
                 idx_col = (<IntIndex>self.index).data
                 if rem_len > 0:
@@ -1036,19 +1029,16 @@ cdef class FastDataFrame:
                             idx_col.data_c + row_idx + 1,
                             rem_len * sizeof(int))
                 idx_col.length -= 1
-                self.index.length -= 1
+            self.index.length -= 1
 
     @cython.binding(False)
-    def argmax(self, str col_name):
-        return self.columns[col_name].idxmax()
+    def argmax(self, str col_name): return self.columns[col_name].idxmax()
 
     @cython.binding(False)
-    def argmin(self, str col_name):
-        return self.columns[col_name].idxmin()
+    def argmin(self, str col_name): return self.columns[col_name].idxmin()
 
     @cython.binding(False)
-    def unique(self, str col_name):
-        return self.columns[col_name].unique()
+    def unique(self, str col_name): return self.columns[col_name].unique()
 
     @cython.binding(False)
     def to_pickle(self, filename):
@@ -1255,6 +1245,7 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _numeric_agg(self, str method):
+        """统一反射调度数值聚合，保证与派生列兼容"""
         cdef dict result = {}
         cdef str name
         cdef object col
@@ -1276,13 +1267,11 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def mean(self):
-        return self._numeric_agg('mean')
+    def mean(self): return self._numeric_agg('mean')
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def median(self):
-        return self._numeric_agg('median')
+    def median(self): return self._numeric_agg('median')
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1821,8 +1810,9 @@ cdef class FastDataFrame:
         return df
 
     def reshape(self, Py_ssize_t rows, Py_ssize_t cols):
-        if self.df_length * len(self.columns) != rows * cols:
-            raise ValueError(f"Cannot reshape {self.df_length * len(self.columns)} elements into ({rows}, {cols})")
+        cdef Py_ssize_t total_elements = self.df_length * len(self.columns)
+        if total_elements != rows * cols:
+            raise ValueError(f"Cannot reshape {total_elements} elements into ({rows}, {cols})")
 
         cdef FastDataFrame result = FastDataFrame()
         result.df_length = rows
@@ -2366,7 +2356,7 @@ cdef class FastDataFrame:
                 elif src_col.dtype == TYPE_DOUBLE:
                     result.columns[cn] = (<DoubleColumn>src_col).gather_with_sentinel(left_idx_c, result_len, NAN)
                 else:
-                    result.columns[cn] = src_col.copy()
+                    result.columns[cn] = self._reorder_column(src_col, left_idx_c, result_len, False)
 
             for cn in right_col_names:
                 src_col = other.columns[cn]
@@ -2376,7 +2366,7 @@ cdef class FastDataFrame:
                 elif src_col.dtype == TYPE_DOUBLE:
                     result.columns[out_name] = (<DoubleColumn>src_col).gather_with_sentinel(right_idx_c, result_len, NAN)
                 else:
-                    result.columns[out_name] = src_col.copy()
+                    result.columns[out_name] = other._reorder_column(src_col, right_idx_c, result_len, False)
 
             return result
         finally:
@@ -2935,7 +2925,7 @@ cdef class FastDataFrame:
             tc = <DateColumn>col
             col_len = tc.length
             if col_len >= tc.capacity: tc._reserve(tc.capacity * 2)
-            _c_shift_right(tc.data_c, pos, col_len, sizeof(int32_t))  # 修正为 4 字节
+            _c_shift_right(tc.data_c, pos, col_len, sizeof(int32_t))
             tc.length = col_len + 1
         elif col.dtype == TYPE_BOOL:
             bool_col = <BoolColumn>col
@@ -3007,7 +2997,7 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_TIMESTAMP:
             tc = <DateColumn>col
             col_len = tc.length
-            _c_shift_left(tc.data_c, pos, col_len, sizeof(int32_t))  # 修正为 4 字节
+            _c_shift_left(tc.data_c, pos, col_len, sizeof(int32_t))
             tc.length = col_len - 1
         elif col.dtype == TYPE_BOOL:
             bool_col = <BoolColumn>col
