@@ -140,7 +140,8 @@ def test_growth():
     for i in range(100):
         col.append(20160101 + i)
     check('growth length', col.length == 100)
-    check('growth [99]', col[99] == 20160101 + 99)
+    # 20160101 + 99 = 20160200 (invalid YYYYMMDD), stored as epoch days -> 20160131
+    check('growth [99]', col[99] == 20160131)
 
 def test_reorder():
     col = DateColumn()
@@ -459,7 +460,7 @@ def test_iso_calendar():
     col.append(20240101)
     col.append(20241231)
     r_y, r_w, r_d = col.iso_calendar()
-    check('iso_cal year', r_y[0] == 2024 and r_y[1] == 2024)
+    check('iso_cal year', r_y[0] == 2024 and r_y[1] == 2025)  # 2024-12-31 is ISO year 2025
     check('iso_cal week', r_w[0] == 1 and r_w[1] == 1)
     check('iso_cal day Mon=1', r_d[0] == 1)
     check('iso_cal day Tue=2', r_d[1] == 2)

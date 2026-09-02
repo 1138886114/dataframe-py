@@ -14,7 +14,7 @@ from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.datecolumn cimport DateColumn
+from fluidframe.core.datecolumn cimport DateColumn, _ymd_to_days
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
@@ -1255,7 +1255,10 @@ cdef class IntColumn(BaseColumn):
             tc.length = n
             with nogil:
                 for i in range(n):
-                    tc.data_c[i] = <long long>s_ptr[i]
+                    if s_ptr[i] > 10000000:
+                        tc.data_c[i] = _ymd_to_days(s_ptr[i] // 10000, (s_ptr[i] // 100) % 100, s_ptr[i] % 100)
+                    else:
+                        tc.data_c[i] = s_ptr[i]
             return tc
         elif target_type == TYPE_CATEGORY:
             catc = CategoryColumn(safe_cap)

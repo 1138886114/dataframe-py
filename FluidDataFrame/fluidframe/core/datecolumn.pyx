@@ -78,25 +78,24 @@ cdef inline int _days_in_month(int y, int m) noexcept nogil:
 
 cdef inline int32_t _ymd_to_days(int y, int m, int d) noexcept nogil:
     """YYYY-MM-DD -> 1970-01-01 起的天数 (Days since Unix Epoch)"""
-    y -= 1 if m <= 2 else 0
-    cdef int32_t era = (y if y >= 0 else y - 399) / 400
-    cdef uint32_t yoe = <uint32_t>(y - era * 400)
-    cdef uint32_t doy = (153 * (m + (9 if m > 2 else -3)) + 2) / 5 + d - 1
-    cdef uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-    return <int32_t>(era * 146097 + <int32_t>doe - 719468)
+    cdef int a = (14 - m) // 12
+    cdef int y2 = y + 4800 - a
+    cdef int m2 = m + 12 * a - 3
+    return <int32_t>(d + (153 * m2 + 2) // 5 + 365 * y2 + y2 // 4 - y2 // 100 + y2 // 400 - 32045 - 2440588)
 
 cdef inline void _days_to_ymd(int32_t days, int* y, int* m, int* d) noexcept nogil:
     """1970-01-01 起的天数 -> YYYY-MM-DD"""
-    cdef int64_t z = days + 719468
-    cdef int64_t era = (z if z >= 0 else z - 146096) / 146097
-    cdef uint32_t doe = <uint32_t>(z - era * 146097)
-    cdef uint32_t yoe = (doe - doe / 1024 + doe / 1461 - doe / 146096) / 365
-    cdef int32_t y_val = <int32_t>yoe + <int32_t>(era * 400)
-    cdef uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
-    cdef uint32_t mp = (5 * doy + 2) / 153
-    d[0] = <int>(doy - (153 * mp + 2) / 5 + 1)
-    m[0] = <int>(mp + 3 if mp < 10 else mp - 9)
-    y[0] = <int>(y_val + (1 if m[0] <= 2 else 0))
+    cdef long long daynum = <long long>days + 2440588
+    cdef long long a, b, c, d2, e, m2
+    a = daynum + 32044
+    b = (4 * a + 3) // 146097
+    c = a - 146097 * b // 4
+    d2 = (4 * c + 3) // 1461
+    e = c - 1461 * d2 // 4
+    m2 = (5 * e + 2) // 153
+    d[0] = <int>(e - (153 * m2 + 2) // 5 + 1)
+    m[0] = <int>(m2 + 3 - 12 * (m2 // 10))
+    y[0] = <int>(100 * b + d2 - 4800 + m2 // 10)
 
 cdef inline int32_t _parse_date_str(str s) noexcept:
     """极速解析 'YYYYMMDD' 或 'YYYY-MM-DD' 字符串为 Unix 纪元天数"""
@@ -154,9 +153,20 @@ cdef class DateColumn(BaseColumn):
         self.capacity = new_cap
 
     cdef inline int32_t _resolve_date(self, date) except *:
+        cdef int32_t v
         if isinstance(date, str):
             return _parse_date_str(<str>date)
-        return <int32_t>date
+        v = <int32_t>date
+        # YYYYMMDD integers (> 10000000) need conversion to epoch days
+        if v > 10000000:
+            return _ymd_to_days(v // 10000, (v // 100) % 100, v % 100)
+        return v
+
+    cdef inline int32_t _to_ymd_int(self, int32_t epoch_days) noexcept nogil:
+        """Convert epoch days back to YYYYMMDD integer for backward compatibility."""
+        cdef int y, m, d
+        _days_to_ymd(epoch_days, &y, &m, &d)
+        return <int32_t>(y * 10000 + m * 100 + d)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -166,6 +176,8 @@ cdef class DateColumn(BaseColumn):
             v = _parse_date_str(<str>val)
         else:
             v = <int32_t>val
+            if v > 10000000:
+                v = _ymd_to_days(v // 10000, (v // 100) % 100, v % 100)
 
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
@@ -187,7 +199,7 @@ cdef class DateColumn(BaseColumn):
         if self.length == 0:
             raise IndexError("pop from empty column")
         self.length -= 1
-        return (<int32_t*>self.data_c)[self.length]
+        return self._to_ymd_int((<int32_t*>self.data_c)[self.length])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -198,7 +210,7 @@ cdef class DateColumn(BaseColumn):
         if self.length > 1:
             memmove(self.data_c, <int32_t*>self.data_c + 1, (self.length - 1) * sizeof(int32_t))
         self.length -= 1
-        return val
+        return self._to_ymd_int(val)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -221,7 +233,7 @@ cdef class DateColumn(BaseColumn):
             for i in range(1, n):
                 if ptr[i] > max_val:
                     max_val = ptr[i]
-        return max_val
+        return self._to_ymd_int(max_val)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -234,7 +246,7 @@ cdef class DateColumn(BaseColumn):
             for i in range(1, n):
                 if ptr[i] < min_val:
                     min_val = ptr[i]
-        return min_val
+        return self._to_ymd_int(min_val)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -271,7 +283,7 @@ cdef class DateColumn(BaseColumn):
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError("Index out of bounds")
-        return (<int32_t*>self.data_c)[idx]
+        return self._to_ymd_int((<int32_t*>self.data_c)[idx])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -281,7 +293,7 @@ cdef class DateColumn(BaseColumn):
         cdef Py_ssize_t i, n = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         for i in range(n):
-            val = ptr[i]
+            val = self._to_ymd_int(ptr[i])
             if val not in seen:
                 seen.add(val)
                 result.append(val)
@@ -1100,14 +1112,16 @@ cdef class DateColumn(BaseColumn):
             ic.length = n
             with nogil:
                 for i in range(n):
-                    ic.data_c[i] = <int>s_ptr[i]
+                    _days_to_ymd(s_ptr[i], &y, &m, &d)
+                    ic.data_c[i] = y * 10000 + m * 100 + d
             return ic
         elif target_type == TYPE_DOUBLE:
             dc = DoubleColumn(safe_cap)
             dc.length = n
             with nogil:
                 for i in range(n):
-                    dc.data_c[i] = <double>s_ptr[i]
+                    _days_to_ymd(s_ptr[i], &y, &m, &d)
+                    dc.data_c[i] = <double>(y * 10000 + m * 100 + d)
             return dc
         elif target_type == TYPE_CHAR256:
             cc = Char256Column_SoA(safe_cap)

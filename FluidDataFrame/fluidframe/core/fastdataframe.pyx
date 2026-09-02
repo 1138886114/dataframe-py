@@ -6,7 +6,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove, strncmp, memset, strncpy
 from libc.stdio cimport snprintf
-from libc.stdint cimport uint32_t
+from libc.stdint cimport uint32_t, int32_t
 from libc.time cimport time_t, time
 from libc.math cimport NAN, sqrt, log, cos
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
@@ -140,7 +140,7 @@ from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn, _c_corr, _c_cov, _c_euclidean_dist, _c_manhattan_dist, _c_cosine_dist, _c_cosine_similarity, _c_jaccard_sim, _c_hamming_dist
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
-from fluidframe.core.datecolumn cimport DateColumn
+from fluidframe.core.datecolumn cimport DateColumn, _days_to_ymd
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
@@ -415,6 +415,8 @@ cdef class FastDataFrame:
         cdef int y, m, d
         cdef int h, mm, s
         cdef object val
+        cdef int32_t* date_ptr
+        cdef int dy, dm, dd
 
         if dt == TYPE_INT:
             sz = snprintf(buf, sizeof(buf), "%d", (<IntColumn>col).data_c[i])
@@ -428,12 +430,10 @@ cdef class FastDataFrame:
             sz = snprintf(buf, sizeof(buf), "%.6g", dval)
             return buf[:sz].decode('ascii')
 
-        elif dt == TYPE_TIMESTAMP: # Date 格式 YYYYMMDD
-            tval = (<DateColumn>col).data_c[i]
-            y = <int>(tval / 10000)
-            m = <int>((tval / 100) % 100)
-            d = <int>(tval % 100)
-            sz = snprintf(buf, sizeof(buf), "%04d-%02d-%02d", y, m, d)
+        elif dt == TYPE_TIMESTAMP: # Date 格式: epoch days -> YYYY-MM-DD
+            date_ptr = (<DateColumn>col).data_c
+            _days_to_ymd(date_ptr[i], &dy, &dm, &dd)
+            sz = snprintf(buf, sizeof(buf), "%04d-%02d-%02d", dy, dm, dd)
             return buf[:sz].decode('ascii')
 
         elif dt == TYPE_TIME: # Time 格式 秒数 -> HH:MM:SS
@@ -851,7 +851,7 @@ cdef class FastDataFrame:
 
         elif col.dtype == TYPE_TIMESTAMP:
             with nogil:
-                _c_argsort_numeric((<DateColumn>col).data_c, indices_c, 0, n - 1)
+                _c_argsort_numeric(<int*>(<DateColumn>col).data_c, indices_c, 0, n - 1)
         elif col.dtype == TYPE_DATETIME:
             with nogil:
                 _c_argsort_numeric((<DateTimeColumn>col).data_c, indices_c, 0, n - 1)
@@ -2438,7 +2438,7 @@ cdef class FastDataFrame:
                             ucs2_obj.offsets_c[_oi] += ucs2_val_len
                         ucs2_obj.char_length += ucs2_val_len
                 elif col_obj.dtype == TYPE_TIMESTAMP:
-                    (<DateColumn>col_obj).data_c[pos] = <long long>val
+                    (<DateColumn>col_obj).data_c[pos] = <int32_t>val
                 elif col_obj.dtype == TYPE_BOOL:
                     (<BoolColumn>col_obj).data_c[pos] = 1 if val else 0
                 elif col_obj.dtype == TYPE_CATEGORY:

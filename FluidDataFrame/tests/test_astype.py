@@ -47,9 +47,9 @@ check(uc[2] == '42', "int->ucs2 [2]")
 cc = ic.astype('char256')
 check(cc[0] == '1', "int->char256 [0]")
 
-# int -> timestamp
+# int -> timestamp (small ints treated as epoch days, read back as YYYYMMDD)
 tc = ic.astype('timestamp')
-check(tc[0] == 1, "int->timestamp [0]")
+check(tc[0] == 19700102, "int->timestamp [0]")  # epoch day 1 = 1970-01-02
 
 # int -> category
 catc = ic.astype('category')

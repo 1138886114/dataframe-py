@@ -8,7 +8,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdio cimport snprintf
-from libc.stdint cimport uint64_t
+from libc.stdint cimport uint64_t, int32_t
 from libc.stdlib cimport qsort, bsearch
 
 from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_DATETIME, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_TIME, _resolve_astype_target
@@ -17,7 +17,7 @@ from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.categorycolumn cimport CategoryColumn
-from fluidframe.core.datecolumn cimport DateColumn, _date_to_daynum, _daynum_to_date
+from fluidframe.core.datecolumn cimport DateColumn, _ymd_to_days, _days_to_ymd
 from fluidframe.core.timecolumn cimport TimeColumn
 
 
@@ -55,7 +55,7 @@ cdef inline long long _parse_datetime_str(str s) except -1:
         second = digits[12]*10 + digits[13]
 
     # Calculate day number from epoch
-    daynum = _date_to_daynum(year, month, day) - _date_to_daynum(2024, 1, 1)
+    daynum = _ymd_to_days(year, month, day) - _ymd_to_days(2024, 1, 1)
     us = daynum * 86400000000LL + hour * 3600000000LL + minute * 60000000LL + second * 1000000LL
     return us
 
@@ -73,8 +73,8 @@ cdef inline void _datetime_to_ymdhms(long long us, int* y, int* m, int* d, int* 
     mi[0] = remainder // 60
     s[0] = remainder - (remainder // 60) * 60
     # Convert daynum to date
-    cdef long long abs_daynum = daynum + _date_to_daynum(2024, 1, 1)
-    _daynum_to_date(abs_daynum, y, m, d)
+    cdef long long abs_daynum = daynum + _ymd_to_days(2024, 1, 1)
+    _days_to_ymd(<int32_t>abs_daynum, y, m, d)
 
 
 cdef inline str _datetime_to_str(long long us):
@@ -518,7 +518,7 @@ cdef class DateTimeColumn(BaseColumn):
         cdef CategoryColumn catc
         cdef DateColumn tc
         cdef TimeColumn tmc
-        cdef long long* tc_ptr
+        cdef int32_t* tc_ptr
         cdef int* tmc_ptr
 
         if target_type == TYPE_INT:
