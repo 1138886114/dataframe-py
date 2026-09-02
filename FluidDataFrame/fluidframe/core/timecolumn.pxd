@@ -12,5 +12,6 @@ cdef class TimeColumn(BaseColumn):
     cdef public Py_ssize_t capacity
     cdef int* data_c
     cdef void _reserve(self, Py_ssize_t new_cap)
+    cdef inline int _resolve_time(self, val) except -1
     cdef TimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len)
