@@ -10,6 +10,7 @@ from libc.string cimport memcpy, memmove
 from libc.stdio cimport snprintf
 from libc.math cimport sqrt, fabs, NAN
 from libc.stdlib cimport qsort, bsearch
+from libc.stdint cimport int64_t
 from fluidframe.core._base cimport (
     TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL,
     TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
