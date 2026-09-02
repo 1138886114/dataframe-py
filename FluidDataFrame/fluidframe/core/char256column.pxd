@@ -5,8 +5,8 @@ from libc.string cimport memcpy, memmove, strstr, strlen, strncmp, strncpy
 from fluidframe.core._base cimport BaseColumn
 from fluidframe.core.intcolumn cimport IntColumn
 
-cdef bint _c_str_contains(char* source, const char* target) noexcept nogil
-cdef void _c_str_replace_inplace(char* buffer, const char* old_sub, const char* new_sub) noexcept nogil
+cdef bint _c_str_contains(const char* source, const char* target) noexcept nogil
+cdef void _c_str_replace_inplace(char* buffer, const char* old_sub, const char* new_sub, size_t old_len, size_t new_len) noexcept nogil
 
 @cython.final
 @cython.boundscheck(False)
