@@ -18,6 +18,7 @@ from fluidframe.core._base cimport (
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.categorycolumn cimport CategoryColumn
@@ -28,9 +29,9 @@ from fluidframe.core.timecolumn cimport TimeColumn
 #  时间常数定义 (基于 Unix 1970-01-01 00:00:00 纪元)
 # ============================================================
 
-DEF US_PER_SEC = 1000000LL
-DEF SEC_PER_DAY = 86400LL
-DEF US_PER_DAY = 86400000000LL
+cdef int64_t US_PER_SEC = 1000000
+cdef int64_t SEC_PER_DAY = 86400
+cdef int64_t US_PER_DAY = 86400000000
 
 
 cdef inline int64_t _parse_datetime_str(str s) except -1:
@@ -602,6 +603,10 @@ cdef class DateTimeColumn(BaseColumn):
         cdef CategoryColumn catc
         cdef DateColumn tc
         cdef TimeColumn tmc
+        cdef int32_t* tc_ptr
+        cdef int* tmc_ptr
+        cdef int64_t secs
+        cdef int rem
 
         if target_type == TYPE_INT:
             ic = IntColumn(safe_cap)
@@ -625,7 +630,7 @@ cdef class DateTimeColumn(BaseColumn):
         elif target_type == TYPE_TIMESTAMP:
             tc = DateColumn(safe_cap)
             tc.length = n
-            cdef int32_t* tc_ptr = <int32_t*>tc.data_c
+            tc_ptr = <int32_t*>tc.data_c
             with nogil:
                 for i in range(n):
                     tc_ptr[i] = <int32_t>(ptr[i] / US_PER_DAY)
@@ -637,9 +642,7 @@ cdef class DateTimeColumn(BaseColumn):
         elif target_type == TYPE_TIME:
             tmc = TimeColumn(safe_cap)
             tmc.length = n
-            cdef int* tmc_ptr = tmc.data_c
-            cdef int64_t secs
-            cdef int rem
+            tmc_ptr = tmc.data_c
             with nogil:
                 for i in range(n):
                     secs = ptr[i] / US_PER_SEC

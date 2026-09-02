@@ -26,5 +26,6 @@ cdef class BaseColumn:
 
 ctypedef fused NumericType:
     int
+    long
     double
     long long

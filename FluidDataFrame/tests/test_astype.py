@@ -219,7 +219,7 @@ res2 = to_datetime(s2, errors='coerce')
 check(str(res2[0]) == '2024-01-01', "to_datetime YYYY-MM-DD")
 check(str(res2[1]) == '2023-06-15', "to_datetime YYYYMMDD")
 check(str(res2[3]) == '2020-02-29', "to_datetime leap year")
-check(str(res2[2]) == '2024-01-01', "to_datetime coerce epoch")
+check(str(res2[2]) == '1970-01-01', "to_datetime coerce epoch")
 
 # ==================== to_timedelta ====================
 print("=== to_timedelta ===")

@@ -74,7 +74,7 @@ dtc2 = DateTimeColumn(2)
 dtc2.append(0)
 dtc2.append(100000000)
 check(dtc2.length == 2, "raw append length")
-check(str(dtc2[0]) == '2024-01-01', "raw 0 = epoch")
+check(str(dtc2[0]) == '1970-01-01', "raw 0 = epoch")
 
 # ==================== DateTimeColumn invalid ====================
 print("=== DateTimeColumn invalid ===")

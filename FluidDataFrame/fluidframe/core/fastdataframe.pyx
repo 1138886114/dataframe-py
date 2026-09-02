@@ -854,7 +854,7 @@ cdef class FastDataFrame:
                 _c_argsort_numeric(<int*>(<DateColumn>col).data_c, indices_c, 0, n - 1)
         elif col.dtype == TYPE_DATETIME:
             with nogil:
-                _c_argsort_numeric((<DateTimeColumn>col).data_c, indices_c, 0, n - 1)
+                _c_argsort_numeric(<long long*>(<DateTimeColumn>col).data_c, indices_c, 0, n - 1)
         elif col.dtype == TYPE_TIME:
             with nogil:
                 _c_argsort_numeric((<TimeColumn>col).data_c, indices_c, 0, n - 1)
