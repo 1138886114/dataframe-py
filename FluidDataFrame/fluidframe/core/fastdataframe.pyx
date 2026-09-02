@@ -10,7 +10,7 @@ from libc.string cimport memcpy, memmove, strncmp, memset, strncpy
 from libc.stdio cimport snprintf
 from libc.stdint cimport uint32_t, int32_t, int64_t
 from libc.time cimport time_t, time
-from libc.math cimport NAN, sqrt, log, cos
+from libc.math cimport NAN, sqrt, log, cos, isnan
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
 from fluidframe.core._base cimport (
     BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free,
@@ -262,10 +262,10 @@ cdef dict _TYPE_PYCLASSES = {
 }
 
 cdef dict _TYPE_BYTES = {
-    TYPE_INT: sizeof(int), TYPE_DOUBLE: sizeof(double), TYPE_CHAR256: 256,
-    TYPE_UCS2: sizeof(Py_UCS2), TYPE_TIMESTAMP: sizeof(int32_t),
-    TYPE_BOOL: 1, TYPE_CATEGORY: sizeof(int),
-    TYPE_DATETIME: sizeof(long long), TYPE_TIME: sizeof(int),
+    TYPE_INT: 4, TYPE_DOUBLE: 8, TYPE_CHAR256: 256,
+    TYPE_UCS2: 2, TYPE_TIMESTAMP: 4,
+    TYPE_BOOL: 1, TYPE_CATEGORY: 4,
+    TYPE_DATETIME: 8, TYPE_TIME: 4,
 }
 
 
@@ -779,6 +779,7 @@ cdef class FastDataFrame:
         cdef Py_ssize_t* indices_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
         if not indices_c: raise MemoryError()
         cdef Py_ssize_t i
+        cdef Py_ssize_t temp
 
         try:
             for i in range(n): indices_c[i] = i
@@ -803,11 +804,10 @@ cdef class FastDataFrame:
                     _c_argsort_numeric(<long long*>(<DateTimeColumn>col).data_c, indices_c, 0, n - 1)
             elif col.dtype == TYPE_TIME:
                 with nogil:
-                    _c_argsort_numeric((<TimeColumn>col).data_c, indices_c, 0, n - 1)
+                    _c_argsort_numeric(<int*>(<TimeColumn>col).data_c, indices_c, 0, n - 1)
             else:
                 raise TypeError("Sorting not supported for this column type")
 
-            cdef Py_ssize_t temp
             if reverse:
                 for i in range(n // 2):
                     temp = indices_c[i]
@@ -873,14 +873,9 @@ cdef class FastDataFrame:
     def reset_index(self):
         cdef IntColumn idx_col = IntColumn(self.df_length)
         cdef Py_ssize_t i
-        cdef Py_ssize_t n_old = self.index.length if self.index is not None else 0
-        cdef Py_ssize_t n_fill = self.df_length if n_old >= self.df_length else n_old
-        cdef list old_values = self.index.values() if n_old > 0 else None
-        for i in range(n_fill):
-            idx_col.data_c[i] = <int>old_values[i]
-        for i in range(n_fill, self.df_length):
-            idx_col.data_c[i] = <int>i
         idx_col.length = self.df_length
+        for i in range(self.df_length):
+            idx_col.data_c[i] = <int>i
         self.columns['index'] = idx_col
         self.index = RangeIndex(0, self.df_length)
 
@@ -1417,7 +1412,7 @@ cdef class FastDataFrame:
                 d_data = (<DoubleColumn>col).data_c
                 with nogil:
                     for i in range(n):
-                        new_col.data_c[i] = (d_data[i] != d_data[i])
+                        new_col.data_c[i] = isnan(d_data[i])
             else:
                 memset(new_col.data_c, 0, n * sizeof(int))
             result.columns[name] = new_col
@@ -1439,7 +1434,7 @@ cdef class FastDataFrame:
                 d_data = (<DoubleColumn>col).data_c
                 with nogil:
                     for i in range(n):
-                        if d_data[i] != d_data[i]:
+                        if isnan(d_data[i]):
                             d_data[i] = value
         return result
 
@@ -1463,7 +1458,7 @@ cdef class FastDataFrame:
                     d_data = (<DoubleColumn>col).data_c
                     with nogil:
                         for i in range(n):
-                            if keep_mask[i] and (d_data[i] != d_data[i]):
+                            if keep_mask[i] and isnan(d_data[i]):
                                 keep_mask[i] = 0
 
             for i in range(n):
@@ -2162,7 +2157,7 @@ cdef class FastDataFrame:
             new_col.length = cols
             for j in range(cols):
                 new_col.data_c[j] = self._get_col_value_as_double(self.columns[col_names[j]], i)
-            result.columns[str(i)] = new_col
+            result.columns[col_names[i]] = new_col
         return result
 
     def reindex(self, list new_index):
@@ -2342,13 +2337,13 @@ cdef class FastDataFrame:
             if left_idx_c: os_aligned_free(left_idx_c)
             if right_idx_c: os_aligned_free(right_idx_c)
             raise MemoryError()
+        cdef BaseColumn src_col
 
         try:
             for i in range(result_len):
                 left_idx_c[i] = left_indices[i]
                 right_idx_c[i] = right_indices[i]
 
-            cdef BaseColumn src_col
             for cn in [on] + left_col_names:
                 src_col = self.columns[cn]
                 if src_col.dtype == TYPE_INT:
@@ -2809,7 +2804,16 @@ cdef class FastDataFrame:
         return '\n'.join(lines)
 
     cdef Py_ssize_t _col_bytes(self, BaseColumn col):
-        return _TYPE_BYTES.get(col.dtype, 0)
+        if col.dtype == TYPE_INT: return 4
+        elif col.dtype == TYPE_DOUBLE: return 8
+        elif col.dtype == TYPE_CHAR256: return 256
+        elif col.dtype == TYPE_UCS2: return 2
+        elif col.dtype == TYPE_TIMESTAMP: return 4
+        elif col.dtype == TYPE_BOOL: return 1
+        elif col.dtype == TYPE_CATEGORY: return 4
+        elif col.dtype == TYPE_DATETIME: return 8
+        elif col.dtype == TYPE_TIME: return 4
+        return 0
 
     cdef str _dtype_summary(self):
         cdef dict counts = {}

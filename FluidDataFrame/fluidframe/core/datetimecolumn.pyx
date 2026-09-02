@@ -604,7 +604,7 @@ cdef class DateTimeColumn(BaseColumn):
         cdef DateColumn tc
         cdef TimeColumn tmc
         cdef int32_t* tc_ptr
-        cdef int* tmc_ptr
+        cdef int32_t* tmc_ptr
         cdef int64_t secs
         cdef int rem
 

@@ -30,18 +30,21 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 # ============================================================
 
 # 00-99 两位字符查找表（LUT 优化：消除格式化中的所有除法/分支）
-cdef const char[200] DIGIT_PAIRS = (
-    b"00010203040506070809"
-    b"10111213141516171819"
-    b"20212223242526272829"
-    b"30313233343536373839"
-    b"40414243444546474849"
-    b"50515253545556575859"
-    b"60616263646566676869"
-    b"70717273747576777879"
-    b"80818283848586878889"
-    b"90919293949596979899"
-)
+cdef extern from *:
+    """
+    static const char DIGIT_PAIRS[200] =
+        "00010203040506070809"
+        "10111213141516171819"
+        "20212223242526272829"
+        "30313233343536373839"
+        "40414243444546474849"
+        "50515253545556575859"
+        "60616263646566676869"
+        "70717273747576777879"
+        "80818283848586878889"
+        "90919293949596979899";
+    """
+    const char DIGIT_PAIRS[200]
 
 cdef inline void _split_hms(int32_t secs, int32_t* h, int32_t* m, int32_t* s) noexcept nogil:
     """提取时分秒（钳制安全范围：0 ~ 86399）"""
@@ -89,19 +92,19 @@ cdef int32_t _parse_time_str(str s) except -1:
     cdef int32_t cur_val = 0
     cdef int32_t part_idx = 0
     cdef Py_ssize_t i
-    cdef char c
+    cdef int c
 
     for i in range(n):
-        c = buf[i]
-        if c >= b'0' and c <= b'9':
-            cur_val = cur_val * 10 + (c - b'0')
-        elif c == b':':
+        c = <int>buf[i]
+        if c >= 48 and c <= 57:
+            cur_val = cur_val * 10 + (c - 48)
+        elif c == 58:
             if part_idx >= 2:
                 raise ValueError(f"Invalid time format: '{s}'")
             parts[part_idx] = cur_val
             cur_val = 0
             part_idx += 1
-        elif c == b' ' or c == b'\t' or c == b'\r' or c == b'\n':
+        elif c == 32 or c == 9 or c == 13 or c == 10:
             continue
         else:
             raise ValueError(f"Invalid character in time string: '{s}'")
@@ -300,7 +303,7 @@ cdef class TimeColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
         cdef int32_t* ptr = self.data_c
-        cdef int32_t* res_ptr = res.data_c
+        cdef int32_t* res_ptr = <int32_t*>res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
@@ -313,7 +316,7 @@ cdef class TimeColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
         cdef int32_t* ptr = self.data_c
-        cdef int32_t* res_ptr = res.data_c
+        cdef int32_t* res_ptr = <int32_t*>res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
@@ -326,7 +329,7 @@ cdef class TimeColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
         cdef int32_t* ptr = self.data_c
-        cdef int32_t* res_ptr = res.data_c
+        cdef int32_t* res_ptr = <int32_t*>res.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
@@ -349,7 +352,7 @@ cdef class TimeColumn(BaseColumn):
         cdef int32_t fill_val = self._resolve_time(fill) if fill is not None else 0
         cdef int32_t* col_ptr = col.data_c
         cdef int32_t* self_ptr = self.data_c
-        cdef int32_t* mask_ptr = mask.data_c
+        cdef int32_t* mask_ptr = <int32_t*>mask.data_c
         cdef Py_ssize_t i
         with nogil:
             for i in range(n):
@@ -449,7 +452,7 @@ cdef class TimeColumn(BaseColumn):
 
         cdef int32_t* s_ptr = self.data_c
         cdef int32_t* o_ptr
-        cdef int32_t* r_ptr = res.data_c
+        cdef int32_t* r_ptr = <int32_t*>res.data_c
         cdef char err_buf[128]
         cdef int32_t v
         cdef TimeColumn other
