@@ -137,7 +137,7 @@ cdef extern from *:
 
 from fluidframe.core._base cimport BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free
 from fluidframe.core.intcolumn cimport IntColumn
-from fluidframe.core.doublecolumn cimport DoubleColumn, _c_corr, _c_cov
+from fluidframe.core.doublecolumn cimport DoubleColumn, _c_corr, _c_cov, _c_euclidean_dist, _c_manhattan_dist, _c_cosine_dist, _c_cosine_similarity, _c_jaccard_sim, _c_hamming_dist
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
 from fluidframe.core.datecolumn cimport DateColumn
@@ -1399,6 +1399,96 @@ cdef class FastDataFrame:
         for name, col in self.columns.items():
             result[name] = col.length
         return result
+
+    @cython.binding(False)
+    def euclidean_dist_withcols(self, col1, col2):
+        cdef str name1 = col1 if isinstance(col1, str) else None
+        cdef str name2 = col2 if isinstance(col2, str) else None
+        cdef DoubleColumn c1, c2
+        if name1 is not None:
+            c1 = <DoubleColumn>self.columns[name1]
+        else:
+            c1 = <DoubleColumn>col1
+        if name2 is not None:
+            c2 = <DoubleColumn>self.columns[name2]
+        else:
+            c2 = <DoubleColumn>col2
+        return c1.euclidean_dist(c2)
+
+    @cython.binding(False)
+    def manhattan_dist_withcols(self, col1, col2):
+        cdef str name1 = col1 if isinstance(col1, str) else None
+        cdef str name2 = col2 if isinstance(col2, str) else None
+        cdef DoubleColumn c1, c2
+        if name1 is not None:
+            c1 = <DoubleColumn>self.columns[name1]
+        else:
+            c1 = <DoubleColumn>col1
+        if name2 is not None:
+            c2 = <DoubleColumn>self.columns[name2]
+        else:
+            c2 = <DoubleColumn>col2
+        return c1.manhattan_dist(c2)
+
+    @cython.binding(False)
+    def cosine_dist_withcols(self, col1, col2):
+        cdef str name1 = col1 if isinstance(col1, str) else None
+        cdef str name2 = col2 if isinstance(col2, str) else None
+        cdef DoubleColumn c1, c2
+        if name1 is not None:
+            c1 = <DoubleColumn>self.columns[name1]
+        else:
+            c1 = <DoubleColumn>col1
+        if name2 is not None:
+            c2 = <DoubleColumn>self.columns[name2]
+        else:
+            c2 = <DoubleColumn>col2
+        return c1.cosine_dist(c2)
+
+    @cython.binding(False)
+    def cosine_similarity_withcols(self, col1, col2):
+        cdef str name1 = col1 if isinstance(col1, str) else None
+        cdef str name2 = col2 if isinstance(col2, str) else None
+        cdef DoubleColumn c1, c2
+        if name1 is not None:
+            c1 = <DoubleColumn>self.columns[name1]
+        else:
+            c1 = <DoubleColumn>col1
+        if name2 is not None:
+            c2 = <DoubleColumn>self.columns[name2]
+        else:
+            c2 = <DoubleColumn>col2
+        return c1.cosine_similarity(c2)
+
+    @cython.binding(False)
+    def jaccard_sim_withcols(self, col1, col2):
+        cdef str name1 = col1 if isinstance(col1, str) else None
+        cdef str name2 = col2 if isinstance(col2, str) else None
+        cdef DoubleColumn c1, c2
+        if name1 is not None:
+            c1 = <DoubleColumn>self.columns[name1]
+        else:
+            c1 = <DoubleColumn>col1
+        if name2 is not None:
+            c2 = <DoubleColumn>self.columns[name2]
+        else:
+            c2 = <DoubleColumn>col2
+        return c1.jaccard_sim(c2)
+
+    @cython.binding(False)
+    def hamming_dist_withcols(self, col1, col2):
+        cdef str name1 = col1 if isinstance(col1, str) else None
+        cdef str name2 = col2 if isinstance(col2, str) else None
+        cdef DoubleColumn c1, c2
+        if name1 is not None:
+            c1 = <DoubleColumn>self.columns[name1]
+        else:
+            c1 = <DoubleColumn>col1
+        if name2 is not None:
+            c2 = <DoubleColumn>self.columns[name2]
+        else:
+            c2 = <DoubleColumn>col2
+        return c1.hamming_dist(c2)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

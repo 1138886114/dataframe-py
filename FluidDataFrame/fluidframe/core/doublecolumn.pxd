@@ -8,6 +8,12 @@ from fluidframe.core.intcolumn cimport IntColumn
 
 cdef double _c_corr(double* a, double* b, Py_ssize_t n) noexcept nogil
 cdef double _c_cov(double* a, double* b, Py_ssize_t n) noexcept nogil
+cdef double _c_euclidean_dist(double* a, double* b, Py_ssize_t n) noexcept nogil
+cdef double _c_manhattan_dist(double* a, double* b, Py_ssize_t n) noexcept nogil
+cdef double _c_cosine_dist(double* a, double* b, Py_ssize_t n) noexcept nogil
+cdef double _c_cosine_similarity(double* a, double* b, Py_ssize_t n) noexcept nogil
+cdef double _c_jaccard_sim(double* a, double* b, Py_ssize_t n) noexcept nogil
+cdef double _c_hamming_dist(double* a, double* b, Py_ssize_t n) noexcept nogil
 
 @cython.final
 @cython.boundscheck(False)
