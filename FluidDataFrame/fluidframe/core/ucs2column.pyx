@@ -131,7 +131,7 @@ cdef class UCS2Column_SoA(BaseColumn):
         if self.offsets_c is not NULL: os_aligned_free(self.offsets_c)
         if self.chars_c is not NULL: os_aligned_free(self.chars_c)
 
-    cdef Py_ssize_t get_size(self):
+    def get_size(self):
         return self.capacity * sizeof(Py_UCS2) + (self.capacity + 1) * sizeof(Py_ssize_t)
 
     cdef void _reserve_rows(self, Py_ssize_t new_cap) except *:

@@ -22,7 +22,6 @@ cdef class BaseColumn:
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef public int dtype
-    cdef Py_ssize_t get_size(self)
 
 
 ctypedef fused NumericType:

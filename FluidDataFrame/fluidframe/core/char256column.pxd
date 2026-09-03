@@ -14,7 +14,6 @@ cdef class Char256Column_SoA(BaseColumn):
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef char* data_c
-    cdef Py_ssize_t get_size(self)
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef inline str _get_str(self, Py_ssize_t idx)
     cdef void _set_item(self, Py_ssize_t idx, str val) except *

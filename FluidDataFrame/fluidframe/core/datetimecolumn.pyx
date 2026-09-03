@@ -149,7 +149,7 @@ cdef class DateTimeColumn(BaseColumn):
             os_aligned_free(self.data_c)
             self.data_c = NULL
 
-    cdef Py_ssize_t get_size(self):
+    def get_size(self):
         return self.capacity * sizeof(int64_t)
 
     cdef void _reserve(self, Py_ssize_t new_cap):
