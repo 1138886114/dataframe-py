@@ -198,7 +198,7 @@ cdef void _col_to_double(object col, double* buf, Py_ssize_t n) except *:
     else:
         raise TypeError("Expected IntColumn or DoubleColumn")
 
-
+@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)

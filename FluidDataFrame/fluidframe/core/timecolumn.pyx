@@ -128,7 +128,7 @@ cdef int _cmp_int32(const void* a, const void* b) noexcept nogil:
 # ============================================================
 #  TimeColumn 类实现 (全面 int32_t 与 SIMD 向量化优化)
 # ============================================================
-
+@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)

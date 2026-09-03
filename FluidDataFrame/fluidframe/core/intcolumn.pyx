@@ -34,7 +34,7 @@ cdef int _cmp_int(const void* a, const void* b) noexcept nogil:
     if va > vb: return 1
     return 0
 
-
+@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)

@@ -119,7 +119,7 @@ cdef inline int32_t _parse_date_str(str s) noexcept:
 # ============================================================
 #  DateColumn 类实现
 # ============================================================
-
+@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)

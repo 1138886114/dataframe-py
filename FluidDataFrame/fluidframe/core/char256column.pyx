@@ -101,7 +101,7 @@ cdef inline Py_ssize_t _c_count(const char *data, const char *pat, size_t pat_le
 # ============================================================
 #  Char256Column_SoA 类定义
 # ============================================================
-
+@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
