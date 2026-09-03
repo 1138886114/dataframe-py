@@ -84,6 +84,22 @@ def from_pickle(filename, bint allow_raw_pickle=False):
             col = DateColumn()
             for v in values:
                 col.append(v)
+        elif typ == 'bool':
+            col = BoolColumn()
+            for v in values:
+                col.append(v)
+        elif typ == 'category':
+            col = CategoryColumn()
+            for v in values:
+                col.append(v)
+        elif typ == 'datetime':
+            col = DateTimeColumn()
+            for v in values:
+                col.append(v)
+        elif typ == 'time':
+            col = TimeColumn()
+            for v in values:
+                col.append(v)
         df.columns[col_name] = col
     return df
 
@@ -116,6 +132,14 @@ def read_csv(filename, dict schema, sep=','):
                 df.columns[name] = Char256Column_SoA()
             elif dtype == TYPE_TIMESTAMP:
                 df.columns[name] = DateColumn()
+            elif dtype == TYPE_BOOL:
+                df.columns[name] = BoolColumn()
+            elif dtype == TYPE_CATEGORY:
+                df.columns[name] = CategoryColumn()
+            elif dtype == TYPE_DATETIME:
+                df.columns[name] = DateTimeColumn()
+            elif dtype == TYPE_TIME:
+                df.columns[name] = TimeColumn()
             else:
                 df.columns[name] = UCS2Column_SoA()
         return df
@@ -138,6 +162,23 @@ def read_csv(filename, dict schema, sep=','):
                 col.append(rows[i][j])
         elif py_type == TYPE_TIMESTAMP:
             col = DateColumn(n_rows)
+            for i in range(n_rows):
+                col.append(rows[i][j].strip())
+        elif py_type == TYPE_BOOL:
+            col = BoolColumn(n_rows)
+            for i in range(n_rows):
+                val = rows[i][j].strip().lower()
+                col.append(val in ('true', '1', 'yes'))
+        elif py_type == TYPE_CATEGORY:
+            col = CategoryColumn(n_rows)
+            for i in range(n_rows):
+                col.append(rows[i][j])
+        elif py_type == TYPE_DATETIME:
+            col = DateTimeColumn(n_rows)
+            for i in range(n_rows):
+                col.append(rows[i][j].strip())
+        elif py_type == TYPE_TIME:
+            col = TimeColumn(n_rows)
             for i in range(n_rows):
                 col.append(rows[i][j].strip())
         else:
@@ -458,7 +499,7 @@ def where(IntColumn cond, object true_val, object false_val):
     """
     极致性能的 numpy.where 等效替代。
     根据 cond 掩码列，选择填充 true_val 或 false_val。
-    支持 标量/标量、标量/列、列/列 等复杂广播。
+    支持 标量/标量、标量/列、列/标量 等复杂广播。
     """
     cdef Py_ssize_t n = cond.length
     cdef Py_ssize_t i
@@ -466,7 +507,10 @@ def where(IntColumn cond, object true_val, object false_val):
     cdef double v_t, v_f
     cdef double* res_ptr
     cdef DoubleColumn res_dbl
+    cdef IntColumn inv
+    cdef int* inv_ptr
 
+    # --- scalar / scalar ---
     if isinstance(true_val, str) and isinstance(false_val, str):
         res_str = UCS2Column_SoA(max(n, 1))
         res_str.length = n
@@ -488,10 +532,18 @@ def where(IntColumn cond, object true_val, object false_val):
                 res_ptr[i] = v_t if cond_ptr[i] else v_f
         return res_dbl
 
-    elif type(true_val).__name__ in ('DoubleColumn', 'IntColumn'):
-        return true_val.mask(~cond, false_val)
+    # --- column / scalar: true_val.where_mask(cond, false_val) ---
+    elif hasattr(true_val, 'where_mask'):
+        return true_val.where_mask(cond, false_val)
 
-    elif type(false_val).__name__ in ('DoubleColumn', 'IntColumn'):
-        return false_val.where_mask(cond, true_val)
+    # --- scalar / column: false_val.where_mask(~cond, true_val) ---
+    elif hasattr(false_val, 'where_mask'):
+        inv = IntColumn(max(n, 1))
+        inv.length = n
+        inv_ptr = inv.data_c
+        with nogil:
+            for i in range(n):
+                inv_ptr[i] = 0 if cond_ptr[i] else 1
+        return false_val.where_mask(inv, true_val)
 
     raise TypeError(f"Unsupported types for where: {type(true_val)}, {type(false_val)}")

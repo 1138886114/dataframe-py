@@ -518,11 +518,6 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def kurtosis(self):
-        return self.kurt()
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
     def cumprod(self):
         cdef IntColumn res = IntColumn(max(self.capacity, 1))
         res.length = self.length

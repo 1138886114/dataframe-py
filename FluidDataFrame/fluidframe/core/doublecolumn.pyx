@@ -716,11 +716,6 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def kurtosis(self):
-        return self.kurt()
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
     def cumprod(self):
         cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1))
         res.length = self.length

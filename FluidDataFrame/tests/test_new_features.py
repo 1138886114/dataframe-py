@@ -412,7 +412,7 @@ def test_sort_values_by():
     df = FastDataFrame({'a': int})
     for v in [3, 1, 2]:
         df.append_row(a=v)
-    result = df.sort_values_by('a')
+    result = df.sort_values('a')
     check('sorted', [result['a'][i] for i in range(3)] == [1, 2, 3])
 
 def test_sort_values_inplace():
@@ -420,7 +420,7 @@ def test_sort_values_inplace():
     df = FastDataFrame({'a': int})
     for v in [3, 1, 2]:
         df.append_row(a=v)
-    df.sort_values_inplace('a')
+    df.sort_values('a', inplace=True)
     check('sorted', [df['a'][i] for i in range(3)] == [1, 2, 3])
 
 # ============================================================
@@ -615,7 +615,7 @@ def test_where_index():
     df.append_row(a=2, b=20)
     df.append_row(a=3, b=30)
     mask = df['a'] > 1
-    result = df.where_index(mask)
+    result = df.loc[mask]
     check('where_index shape', result.shape == (2, 2))
     check('where_index val', result['a'][0] == 2)
 
@@ -626,7 +626,7 @@ def test_where_all():
     df.append_row(a=2, b=20.0)
     df.append_row(a=3, b=30.0)
     mask = df['a'] > 1
-    result = df.where_all(mask, fill=0)
+    result = df.where_row(mask, fill=0)
     check('where_all shape', result.shape == (3, 2))
     check('where_all fill a', result['a'][0] == 0)
     check('where_all fill b', result['b'][0] == 0.0)

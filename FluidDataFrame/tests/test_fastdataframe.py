@@ -146,7 +146,7 @@ def test_access():
     check('getattr missing', expect_exception(AttributeError, getattr, df, 'nonexistent'))
 
     df = FastDataFrame({'a': int})
-    check('repr', 'FastDataFrame' in repr(df) and '0 rows' in repr(df))
+    check('repr', 'shape: (0, 1)' in repr(df))
 
 
 # =====================================================================
@@ -184,7 +184,7 @@ def test_pop_empty():
 # =====================================================================
 #  Drop & drop_raw
 # =====================================================================
-def test_drop_col():
+def test_drop():
     df = make_complex_df()
     df.drop('tag')
     check('drop shape', df.shape == (10, 4))
@@ -734,7 +734,7 @@ def run_all():
     test_pop_empty()
 
     # Drop
-    test_drop_col()
+    test_drop()
     test_drop_with_index()
     test_drop_raw()
 

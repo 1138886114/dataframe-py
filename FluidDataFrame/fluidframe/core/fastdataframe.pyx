@@ -873,15 +873,6 @@ cdef class FastDataFrame:
         self.index = RangeIndex(0, self.df_length)
 
     @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def __repr__(self):
-        return f"<FastDataFrame: {self.df_length} rows, columns: {list(self.columns.keys())}>"
-
-    @cython.binding(False)
-    def drop_col(self, str col_name):
-        self.drop(col_name)
-
-    @cython.binding(False)
     def sort_index(self, bint ascending=True, bint inplace=False):
         if 'index' not in self.columns:
             raise KeyError("No 'index' column found. Call reset_index() first.")
@@ -1370,10 +1361,6 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def kurtosis(self): return self._numeric_agg('kurt')
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
     def cumsum(self): return self._numeric_agg('cumsum')
 
     @cython.binding(False)
@@ -1488,6 +1475,76 @@ cdef class FastDataFrame:
         return FastDataFrameGroupBy(self, by_list)
 
     @staticmethod
+    def _make_empty_column(int dtype):
+        if dtype == TYPE_INT: return IntColumn()
+        elif dtype == TYPE_DOUBLE: return DoubleColumn()
+        elif dtype == TYPE_CHAR256: return Char256Column_SoA()
+        elif dtype == TYPE_UCS2: return UCS2Column_SoA()
+        elif dtype == TYPE_TIMESTAMP: return DateColumn()
+        elif dtype == TYPE_BOOL: return BoolColumn()
+        elif dtype == TYPE_CATEGORY: return CategoryColumn()
+        elif dtype == TYPE_DATETIME: return DateTimeColumn()
+        elif dtype == TYPE_TIME: return TimeColumn()
+        raise ValueError(f"Unknown dtype: {dtype}")
+
+    @staticmethod
+    def _populate_column(int dtype, Py_ssize_t n, list values):
+        cdef Py_ssize_t i
+        if dtype == TYPE_INT:
+            int_col = IntColumn(n)
+            int_col.length = n
+            for i in range(n): int_col.data_c[i] = <int>values[i]
+            return int_col
+        elif dtype == TYPE_DOUBLE:
+            dbl_col = DoubleColumn(n)
+            dbl_col.length = n
+            for i in range(n): dbl_col.data_c[i] = <double>values[i]
+            return dbl_col
+        elif dtype == TYPE_CHAR256:
+            c256_col = Char256Column_SoA(n)
+            for i in range(n): c256_col.append(<str>values[i])
+            return c256_col
+        elif dtype == TYPE_UCS2:
+            ucs2_col = UCS2Column_SoA(n)
+            for i in range(n): ucs2_col.append(<str>values[i])
+            return ucs2_col
+        elif dtype == TYPE_TIMESTAMP:
+            ts_col = DateColumn(n)
+            ts_col.length = n
+            for i in range(n): ts_col.data_c[i] = <int32_t>values[i]
+            return ts_col
+        elif dtype == TYPE_BOOL:
+            bool_col = BoolColumn(n)
+            bool_col.length = n
+            for i in range(n): bool_col.data_c[i] = 1 if values[i] else 0
+            return bool_col
+        elif dtype == TYPE_CATEGORY:
+            cat_col = CategoryColumn(n)
+            for i in range(n): cat_col.append(<str>values[i])
+            return cat_col
+        elif dtype == TYPE_DATETIME:
+            dtc_col = DateTimeColumn(n)
+            for i in range(n): dtc_col.append(<str>values[i])
+            return dtc_col
+        elif dtype == TYPE_TIME:
+            tmc_col = TimeColumn(n)
+            for i in range(n): tmc_col.append(<str>values[i])
+            return tmc_col
+        raise ValueError(f"Unknown dtype: {dtype}")
+
+    @staticmethod
+    def _rename_columns(FastDataFrame df, columns):
+        if columns is not None:
+            col_names = list(df.columns.keys())
+            new_names = list(columns)
+            if len(new_names) != len(col_names):
+                raise ValueError(f"columns length {len(new_names)} != {len(col_names)}")
+            new_cols = {}
+            for i in range(len(new_names)):
+                new_cols[new_names[i]] = df.columns[col_names[i]]
+            df.columns = new_cols
+
+    @staticmethod
     def from_dict(dict data, dict schema, columns=None):
         cdef dict parsed = _parse_schema(schema) if schema else {}
         cdef FastDataFrame df = FastDataFrame()
@@ -1523,58 +1580,9 @@ cdef class FastDataFrame:
         df.index = RangeIndex(0, n)
 
         for col_name in data:
-            values = data[col_name]
-            dtype = parsed[col_name]
-            if dtype == TYPE_INT:
-                int_col = IntColumn(n)
-                int_col.length = n
-                for i in range(n): int_col.data_c[i] = <int>values[i]
-                df.columns[col_name] = int_col
-            elif dtype == TYPE_DOUBLE:
-                dbl_col = DoubleColumn(n)
-                dbl_col.length = n
-                for i in range(n): dbl_col.data_c[i] = <double>values[i]
-                df.columns[col_name] = dbl_col
-            elif dtype == TYPE_CHAR256:
-                c256_col = Char256Column_SoA(n)
-                for i in range(n): c256_col.append(<str>values[i])
-                df.columns[col_name] = c256_col
-            elif dtype == TYPE_UCS2:
-                ucs2_col = UCS2Column_SoA(n)
-                for i in range(n): ucs2_col.append(<str>values[i])
-                df.columns[col_name] = ucs2_col
-            elif dtype == TYPE_TIMESTAMP:
-                ts_col = DateColumn(n)
-                ts_col.length = n
-                for i in range(n): ts_col.data_c[i] = <int32_t>values[i]
-                df.columns[col_name] = ts_col
-            elif dtype == TYPE_BOOL:
-                bool_col = BoolColumn(n)
-                bool_col.length = n
-                for i in range(n): bool_col.data_c[i] = 1 if values[i] else 0
-                df.columns[col_name] = bool_col
-            elif dtype == TYPE_CATEGORY:
-                cat_col = CategoryColumn(n)
-                for i in range(n): cat_col.append(<str>values[i])
-                df.columns[col_name] = cat_col
-            elif dtype == TYPE_DATETIME:
-                dtc_col = DateTimeColumn(n)
-                for i in range(n): dtc_col.append(<str>values[i])
-                df.columns[col_name] = dtc_col
-            elif dtype == TYPE_TIME:
-                tmc_col = TimeColumn(n)
-                for i in range(n): tmc_col.append(<str>values[i])
-                df.columns[col_name] = tmc_col
+            df.columns[col_name] = FastDataFrame._populate_column(parsed[col_name], n, data[col_name])
 
-        if columns is not None:
-            col_names = list(df.columns.keys())
-            new_names = list(columns)
-            if len(new_names) != len(col_names):
-                raise ValueError(f"columns length {len(new_names)} != {len(col_names)}")
-            new_cols = {}
-            for i in range(len(new_names)):
-                new_cols[new_names[i]] = df.columns[col_names[i]]
-            df.columns = new_cols
+        FastDataFrame._rename_columns(df, columns)
 
         return df
 
@@ -1595,84 +1603,18 @@ cdef class FastDataFrame:
 
         if n_rows == 0:
             for col_name in col_order:
-                dtype = parsed[col_name]
-                if dtype == TYPE_INT: df.columns[col_name] = IntColumn()
-                elif dtype == TYPE_DOUBLE: df.columns[col_name] = DoubleColumn()
-                elif dtype == TYPE_CHAR256: df.columns[col_name] = Char256Column_SoA()
-                elif dtype == TYPE_UCS2: df.columns[col_name] = UCS2Column_SoA()
-                elif dtype == TYPE_TIMESTAMP: df.columns[col_name] = DateColumn()
-                elif dtype == TYPE_BOOL: df.columns[col_name] = BoolColumn()
-                elif dtype == TYPE_CATEGORY: df.columns[col_name] = CategoryColumn()
-                elif dtype == TYPE_DATETIME: df.columns[col_name] = DateTimeColumn()
-                elif dtype == TYPE_TIME: df.columns[col_name] = TimeColumn()
+                df.columns[col_name] = FastDataFrame._make_empty_column(parsed[col_name])
             return df
 
         df.df_length = n_rows
         df.index = RangeIndex(0, n_rows)
 
-        cdef IntColumn int_col
-        cdef DoubleColumn dbl_col
-        cdef Char256Column_SoA c256_col
-        cdef UCS2Column_SoA ucs2_col
-        cdef DateColumn ts_col
-        cdef BoolColumn bool_col
-        cdef CategoryColumn cat_col
-        cdef DateTimeColumn dtc_col
-        cdef TimeColumn tmc_col
-
         for j in range(n_cols):
             col_name = col_order[j]
-            dtype = parsed[col_name]
-            if dtype == TYPE_INT:
-                int_col = IntColumn(n_rows)
-                int_col.length = n_rows
-                for i in range(n_rows): int_col.data_c[i] = <int>rows[i][j]
-                df.columns[col_name] = int_col
-            elif dtype == TYPE_DOUBLE:
-                dbl_col = DoubleColumn(n_rows)
-                dbl_col.length = n_rows
-                for i in range(n_rows): dbl_col.data_c[i] = <double>rows[i][j]
-                df.columns[col_name] = dbl_col
-            elif dtype == TYPE_CHAR256:
-                c256_col = Char256Column_SoA(n_rows)
-                for i in range(n_rows): c256_col.append(<str>rows[i][j])
-                df.columns[col_name] = c256_col
-            elif dtype == TYPE_UCS2:
-                ucs2_col = UCS2Column_SoA(n_rows)
-                for i in range(n_rows): ucs2_col.append(<str>rows[i][j])
-                df.columns[col_name] = ucs2_col
-            elif dtype == TYPE_TIMESTAMP:
-                ts_col = DateColumn(n_rows)
-                ts_col.length = n_rows
-                for i in range(n_rows): ts_col.data_c[i] = <int32_t>rows[i][j]
-                df.columns[col_name] = ts_col
-            elif dtype == TYPE_BOOL:
-                bool_col = BoolColumn(n_rows)
-                bool_col.length = n_rows
-                for i in range(n_rows): bool_col.data_c[i] = 1 if rows[i][j] else 0
-                df.columns[col_name] = bool_col
-            elif dtype == TYPE_CATEGORY:
-                cat_col = CategoryColumn(n_rows)
-                for i in range(n_rows): cat_col.append(<str>rows[i][j])
-                df.columns[col_name] = cat_col
-            elif dtype == TYPE_DATETIME:
-                dtc_col = DateTimeColumn(n_rows)
-                for i in range(n_rows): dtc_col.append(<str>rows[i][j])
-                df.columns[col_name] = dtc_col
-            elif dtype == TYPE_TIME:
-                tmc_col = TimeColumn(n_rows)
-                for i in range(n_rows): tmc_col.append(<str>rows[i][j])
-                df.columns[col_name] = tmc_col
+            col_values = [rows[i][j] for i in range(n_rows)]
+            df.columns[col_name] = FastDataFrame._populate_column(parsed[col_name], n_rows, col_values)
 
-        if columns is not None:
-            col_names = list(df.columns.keys())
-            new_names = list(columns)
-            if len(new_names) != len(col_names):
-                raise ValueError(f"columns length {len(new_names)} != {len(col_names)}")
-            new_cols = {}
-            for i in range(len(new_names)):
-                new_cols[new_names[i]] = df.columns[col_names[i]]
-            df.columns = new_cols
+        FastDataFrame._rename_columns(df, columns)
 
         return df
 
@@ -1701,84 +1643,17 @@ cdef class FastDataFrame:
 
         if n_rows == 0:
             for col_name in col_order:
-                dtype = parsed[col_name]
-                if dtype == TYPE_INT: df.columns[col_name] = IntColumn()
-                elif dtype == TYPE_DOUBLE: df.columns[col_name] = DoubleColumn()
-                elif dtype == TYPE_CHAR256: df.columns[col_name] = Char256Column_SoA()
-                elif dtype == TYPE_UCS2: df.columns[col_name] = UCS2Column_SoA()
-                elif dtype == TYPE_TIMESTAMP: df.columns[col_name] = DateColumn()
-                elif dtype == TYPE_BOOL: df.columns[col_name] = BoolColumn()
-                elif dtype == TYPE_CATEGORY: df.columns[col_name] = CategoryColumn()
-                elif dtype == TYPE_DATETIME: df.columns[col_name] = DateTimeColumn()
-                elif dtype == TYPE_TIME: df.columns[col_name] = TimeColumn()
+                df.columns[col_name] = FastDataFrame._make_empty_column(parsed[col_name])
             return df
 
         df.df_length = n_rows
         df.index = RangeIndex(0, n_rows)
 
-        cdef IntColumn int_col
-        cdef DoubleColumn dbl_col
-        cdef Char256Column_SoA c256_col
-        cdef UCS2Column_SoA ucs2_col
-        cdef DateColumn ts_col
-        cdef BoolColumn bool_col
-        cdef CategoryColumn cat_col
-        cdef DateTimeColumn dtc_col
-        cdef TimeColumn tmc_col
-
         for j in range(n_cols):
             col_name = col_order[j]
-            dtype = parsed[col_name]
-            if dtype == TYPE_INT:
-                int_col = IntColumn(n_rows)
-                int_col.length = n_rows
-                for i in range(n_rows): int_col.data_c[i] = <int>arrays[j][i]
-                df.columns[col_name] = int_col
-            elif dtype == TYPE_DOUBLE:
-                dbl_col = DoubleColumn(n_rows)
-                dbl_col.length = n_rows
-                for i in range(n_rows): dbl_col.data_c[i] = <double>arrays[j][i]
-                df.columns[col_name] = dbl_col
-            elif dtype == TYPE_CHAR256:
-                c256_col = Char256Column_SoA(n_rows)
-                for i in range(n_rows): c256_col.append(<str>arrays[j][i])
-                df.columns[col_name] = c256_col
-            elif dtype == TYPE_UCS2:
-                ucs2_col = UCS2Column_SoA(n_rows)
-                for i in range(n_rows): ucs2_col.append(<str>arrays[j][i])
-                df.columns[col_name] = ucs2_col
-            elif dtype == TYPE_TIMESTAMP:
-                ts_col = DateColumn(n_rows)
-                ts_col.length = n_rows
-                for i in range(n_rows): ts_col.data_c[i] = <int32_t>arrays[j][i]
-                df.columns[col_name] = ts_col
-            elif dtype == TYPE_BOOL:
-                bool_col = BoolColumn(n_rows)
-                bool_col.length = n_rows
-                for i in range(n_rows): bool_col.data_c[i] = 1 if arrays[j][i] else 0
-                df.columns[col_name] = bool_col
-            elif dtype == TYPE_CATEGORY:
-                cat_col = CategoryColumn(n_rows)
-                for i in range(n_rows): cat_col.append(<str>arrays[j][i])
-                df.columns[col_name] = cat_col
-            elif dtype == TYPE_DATETIME:
-                dtc_col = DateTimeColumn(n_rows)
-                for i in range(n_rows): dtc_col.append(<str>arrays[j][i])
-                df.columns[col_name] = dtc_col
-            elif dtype == TYPE_TIME:
-                tmc_col = TimeColumn(n_rows)
-                for i in range(n_rows): tmc_col.append(<str>arrays[j][i])
-                df.columns[col_name] = tmc_col
+            df.columns[col_name] = FastDataFrame._populate_column(parsed[col_name], n_rows, arrays[j])
 
-        if columns is not None:
-            col_names = list(df.columns.keys())
-            new_names = list(columns)
-            if len(new_names) != len(col_names):
-                raise ValueError(f"columns length {len(new_names)} != {len(col_names)}")
-            new_cols = {}
-            for i in range(len(new_names)):
-                new_cols[new_names[i]] = df.columns[col_names[i]]
-            df.columns = new_cols
+        FastDataFrame._rename_columns(df, columns)
 
         return df
 
@@ -2013,9 +1888,6 @@ cdef class FastDataFrame:
                 self.columns[name] = dbl_col
         else:
             raise TypeError(f"Cannot set column from {type(value)}")
-
-    def __setitem_with_colname__(self, str col_name, object value):
-        self[col_name] = value
 
     def insert_column(self, str col_name, object col_data, Py_ssize_t pos=-1):
         cdef BaseColumn col
@@ -2711,12 +2583,6 @@ cdef class FastDataFrame:
             result.columns[name] = col.where_mask(mask, fill)
         return result
 
-    def where_index(self, IntColumn mask):
-        return self.loc[mask]
-
-    def where_all(self, IntColumn mask, object fill=0):
-        return self.where_row(mask, fill)
-
     def _resolve_cols(self, tuple col_names):
         cdef list cols = []
         cdef str name
@@ -2761,12 +2627,6 @@ cdef class FastDataFrame:
         for j in range(2, len(cols)):
             result = result.div(cols[j])
         return result
-
-    def sort_values_by(self, str col_name, bint reverse=False):
-        return self.sort_values(col_name, reverse=reverse)
-
-    def sort_values_inplace(self, str col_name, bint reverse=False):
-        return self.sort_values(col_name, reverse=reverse, inplace=True)
 
     def info(self):
         cdef Py_ssize_t total_cols = len(self.columns)

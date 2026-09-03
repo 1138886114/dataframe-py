@@ -32,11 +32,11 @@ def test_int_count():
 
 def test_int_kurtosis():
     col = IntColumn()
-    check('int kurtosis empty', math.isnan(col.kurtosis()))
+    check('int kurtosis empty', math.isnan(col.kurt()))
     for v in [1, 2, 3]: col.append(v)
-    check('int kurtosis <4', math.isnan(col.kurtosis()))
+    check('int kurtosis <4', math.isnan(col.kurt()))
     for v in [4, 5, 6, 7]: col.append(v)
-    result = col.kurtosis()
+    result = col.kurt()
     check('int kurtosis is number', not math.isnan(result))
 
 def test_int_cumprod():
@@ -94,11 +94,11 @@ def test_double_count():
 
 def test_double_kurtosis():
     col = DoubleColumn()
-    check('double kurtosis empty', math.isnan(col.kurtosis()))
+    check('double kurtosis empty', math.isnan(col.kurt()))
     for v in [1.0, 2.0, 3.0]: col.append(v)
-    check('double kurtosis <4', math.isnan(col.kurtosis()))
+    check('double kurtosis <4', math.isnan(col.kurt()))
     for v in [4.0, 5.0, 6.0, 7.0]: col.append(v)
-    result = col.kurtosis()
+    result = col.kurt()
     check('double kurtosis is number', not math.isnan(result))
     check('double kurtosis matches kurt', close(result, col.kurt()))
 
@@ -218,7 +218,7 @@ def test_df_kurt():
 
 def test_df_kurtosis():
     df = _make_numeric_df()
-    r = df.kurtosis()
+    r = df.kurt()
     k = df.kurt()
     check('df kurtosis matches kurt', close(r['A'], k['A']))
 
