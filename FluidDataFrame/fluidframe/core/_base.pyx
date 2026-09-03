@@ -1,6 +1,7 @@
 # cython: language_level=3
 
 from libc.string cimport memcpy
+cimport cython
 
 cdef extern from *:
     """
@@ -65,6 +66,8 @@ cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t a
 
 
 cdef class BaseColumn:
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def get_size(self):
         return 0
 

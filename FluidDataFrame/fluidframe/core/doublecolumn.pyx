@@ -46,6 +46,19 @@ cdef int _cmp_double(const void* a, const void* b) noexcept nogil:
     if va > vb: return 1
     return 0
 
+cdef int _cmp_double_asc(const void* a, const void* b) noexcept nogil:
+    """升序比较，用于 qsort (NaN 视为最大值，排最后)"""
+    cdef double va = (<const double*>a)[0]
+    cdef double vb = (<const double*>b)[0]
+    cdef bint anan = (va != va)
+    cdef bint bnan = (vb != vb)
+    if anan and bnan: return 0
+    if anan: return 1
+    if bnan: return -1
+    if va < vb: return -1
+    if va > vb: return 1
+    return 0
+
 
 cdef double _c_corr(double* a, double* b, Py_ssize_t n) noexcept nogil:
     if n < 2: return NAN
@@ -213,12 +226,15 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def __cinit__(self, Py_ssize_t init_capacity=16):
+    def __cinit__(self, Py_ssize_t init_capacity=16, Py_ssize_t cols=1):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_DOUBLE
-        self._owns_data = True
         self._base_obj = None
+
+        cdef int c = <int>cols if cols > 0 else 1
+        self.set_meta_c(c, True, c > 1)
+
         self.data_c = <double*>aligned_malloc(self.capacity * sizeof(double))
         if not self.data_c:
             raise MemoryError()
@@ -226,25 +242,76 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __dealloc__(self):
-        if self._owns_data and self.data_c != NULL:
+        if self.get_owns_data_c() and self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
+
+    @property
+    def cols(self):
+        return self.get_cols_c()
+
+    @property
+    def rows(self):
+        return self.get_rows_c()
+
+    @property
+    def is_2d(self):
+        return self.get_is_2d_c()
+
+    @property
+    def _owns_data(self):
+        return self.get_owns_data_c()
+
+    @_owns_data.setter
+    def _owns_data(self, bint val):
+        if val:
+            self._meta |= 0x00010000
+        else:
+            self._meta &= ~0x00010000
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def get_size(self):
         return self.capacity * sizeof(double)
 
+
+    cdef inline DoubleColumn _make_like_nan(self):
+        """生成与自身形状与容量完全一致的纯 NaN 结果列"""
+        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t total = self.length
+        cdef DoubleColumn res = DoubleColumn(max(total, 1), cols=c)
+        res.length = total
+        cdef Py_ssize_t i
+        with nogil:
+            for i in range(total):
+                res.data_c[i] = NAN
+        return res
+
     @staticmethod
     cdef DoubleColumn create_view(double* ptr, Py_ssize_t length, object base_obj):
-        """零拷贝构造视图列，指向外部连续大内存的某一切片"""
+        """零拷贝 1D 视图"""
         cdef DoubleColumn col = DoubleColumn.__new__(DoubleColumn)
         col.dtype = TYPE_DOUBLE
         col.capacity = length
         col.length = length
         col.data_c = ptr
-        col._owns_data = False
         col._base_obj = base_obj
+        # 1 列, owns_data=False, is_2d=False
+        col.set_meta_c(1, False, False)
+        return col
+
+    @staticmethod
+    cdef DoubleColumn create_view_2d(double* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj):
+        """零拷贝 2D 矩阵块视图"""
+        cdef DoubleColumn col = DoubleColumn.__new__(DoubleColumn)
+        cdef Py_ssize_t total = rows * cols
+        col.dtype = TYPE_DOUBLE
+        col.capacity = total
+        col.length = total
+        col.data_c = ptr
+        col._base_obj = base_obj
+        # cols 列, owns_data=False, is_2d=True
+        col.set_meta_c(<int>cols, False, True)
         return col
 
     @staticmethod
@@ -296,8 +363,29 @@ cdef class DoubleColumn(BaseColumn):
             )
         return columns
 
+    cdef inline int get_cols_c(self) noexcept nogil:
+        cdef int c = <int>(self._meta & 0x0000FFFF)
+        return c if c > 0 else 1
+
+    cdef inline bint get_owns_data_c(self) noexcept nogil:
+        return (self._meta & 0x00010000) != 0
+
+    cdef inline bint get_is_2d_c(self) noexcept nogil:
+        return (self._meta & 0x00020000) != 0
+
+    cdef inline Py_ssize_t get_rows_c(self) noexcept nogil:
+        cdef int c = self.get_cols_c()
+        return self.length // c if c > 0 else self.length
+
+    cdef inline void set_meta_c(self, int cols, bint owns_data, bint is_2d) noexcept nogil:
+        self._meta = (
+            (<unsigned int>cols & 0x0000FFFF) |
+            ((<unsigned int>(1 if owns_data else 0)) << 16) |
+            ((<unsigned int>(1 if is_2d else 0)) << 17)
+        )
+
     cdef void _reserve(self, Py_ssize_t new_cap):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot reallocate a view/slice column. Copy it first.")
         if new_cap > self.capacity:
             self.data_c = <double*>aligned_realloc(self.data_c, self.capacity * sizeof(double), new_cap * sizeof(double))
@@ -308,7 +396,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, double val):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot append to a view/slice column. Copy it first.")
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
@@ -327,7 +415,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_back(self):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
@@ -337,7 +425,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_front(self):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
@@ -350,7 +438,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, DoubleColumn other):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
         cdef Py_ssize_t other_len = other.length
         if other_len == 0: return
@@ -459,7 +547,7 @@ cdef class DoubleColumn(BaseColumn):
             os_aligned_free(new_data)
             raise
 
-        if self._owns_data and self.data_c != NULL:
+        if self.get_owns_data_c() and self.data_c != NULL:
             os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = new_cap
@@ -1392,7 +1480,7 @@ cdef class DoubleColumn(BaseColumn):
             with nogil:
                 for i in range(n):
                     new_data[i] = old_data[indices[i]]
-            if self._owns_data and self.data_c != NULL:
+            if self.get_owns_data_c() and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
@@ -1481,7 +1569,7 @@ cdef class DoubleColumn(BaseColumn):
         return col
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
         if row_idx < 0:
             row_idx += self.length
@@ -1722,3 +1810,360 @@ cdef class DoubleColumn(BaseColumn):
         cdef char err_buf[128]
         snprintf(err_buf, sizeof(err_buf), "Failed to cast DOUBLE column to internal type id: %d", target_type)
         raise TypeError(err_buf.decode('ascii'))
+
+
+    # ============================================================
+    # 1. 滚动均值 (roll_mean) - O(N) 自动支持 1D/2D 列优先展开
+    # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_mean(self, Py_ssize_t window):
+        """
+        滚动均值计算。支持一维与二维矩阵。
+        时间复杂度: O(rows * cols)，严格常数时间增量滑动。
+        """
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef DoubleColumn res = self._make_like_nan()
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        if r < window: return res
+
+        cdef double inv_w = 1.0 / <double>window
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double s
+
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                s = 0.0
+                # 初始窗口预热
+                for i in range(window):
+                    s += src[offset + i]
+                dst[offset + window - 1] = s * inv_w
+
+                # 滑动更新
+                for i in range(window, r):
+                    s += src[offset + i] - src[offset + i - window]
+                    dst[offset + i] = s * inv_w
+        return res
+
+    # ============================================================
+    # 2. 滚动求和 (roll_sum) - O(N)
+    # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_sum(self, Py_ssize_t window):
+        """滚动累加和"""
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef DoubleColumn res = self._make_like_nan()
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        if r < window: return res
+
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double s
+
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                s = 0.0
+                for i in range(window):
+                    s += src[offset + i]
+                dst[offset + window - 1] = s
+
+                for i in range(window, r):
+                    s += src[offset + i] - src[offset + i - window]
+                    dst[offset + i] = s
+        return res
+
+    # ============================================================
+    # 3. 滚动极值 (roll_min / roll_max) - O(N) 单调队列
+    # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_min(self, Py_ssize_t window):
+        """滚动最小值 (采用严格连续内存单调双端队列)"""
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef DoubleColumn res = self._make_like_nan()
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        if r < window: return res
+
+        # 分配单列复用的队列缓冲 (最大长度为 r)
+        cdef Py_ssize_t* q = <Py_ssize_t*>malloc(r * sizeof(Py_ssize_t))
+        if not q: raise MemoryError()
+
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef Py_ssize_t col_idx, offset, i, head, tail
+
+        try:
+            with nogil:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    head = 0
+                    tail = 0
+                    for i in range(r):
+                        # 弹出窗口外旧元素
+                        while head < tail and q[head] <= i - window:
+                            head += 1
+                        # 维护单调递增性
+                        while head < tail and src[offset + q[tail - 1]] >= src[offset + i]:
+                            tail -= 1
+                        q[tail] = i
+                        tail += 1
+                        if i >= window - 1:
+                            dst[offset + i] = src[offset + q[head]]
+        finally:
+            free(q)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_max(self, Py_ssize_t window):
+        """滚动最大值"""
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef DoubleColumn res = self._make_like_nan()
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        if r < window: return res
+
+        cdef Py_ssize_t* q = <Py_ssize_t*>malloc(r * sizeof(Py_ssize_t))
+        if not q: raise MemoryError()
+
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef Py_ssize_t col_idx, offset, i, head, tail
+
+        try:
+            with nogil:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    head = 0
+                    tail = 0
+                    for i in range(r):
+                        while head < tail and q[head] <= i - window:
+                            head += 1
+                        while head < tail and src[offset + q[tail - 1]] <= src[offset + i]:
+                            tail -= 1
+                        q[tail] = i
+                        tail += 1
+                        if i >= window - 1:
+                            dst[offset + i] = src[offset + q[head]]
+        finally:
+            free(q)
+        return res
+
+    # ============================================================
+    # 4. 滚动方差与标准差 (roll_var / roll_std) - O(N) 稳定滑窗
+    # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_var(self, Py_ssize_t window, bint ddof=True):
+        """滚动方差 (ddof=True 为样本方差 N-1，False 为总体方差 N)"""
+        if window < 2: raise ValueError("window must be >= 2 for variance")
+        cdef DoubleColumn res = self._make_like_nan()
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        if r < window: return res
+
+        cdef double inv_w = 1.0 / <double>window
+        cdef double denom = 1.0 / <double>(window - 1) if ddof else inv_w
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double s, sq_s, val, old_val, v
+
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                s = 0.0
+                sq_s = 0.0
+                for i in range(window):
+                    val = src[offset + i]
+                    s += val
+                    sq_s += val * val
+                v = (sq_s - (s * s) * inv_w) * denom
+                dst[offset + window - 1] = v if v > 0.0 else 0.0
+
+                for i in range(window, r):
+                    val = src[offset + i]
+                    old_val = src[offset + i - window]
+                    s += val - old_val
+                    sq_s += val * val - old_val * old_val
+                    v = (sq_s - (s * s) * inv_w) * denom
+                    dst[offset + i] = v if v > 0.0 else 0.0
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_std(self, Py_ssize_t window, bint ddof=True):
+        """滚动标准差"""
+        cdef DoubleColumn res = self.roll_var(window, ddof=ddof)
+        cdef Py_ssize_t i, n = res.length
+        cdef double* ptr = res.data_c
+        with nogil:
+            for i in range(n):
+                if ptr[i] == ptr[i]: # 非 NaN
+                    ptr[i] = sqrt(ptr[i])
+        return res
+
+    # ============================================================
+    # 5. 滚动中位数与分位数 (roll_median / roll_quantile)
+    # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_quantile(self, Py_ssize_t window, double q):
+        """滚动任意分位数 (q 在 0.0 到 1.0 之间)"""
+        if window < 1: raise ValueError("window must be >= 1")
+        if q < 0.0 or q > 1.0: raise ValueError("q must be between 0.0 and 1.0")
+        cdef DoubleColumn res = self._make_like_nan()
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        if r < window: return res
+
+        cdef double* buf = <double*>malloc(window * sizeof(double))
+        if not buf: raise MemoryError()
+
+        cdef double pos = q * <double>(window - 1)
+        cdef Py_ssize_t i_low = <Py_ssize_t>pos
+        cdef double frac = pos - <double>i_low
+
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef Py_ssize_t col_idx, offset, i
+
+        try:
+            with nogil:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    for i in range(window - 1, r):
+                        memcpy(buf, src + offset + (i - window + 1), window * sizeof(double))
+                        qsort(buf, window, sizeof(double), _cmp_double_asc)
+                        if i_low >= window - 1:
+                            dst[offset + i] = buf[window - 1]
+                        else:
+                            dst[offset + i] = buf[i_low] + frac * (buf[i_low + 1] - buf[i_low])
+        finally:
+            free(buf)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_median(self, Py_ssize_t window):
+        """滚动中位数"""
+        return self.roll_quantile(window, 0.5)
+
+    # ============================================================
+    # 6. 自定义权重滤波 (roll_apply_weights) - 极速 FIR / 卷积滤波
+    # ============================================================
+    @cython.binding(False)
+    def roll_apply_weights(self, object weights):
+        """
+        滚动权重内积滤波 (用于加权移动平均 WMA、高斯平滑等)
+        weights 可以是 list、tuple 或 1D DoubleColumn/NumPy 数组。
+        纯 C 指针点积，无 Python 回调开销。
+        """
+        cdef DoubleColumn w_col
+        cdef Py_ssize_t window
+        if isinstance(weights, DoubleColumn):
+            w_col = <DoubleColumn>weights
+            window = w_col.length
+        else:
+            w_col = DoubleColumn(len(weights))
+            for v in weights:
+                w_col.append(<double>v)
+            window = w_col.length
+
+        if window < 1: raise ValueError("weights length must be >= 1")
+        cdef DoubleColumn res = self._make_like_nan()
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        if r < window: return res
+
+        cdef double* w_ptr = w_col.data_c
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef Py_ssize_t col_idx, offset, i, k
+        cdef double acc
+
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                for i in range(window - 1, r):
+                    acc = 0.0
+                    for k in range(window):
+                        acc += src[offset + (i - window + 1 + k)] * w_ptr[k]
+                    dst[offset + i] = acc
+        return res
+
+    # ============================================================
+    # 7. 纯自定义函数滚动 (roll_custom) - 支持外部 Python 回调
+    # ============================================================
+    @cython.binding(False)
+    def roll_custom(self, Py_ssize_t window, object func):
+        """
+        通用滚动自定义滤波。每次滑窗时切片构建一个临时视图传递给 func(slice_col)。
+        func 必须返回一个可以转换为 float 的标量数值。
+        """
+        if window < 1: raise ValueError("window must be >= 1")
+        if not callable(func): raise TypeError("func must be a callable object")
+        cdef DoubleColumn res = self._make_like_nan()
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        if r < window: return res
+
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef Py_ssize_t col_idx, offset, i
+        cdef DoubleColumn window_view
+        cdef object ret_val
+
+        for col_idx in range(c):
+            offset = col_idx * r
+            for i in range(window - 1, r):
+                # 零拷贝构建当前窗口的轻量切片对象，传给 Python 函数
+                window_view = DoubleColumn.create_view(
+                    src + offset + (i - window + 1),
+                    window,
+                    self
+                )
+                ret_val = func(window_view)
+                dst[offset + i] = <double>ret_val if ret_val is not None else NAN
+        return res
+
+    # ============================================================
+    # 8. 统一动态分发入口 (roll)
+    # ============================================================
+    @cython.binding(False)
+    def roll(self, Py_ssize_t window, str method="mean", **kwargs):
+        """
+        统一滚动计算入口。
+        例如:
+            col.roll(7, "mean")
+            col.roll(14, "std", ddof=False)
+            col.roll(5, "quantile", q=0.75)
+        """
+        cdef str m = method.lower()
+        if m == "mean":
+            return self.roll_mean(window)
+        elif m == "sum":
+            return self.roll_sum(window)
+        elif m == "min":
+            return self.roll_min(window)
+        elif m == "max":
+            return self.roll_max(window)
+        elif m == "std":
+            return self.roll_std(window, ddof=kwargs.get("ddof", True))
+        elif m == "var":
+            return self.roll_var(window, ddof=kwargs.get("ddof", True))
+        elif m == "median":
+            return self.roll_median(window)
+        elif m == "quantile":
+            return self.roll_quantile(window, kwargs.get("q", 0.5))
+        else:
+            raise ValueError(f"Unsupported rolling method: '{method}'")
