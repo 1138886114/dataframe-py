@@ -37,54 +37,54 @@ def expect_exception(exc_type, fn, *args, **kwargs):
         return False
 
 # ============================================================
-#  DoubleColumn.from_numpy_1d
+#  DoubleColumn.load_from_1d_array
 # ============================================================
-def test_double_from_numpy_1d_basic():
+def test_double_load_from_1d_array_basic():
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     check('1d length', col.length == 5)
     check('1d sum', approx_eq(col.sum(), 15.0))
     check('1d mean', approx_eq(col.mean(), 3.0))
     check('1d min', approx_eq(col.min(), 1.0))
     check('1d max', approx_eq(col.max(), 5.0))
 
-def test_double_from_numpy_1d_zero_copy():
+def test_double_load_from_1d_array_zero_copy():
     arr = np.array([10.0, 20.0, 30.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     check('1d zero-copy sum before', approx_eq(col.sum(), 60.0))
     arr[0] = 999.0
     check('1d zero-copy sum after', approx_eq(col.sum(), 1049.0))
 
-def test_double_from_numpy_1d_empty():
+def test_double_load_from_1d_array_empty():
     arr = np.array([], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     check('1d empty length', col.length == 0)
 
-def test_double_from_numpy_1d_single():
+def test_double_load_from_1d_array_single():
     arr = np.array([42.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     check('1d single length', col.length == 1)
     check('1d single value', approx_eq(col[0], 42.0))
 
-def test_double_from_numpy_1d_negative():
+def test_double_load_from_1d_array_negative():
     arr = np.array([-1.5, -2.5, 3.5], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     check('1d negative sum', approx_eq(col.sum(), -0.5))
 
-def test_double_from_numpy_1d_nan():
+def test_double_load_from_1d_array_nan():
     arr = np.array([1.0, float('nan'), 3.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     check('1d nan length', col.length == 3)
     check('1d nan isnan', col[1] != col[1])
 
 # ============================================================
-#  DoubleColumn.from_numpy_2d
+#  DoubleColumn.load_from_2d_array
 # ============================================================
-def test_double_from_numpy_2d_basic():
+def test_double_load_from_2d_array_basic():
     data = np.array([[1.0, 10.0, 100.0],
                      [2.0, 20.0, 200.0],
                      [3.0, 30.0, 300.0]], dtype=np.float64, order='F')
-    cols = DoubleColumn.from_numpy_2d(data, ['X', 'Y', 'Z'])
+    cols = DoubleColumn.load_from_2d_array(data, ['X', 'Y', 'Z'])
     check('2d keys', sorted(cols.keys()) == ['X', 'Y', 'Z'])
     check('2d X sum', approx_eq(cols['X'].sum(), 6.0))
     check('2d Y sum', approx_eq(cols['Y'].sum(), 60.0))
@@ -93,102 +93,103 @@ def test_double_from_numpy_2d_basic():
     check('2d Y length', cols['Y'].length == 3)
     check('2d Z length', cols['Z'].length == 3)
 
-def test_double_from_numpy_2d_zero_copy():
+def test_double_load_from_2d_array_zero_copy():
     data = np.array([[1.0, 10.0],
                      [2.0, 20.0],
                      [3.0, 30.0]], dtype=np.float64, order='F')
-    cols = DoubleColumn.from_numpy_2d(data, ['A', 'B'])
+    cols = DoubleColumn.load_from_2d_array(data, ['A', 'B'])
     check('2d zero-copy before', approx_eq(cols['A'].sum(), 6.0))
     data[0, 0] = 999.0
     check('2d zero-copy after', approx_eq(cols['A'].sum(), 1004.0))
 
-def test_double_from_numpy_2d_1row():
+def test_double_load_from_2d_array_1row():
     data = np.array([[5.0, 6.0, 7.0]], dtype=np.float64, order='F')
-    cols = DoubleColumn.from_numpy_2d(data, ['P', 'Q', 'R'])
+    cols = DoubleColumn.load_from_2d_array(data, ['P', 'Q', 'R'])
     check('2d 1-row length', cols['P'].length == 1)
     check('2d 1-row P', approx_eq(cols['P'][0], 5.0))
     check('2d 1-row Q', approx_eq(cols['Q'][0], 6.0))
     check('2d 1-row R', approx_eq(cols['R'][0], 7.0))
 
-def test_double_from_numpy_2d_1col():
+def test_double_load_from_2d_array_1col():
     data = np.array([[1.0], [2.0], [3.0]], dtype=np.float64, order='F')
-    cols = DoubleColumn.from_numpy_2d(data, ['Only'])
+    cols = DoubleColumn.load_from_2d_array(data, ['Only'])
     check('2d 1-col length', cols['Only'].length == 3)
     check('2d 1-col sum', approx_eq(cols['Only'].sum(), 6.0))
 
-def test_double_from_numpy_2d_large():
+def test_double_load_from_2d_array_large():
     rows, cols_n = 100, 5
     data = np.random.randn(rows, cols_n).astype(np.float64, order='F')
     names = [chr(65 + i) for i in range(cols_n)]
-    cols = DoubleColumn.from_numpy_2d(data, names)
+    cols = DoubleColumn.load_from_2d_array(data, names)
     for i, name in enumerate(names):
         expected = data[:, i].sum()
         check(f'2d large {name} sum', approx_eq(cols[name].sum(), expected))
 
-def test_double_from_numpy_2d_negative_vals():
+def test_double_load_from_2d_array_negative_vals():
     data = np.array([[-1.0, 4.0],
                      [-2.0, 5.0],
                      [-3.0, 6.0]], dtype=np.float64, order='F')
-    cols = DoubleColumn.from_numpy_2d(data, ['Neg', 'Pos'])
+    cols = DoubleColumn.load_from_2d_array(data, ['Neg', 'Pos'])
     check('2d neg sum', approx_eq(cols['Neg'].sum(), -6.0))
     check('2d pos sum', approx_eq(cols['Pos'].sum(), 15.0))
 
-def test_double_from_numpy_2d_asfortran_conversion():
+def test_double_load_from_2d_array_asfortran_conversion():
     data = np.array([[1.0, 10.0],
                      [2.0, 20.0],
                      [3.0, 30.0]], dtype=np.float64)  # C-order
-    cols = DoubleColumn.from_numpy_2d(data, ['C', 'D'])
+    # 新 API 要求传入 Fortran-contiguous，用户需自行转换
+    cols = DoubleColumn.load_from_2d_array(np.asfortranarray(data), ['C', 'D'])
     check('2d asfortran C sum', approx_eq(cols['C'].sum(), 6.0))
     check('2d asfortran D sum', approx_eq(cols['D'].sum(), 60.0))
 
 # ============================================================
-#  IntColumn.from_numpy_1d
+#  IntColumn.load_from_1d_array
 # ============================================================
-def test_int_from_numpy_1d_basic():
+def test_int_load_from_1d_array_basic():
     arr = np.array([10, 20, 30, 40, 50], dtype=np.int32)
-    col = IntColumn.from_numpy_1d(arr)
+    col = IntColumn.load_from_1d_array(arr)
     check('int 1d length', col.length == 5)
     check('int 1d sum', col.sum() == 150)
 
-def test_int_from_numpy_1d_zero_copy():
+def test_int_load_from_1d_array_zero_copy():
     arr = np.array([100, 200, 300], dtype=np.int32)
-    col = IntColumn.from_numpy_1d(arr)
+    col = IntColumn.load_from_1d_array(arr)
     check('int 1d zero-copy before', col.sum() == 600)
     arr[0] = 999
     check('int 1d zero-copy after', col.sum() == 1499)
 
-def test_int_from_numpy_1d_negative():
+def test_int_load_from_1d_array_negative():
     arr = np.array([-1, -2, -3], dtype=np.int32)
-    col = IntColumn.from_numpy_1d(arr)
+    col = IntColumn.load_from_1d_array(arr)
     check('int 1d negative sum', col.sum() == -6)
 
 # ============================================================
-#  IntColumn.from_numpy_2d
+#  IntColumn.load_from_2d_array
 # ============================================================
-def test_int_from_numpy_2d_basic():
+def test_int_load_from_2d_array_basic():
     data = np.array([[1, 10, 100],
                      [2, 20, 200],
                      [3, 30, 300]], dtype=np.int32, order='F')
-    cols = IntColumn.from_numpy_2d(data, ['A', 'B', 'C'])
+    cols = IntColumn.load_from_2d_array(data, ['A', 'B', 'C'])
     check('int 2d keys', sorted(cols.keys()) == ['A', 'B', 'C'])
     check('int 2d A sum', cols['A'].sum() == 6)
     check('int 2d B sum', cols['B'].sum() == 60)
     check('int 2d C sum', cols['C'].sum() == 600)
 
-def test_int_from_numpy_2d_zero_copy():
+def test_int_load_from_2d_array_zero_copy():
     data = np.array([[1, 10],
                      [2, 20],
                      [3, 30]], dtype=np.int32, order='F')
-    cols = IntColumn.from_numpy_2d(data, ['X', 'Y'])
+    cols = IntColumn.load_from_2d_array(data, ['X', 'Y'])
     check('int 2d zero-copy before', cols['X'].sum() == 6)
     data[0, 0] = 999
     check('int 2d zero-copy after', cols['X'].sum() == 1004)
 
-def test_int_from_numpy_2d_negative():
+def test_int_load_from_2d_array_negative():
     data = np.array([[-1, 5],
                      [-2, 6],
                      [-3, 7]], dtype=np.int32, order='F')
-    cols = IntColumn.from_numpy_2d(data, ['Neg', 'Pos'])
+    cols = IntColumn.load_from_2d_array(data, ['Neg', 'Pos'])
     check('int 2d neg sum', cols['Neg'].sum() == -6)
     check('int 2d pos sum', cols['Pos'].sum() == 18)
 
@@ -197,13 +198,13 @@ def test_int_from_numpy_2d_negative():
 # ============================================================
 def test_double_view_rejects_append():
     arr = np.array([1.0, 2.0, 3.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     check('view append RuntimeError',
           expect_exception(RuntimeError, col.append, 4.0))
 
 def test_double_view_rejects_concat():
     arr = np.array([1.0, 2.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     other = DoubleColumn()
     other.append(3.0)
     check('view concat RuntimeError',
@@ -211,13 +212,13 @@ def test_double_view_rejects_concat():
 
 def test_int_view_rejects_append():
     arr = np.array([1, 2, 3], dtype=np.int32)
-    col = IntColumn.from_numpy_1d(arr)
+    col = IntColumn.load_from_1d_array(arr)
     check('int view append RuntimeError',
           expect_exception(RuntimeError, col.append, 4))
 
 def test_int_view_rejects_concat():
     arr = np.array([1, 2], dtype=np.int32)
-    col = IntColumn.from_numpy_1d(arr)
+    col = IntColumn.load_from_1d_array(arr)
     other = IntColumn()
     other.append(3)
     check('int view concat RuntimeError',
@@ -228,7 +229,7 @@ def test_int_view_rejects_concat():
 # ============================================================
 def test_double_view_copy_independent():
     arr = np.array([1.0, 2.0, 3.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     copied = col.copy()
     arr[0] = 999.0
     check('view copy sum unchanged', approx_eq(copied.sum(), 6.0))
@@ -238,7 +239,7 @@ def test_double_view_copy_independent():
 
 def test_int_view_copy_independent():
     arr = np.array([10, 20, 30], dtype=np.int32)
-    col = IntColumn.from_numpy_1d(arr)
+    col = IntColumn.load_from_1d_array(arr)
     copied = col.copy()
     arr[0] = 999
     check('int view copy sum unchanged', copied.sum() == 60)
@@ -250,7 +251,7 @@ def test_int_view_copy_independent():
 # ============================================================
 def test_rolling_double_view_zero_copy():
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     rw = RollingWindow(col, 3)
     result = rw.sum()
     check('rolling view sum length', result.length == 5)
@@ -260,7 +261,7 @@ def test_rolling_double_view_zero_copy():
 
 def test_rolling_double_view_mean():
     arr = np.array([10.0, 20.0, 30.0, 40.0, 50.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     rw = RollingWindow(col, 3)
     result = rw.mean()
     check('rolling view mean w3', approx_eq(result[2], 20.0))
@@ -269,7 +270,7 @@ def test_rolling_double_view_mean():
 
 def test_rolling_double_view_std():
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     rw = RollingWindow(col, 3)
     result = rw.std()
     # std of [1,2,3] = sqrt(2/3) ≈ 0.8165
@@ -280,7 +281,7 @@ def test_rolling_double_view_std():
 
 def test_rolling_double_view_min():
     arr = np.array([3.0, 1.0, 4.0, 1.0, 5.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     rw = RollingWindow(col, 3)
     result = rw.min()
     check('rolling view min w3', approx_eq(result[2], 1.0))
@@ -289,7 +290,7 @@ def test_rolling_double_view_min():
 
 def test_rolling_double_view_max():
     arr = np.array([3.0, 1.0, 4.0, 1.0, 5.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     rw = RollingWindow(col, 3)
     result = rw.max()
     check('rolling view max w3', approx_eq(result[2], 4.0))
@@ -310,7 +311,7 @@ def test_rolling_int_col_still_works():
 # ============================================================
 def _build_df_from_2d(data, names):
     """Helper: build FastDataFrame from Fortran-order 2D array via zero-copy"""
-    cols = DoubleColumn.from_numpy_2d(data, names)
+    cols = DoubleColumn.load_from_2d_array(data, names)
     df = FastDataFrame()
     df.df_length = data.shape[0]
     df.index = RangeIndex(0, data.shape[0])
@@ -454,13 +455,13 @@ def test_linalg_euclidean_dist_non_contiguous():
 # ============================================================
 #  Edge: very large array
 # ============================================================
-def test_double_from_numpy_2d_many_rows():
+def test_double_load_from_2d_array_many_rows():
     rows, cols_n = 10000, 3
     data = np.ones((rows, cols_n), dtype=np.float64, order='F')
     data[:, 1] = 2.0
     data[:, 2] = 3.0
     names = ['A', 'B', 'C']
-    cols = DoubleColumn.from_numpy_2d(data, names)
+    cols = DoubleColumn.load_from_2d_array(data, names)
     check('large rows A sum', approx_eq(cols['A'].sum(), rows * 1.0))
     check('large rows B sum', approx_eq(cols['B'].sum(), rows * 2.0))
     check('large rows C sum', approx_eq(cols['C'].sum(), rows * 3.0))
@@ -471,7 +472,7 @@ def test_double_from_numpy_2d_many_rows():
 def test_double_view_base_obj_keeps_alive():
     import gc
     arr = np.array([1.0, 2.0, 3.0], dtype=np.float64)
-    col = DoubleColumn.from_numpy_1d(arr)
+    col = DoubleColumn.load_from_1d_array(arr)
     del arr
     gc.collect()
     check('view alive after del arr', approx_eq(col.sum(), 6.0))
@@ -481,7 +482,7 @@ def test_double_2d_view_base_obj_keeps_alive():
     data = np.array([[1.0, 10.0],
                      [2.0, 20.0],
                      [3.0, 30.0]], dtype=np.float64, order='F')
-    cols = DoubleColumn.from_numpy_2d(data, ['X', 'Y'])
+    cols = DoubleColumn.load_from_2d_array(data, ['X', 'Y'])
     del data
     gc.collect()
     check('2d view alive after del data', approx_eq(cols['X'].sum(), 6.0))
@@ -492,32 +493,32 @@ def test_double_2d_view_base_obj_keeps_alive():
 #  Run all
 # ============================================================
 if __name__ == '__main__':
-    print("=== DoubleColumn.from_numpy_1d ===")
-    test_double_from_numpy_1d_basic()
-    test_double_from_numpy_1d_zero_copy()
-    test_double_from_numpy_1d_empty()
-    test_double_from_numpy_1d_single()
-    test_double_from_numpy_1d_negative()
-    test_double_from_numpy_1d_nan()
+    print("=== DoubleColumn.load_from_1d_array ===")
+    test_double_load_from_1d_array_basic()
+    test_double_load_from_1d_array_zero_copy()
+    test_double_load_from_1d_array_empty()
+    test_double_load_from_1d_array_single()
+    test_double_load_from_1d_array_negative()
+    test_double_load_from_1d_array_nan()
 
-    print("=== DoubleColumn.from_numpy_2d ===")
-    test_double_from_numpy_2d_basic()
-    test_double_from_numpy_2d_zero_copy()
-    test_double_from_numpy_2d_1row()
-    test_double_from_numpy_2d_1col()
-    test_double_from_numpy_2d_large()
-    test_double_from_numpy_2d_negative_vals()
-    test_double_from_numpy_2d_asfortran_conversion()
+    print("=== DoubleColumn.load_from_2d_array ===")
+    test_double_load_from_2d_array_basic()
+    test_double_load_from_2d_array_zero_copy()
+    test_double_load_from_2d_array_1row()
+    test_double_load_from_2d_array_1col()
+    test_double_load_from_2d_array_large()
+    test_double_load_from_2d_array_negative_vals()
+    test_double_load_from_2d_array_asfortran_conversion()
 
-    print("=== IntColumn.from_numpy_1d ===")
-    test_int_from_numpy_1d_basic()
-    test_int_from_numpy_1d_zero_copy()
-    test_int_from_numpy_1d_negative()
+    print("=== IntColumn.load_from_1d_array ===")
+    test_int_load_from_1d_array_basic()
+    test_int_load_from_1d_array_zero_copy()
+    test_int_load_from_1d_array_negative()
 
-    print("=== IntColumn.from_numpy_2d ===")
-    test_int_from_numpy_2d_basic()
-    test_int_from_numpy_2d_zero_copy()
-    test_int_from_numpy_2d_negative()
+    print("=== IntColumn.load_from_2d_array ===")
+    test_int_load_from_2d_array_basic()
+    test_int_load_from_2d_array_zero_copy()
+    test_int_load_from_2d_array_negative()
 
     print("=== View column restrictions ===")
     test_double_view_rejects_append()
@@ -553,7 +554,7 @@ if __name__ == '__main__':
     test_linalg_euclidean_dist_non_contiguous()
 
     print("=== Edge cases ===")
-    test_double_from_numpy_2d_many_rows()
+    test_double_load_from_2d_array_many_rows()
     test_double_view_base_obj_keeps_alive()
     test_double_2d_view_base_obj_keeps_alive()
 

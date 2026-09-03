@@ -26,9 +26,6 @@ from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
-cimport numpy as cnp
-cnp.import_array()
-
 
 cdef int _cmp_int(const void* a, const void* b) noexcept nogil:
     cdef int va = (<const int*>a)[0]
@@ -80,39 +77,56 @@ cdef class IntColumn(BaseColumn):
         return col
 
     @staticmethod
-    def from_numpy_1d(arr, str name=""):
-        """从1D NumPy数组创建IntColumn（零拷贝）"""
-        import numpy as np
-        cdef cnp.ndarray[int, ndim=1] np_arr = np.ascontiguousarray(arr, dtype=np.int32)
-        cdef Py_ssize_t length = np_arr.shape[0]
+    def load_from_1d_array(object arr):
+        """零拷贝加载 1D 连续数组 (支持 NumPy、PyTorch 等任意实现 Buffer 协议的对象)"""
+        cdef int[::1] view
+        try:
+            view = arr
+        except (ValueError, TypeError):
+            raise ValueError(
+                "Input must be a 1D contiguous int32 array. "
+                "If using NumPy, please pass np.ascontiguousarray(arr, dtype=np.int32) explicitly."
+            )
+        cdef Py_ssize_t length = view.shape[0]
         cdef IntColumn col = IntColumn.__new__(IntColumn)
         col.dtype = TYPE_INT
         col.capacity = length
         col.length = length
         col._owns_data = False
-        col._base_obj = np_arr
-        col.data_c = <int*>cnp.PyArray_DATA(np_arr)
+        col._base_obj = arr
+        col.data_c = &view[0] if length > 0 else NULL
         return col
 
     @staticmethod
-    def from_numpy_2d(arr, list col_names):
-        """从2D NumPy数组创建多个IntColumn（零拷贝，列优先）"""
-        import numpy as np
-        # 确保是 Fortran 连续的（列优先）
-        cdef cnp.ndarray[int, ndim=2, mode='fortran'] np_arr = np.asfortranarray(arr, dtype=np.int32)
-        cdef Py_ssize_t rows = np_arr.shape[0]
-        cdef Py_ssize_t cols = np_arr.shape[1]
-        cdef int* raw_ptr = <int*>cnp.PyArray_DATA(np_arr)
-        cdef dict result_columns = {}
+    def load_from_2d_array(object arr, list col_names):
+        """
+        零拷贝加载 2D 连续数组 (支持 NumPy、PyTorch 等任意实现 Buffer 协议的对象)
+        要求输入数组必须是 Fortran-contiguous (按列连续存储)
+        """
+        cdef int[::1, :] view
+        try:
+            view = arr
+        except (ValueError, TypeError):
+            raise ValueError(
+                "Input array must be a 2D Fortran-contiguous (column-major) int32 array. "
+                "If using NumPy, please pass np.asfortranarray(arr, dtype=np.int32) explicitly."
+            )
+        cdef Py_ssize_t rows = view.shape[0]
+        cdef Py_ssize_t cols = view.shape[1]
+        if len(col_names) != cols:
+            raise ValueError(f"col_names length ({len(col_names)}) != array columns ({cols})")
+        if rows == 0 or cols == 0:
+            return {}
+        cdef int* raw_ptr = &view[0, 0]
+        cdef dict columns = {}
         cdef Py_ssize_t j
-
         for j in range(cols):
-            result_columns[col_names[j]] = IntColumn.create_view(
+            columns[col_names[j]] = IntColumn.create_view(
                 raw_ptr + (j * rows),
                 rows,
-                np_arr
+                arr
             )
-        return result_columns
+        return columns
 
     cdef void _reserve(self, Py_ssize_t new_cap):
         if not self._owns_data:

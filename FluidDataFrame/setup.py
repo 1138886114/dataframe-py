@@ -1,10 +1,6 @@
 from setuptools import setup, Extension
 from Cython.Build import cythonize
 import os
-import numpy as np
-
-# NumPy include directories
-NUMPY_INCLUDE = [np.get_include()]
 
 # 通用编译器优化标志
 COMMON_compile_args = [
@@ -29,12 +25,10 @@ extensions = [
               extra_link_args=COMMON_link_args),
     Extension("fluidframe.core.intcolumn",
               ["fluidframe/core/intcolumn.pyx"],
-              include_dirs=NUMPY_INCLUDE,
               extra_compile_args=COMMON_compile_args,
               extra_link_args=COMMON_link_args),
     Extension("fluidframe.core.doublecolumn",
               ["fluidframe/core/doublecolumn.pyx"],
-              include_dirs=NUMPY_INCLUDE,
               extra_compile_args=COMMON_compile_args,
               extra_link_args=COMMON_link_args),
     Extension("fluidframe.core.char256column",
