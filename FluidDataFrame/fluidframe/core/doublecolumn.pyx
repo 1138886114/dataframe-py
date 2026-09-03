@@ -1618,6 +1618,11 @@ cdef class DoubleColumn(BaseColumn):
         cdef TimeColumn tmc
 
         cdef double* d_ptr = self.data_c
+        cdef int32_t* tc_ptr
+        cdef int64_t* dt_ptr
+        cdef int32_t days
+        cdef int32_t* tmc_ptr
+        cdef int64_t tmp_dt
 
         if target_type == TYPE_INT:
             ic = IntColumn(safe_cap)
@@ -1663,7 +1668,7 @@ cdef class DoubleColumn(BaseColumn):
         elif target_type == TYPE_TIMESTAMP:
             tc = DateColumn(safe_cap)
             tc.length = n
-            cdef int32_t* tc_ptr = <int32_t*>tc.data_c
+            tc_ptr = <int32_t*>tc.data_c
             with nogil:
                 for i in range(n):
                     ival = <int>d_ptr[i]
@@ -1689,25 +1694,26 @@ cdef class DoubleColumn(BaseColumn):
         elif target_type == TYPE_DATETIME:
             dtc = DateTimeColumn(safe_cap)
             dtc.length = n
-            cdef int64_t* dt_ptr = <int64_t*>dtc.data_c
-            cdef int32_t days
+            dt_ptr = <int64_t*>dtc.data_c
             with nogil:
                 for i in range(n):
                     ival = <int>d_ptr[i]
                     if ival > 10000000:
                         days = _ymd_to_days(ival // 10000, (ival // 100) % 100, ival % 100)
-                        dt_ptr[i] = <int64_t>days * US_PER_DAY
+                        tmp_dt = <int64_t>days
+                        dt_ptr[i] = tmp_dt * <int64_t>86400000000
                     else:
-                        dt_ptr[i] = <int64_t>(d_ptr[i] * 1000000.0)
+                        tmp_dt = <int64_t>(d_ptr[i] * 1000000.0)
+                        dt_ptr[i] = tmp_dt
             return dtc
 
         elif target_type == TYPE_TIME:
             tmc = TimeColumn(safe_cap)
             tmc.length = n
-            cdef int* tmc_ptr = tmc.data_c
+            tmc_ptr = tmc.data_c
             with nogil:
                 for i in range(n):
-                    tmc_ptr[i] = <int>d_ptr[i]
+                    tmc_ptr[i] = <int32_t>d_ptr[i]
             return tmc
 
         elif target_type == TYPE_DOUBLE:
