@@ -1728,7 +1728,11 @@ cdef class IntColumn(BaseColumn):
         if r < window: return res
         cdef double* dst = res.data_c
         cdef int* src = self.data_c
-        cdef Py_ssize_t col_idx, offset, i, j, idx
+        cdef Py_ssize_t col_idx, offset, i, j, i_low
+        cdef double pos = quantile * <double>(window - 1)
+        cdef double frac, val_low, val_high
+        i_low = <Py_ssize_t>pos
+        frac = pos - <double>i_low
         cdef int* buf = <int*>malloc(window * sizeof(int))
         if not buf: raise MemoryError()
         try:
@@ -1739,10 +1743,12 @@ cdef class IntColumn(BaseColumn):
                         for j in range(window):
                             buf[j] = src[offset + i - window + 1 + j]
                         _insertion_sort(buf, window)
-                        idx = <Py_ssize_t>(quantile * (window - 1) + 0.5)
-                        if idx < 0: idx = 0
-                        if idx >= window: idx = window - 1
-                        dst[offset + i] = <double>buf[idx]
+                        if i_low >= window - 1:
+                            dst[offset + i] = <double>buf[window - 1]
+                        else:
+                            val_low = <double>buf[i_low]
+                            val_high = <double>buf[i_low + 1]
+                            dst[offset + i] = val_low + frac * (val_high - val_low)
         finally:
             free(buf)
         return res
@@ -1789,6 +1795,148 @@ cdef class IntColumn(BaseColumn):
                 dst[offset + i] = <double>func(tmp)
         return res
 
+    def roll_skew(self, Py_ssize_t window):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window or window < 3: return res
+        cdef double* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef double n_f = <double>window
+        cdef Py_ssize_t col_idx, offset, i, j
+        cdef double s, mean, m2, m3, val, std_dev
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                for i in range(window - 1, r):
+                    s = 0.0
+                    for j in range(i - window + 1, i + 1):
+                        s += <double>src[offset + j]
+                    mean = s / n_f
+                    m2 = 0.0; m3 = 0.0
+                    for j in range(i - window + 1, i + 1):
+                        val = <double>src[offset + j] - mean
+                        m2 += val * val
+                        m3 += val * val * val
+                    if m2 > 1e-14:
+                        std_dev = sqrt(m2 / n_f)
+                        dst[offset + i] = (m3 / n_f) / (std_dev * std_dev * std_dev)
+                    else:
+                        dst[offset + i] = 0.0
+        return res
+
+    def roll_kurt(self, Py_ssize_t window):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window or window < 4: return res
+        cdef double* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef double n_f = <double>window
+        cdef Py_ssize_t col_idx, offset, i, j
+        cdef double s, mean, m2, m4, val, variance
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                for i in range(window - 1, r):
+                    s = 0.0
+                    for j in range(i - window + 1, i + 1):
+                        s += <double>src[offset + j]
+                    mean = s / n_f
+                    m2 = 0.0; m4 = 0.0
+                    for j in range(i - window + 1, i + 1):
+                        val = <double>src[offset + j] - mean
+                        m2 += val * val
+                        m4 += val * val * val * val
+                    if m2 > 1e-14:
+                        variance = m2 / n_f
+                        dst[offset + i] = (m4 / n_f) / (variance * variance) - 3.0
+                    else:
+                        dst[offset + i] = 0.0
+        return res
+
+    def roll_corr(self, Py_ssize_t window, object other):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window: return res
+        cdef double* dst = res.data_c
+        cdef int* src_x = self.data_c
+        cdef double* src_y
+        cdef double n_f = <double>window, inv_w = 1.0 / n_f
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double sum_x, sum_y, sum_xx, sum_yy, sum_xy, x, y, old_x, old_y, vx, vy, denom, cov_xy
+        cdef bint other_is_double = (<object>other).dtype == TYPE_DOUBLE
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                sum_x = 0.0; sum_y = 0.0; sum_xx = 0.0; sum_yy = 0.0; sum_xy = 0.0
+                for i in range(window):
+                    x = <double>src_x[offset + i]
+                    if other_is_double:
+                        y = (<DoubleColumn>other).data_c[offset + i]
+                    else:
+                        y = <double>((<IntColumn>other).data_c[offset + i])
+                    sum_x += x; sum_y += y; sum_xx += x * x; sum_yy += y * y; sum_xy += x * y
+                vx = sum_xx - sum_x * sum_x * inv_w
+                vy = sum_yy - sum_y * sum_y * inv_w
+                denom = sqrt(vx * vy)
+                cov_xy = sum_xy - sum_x * sum_y * inv_w
+                dst[offset + window - 1] = cov_xy / denom if (denom > 0.0) else 0.0
+                for i in range(window, r):
+                    x = <double>src_x[offset + i]
+                    if other_is_double:
+                        y = (<DoubleColumn>other).data_c[offset + i]
+                        old_x = <double>src_x[offset + i - window]
+                        old_y = (<DoubleColumn>other).data_c[offset + i - window]
+                    else:
+                        y = <double>((<IntColumn>other).data_c[offset + i])
+                        old_x = <double>src_x[offset + i - window]
+                        old_y = <double>((<IntColumn>other).data_c[offset + i - window])
+                    sum_x += x - old_x; sum_y += y - old_y
+                    sum_xx += x * x - old_x * old_x; sum_yy += y * y - old_y * old_y
+                    sum_xy += x * y - old_x * old_y
+                    vx = sum_xx - sum_x * sum_x * inv_w
+                    vy = sum_yy - sum_y * sum_y * inv_w
+                    denom = sqrt(vx * vy)
+                    cov_xy = sum_xy - sum_x * sum_y * inv_w
+                    dst[offset + i] = cov_xy / denom if (denom > 0.0) else 0.0
+        return res
+
+    def roll_cov(self, Py_ssize_t window, object other):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window: return res
+        cdef double* dst = res.data_c
+        cdef int* src_x = self.data_c
+        cdef double n_f = <double>window, inv_w = 1.0 / n_f
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double sum_x, sum_y, sum_xy, x, y, old_x, old_y
+        cdef bint other_is_double = (<object>other).dtype == TYPE_DOUBLE
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                sum_x = 0.0; sum_y = 0.0; sum_xy = 0.0
+                for i in range(window):
+                    x = <double>src_x[offset + i]
+                    if other_is_double:
+                        y = (<DoubleColumn>other).data_c[offset + i]
+                    else:
+                        y = <double>((<IntColumn>other).data_c[offset + i])
+                    sum_x += x; sum_y += y; sum_xy += x * y
+                dst[offset + window - 1] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
+                for i in range(window, r):
+                    x = <double>src_x[offset + i]
+                    if other_is_double:
+                        y = (<DoubleColumn>other).data_c[offset + i]
+                        old_x = <double>src_x[offset + i - window]
+                        old_y = (<DoubleColumn>other).data_c[offset + i - window]
+                    else:
+                        y = <double>((<IntColumn>other).data_c[offset + i])
+                        old_x = <double>src_x[offset + i - window]
+                        old_y = <double>((<IntColumn>other).data_c[offset + i - window])
+                    sum_x += x - old_x; sum_y += y - old_y
+                    sum_xy += x * y - old_x * old_y
+                    dst[offset + i] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
+        return res
+
     def roll(self, Py_ssize_t window, str method="mean", bint ddof=True, double quantile=0.5, list weights=None, object func=None):
         if method == "mean":
             return self.roll_mean(window)
@@ -1806,6 +1954,10 @@ cdef class IntColumn(BaseColumn):
             return self.roll_median(window)
         elif method == "quantile":
             return self.roll_quantile(window, quantile)
+        elif method == "skew":
+            return self.roll_skew(window)
+        elif method == "kurt":
+            return self.roll_kurt(window)
         elif method == "apply_weights":
             if weights is None:
                 raise ValueError("weights must be provided for apply_weights method")

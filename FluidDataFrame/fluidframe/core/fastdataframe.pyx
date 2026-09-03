@@ -148,8 +148,28 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex, INDEX_RANGE, INDEX_INT, INDEX_MULTI
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
-from fluidframe.core.rolling cimport RollingWindow
 from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Time, _parse_schema
+
+
+class _RollingWrapper:
+    """轻量级滚动窗口包装器，委托给列的 roll_xxx 方法"""
+    def __init__(self, col, window):
+        self._col = col
+        self._window = window
+        self.length = col.length
+
+    def mean(self): return self._col.roll_mean(self._window)
+    def sum(self): return self._col.roll_sum(self._window)
+    def min(self): return self._col.roll_min(self._window)
+    def max(self): return self._col.roll_max(self._window)
+    def std(self, ddof=False): return self._col.roll_std(self._window, ddof)
+    def var(self, ddof=False): return self._col.roll_var(self._window, ddof)
+    def median(self): return self._col.roll_median(self._window)
+    def quantile(self, q=0.5): return self._col.roll_quantile(self._window, q)
+    def skew(self): return self._col.roll_skew(self._window)
+    def kurt(self): return self._col.roll_kurt(self._window)
+    def corr(self, other): return self._col.roll_corr(self._window, other._col if isinstance(other, _RollingWrapper) else other)
+    def cov(self, other): return self._col.roll_cov(self._window, other._col if isinstance(other, _RollingWrapper) else other)
 
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
@@ -2497,13 +2517,15 @@ cdef class FastDataFrame:
             os_aligned_free(buf_j)
 
     def rolling(self, Py_ssize_t window, str col_name):
+        if window <= 0:
+            raise ValueError(f"Window size must be positive, got {window}")
         if col_name not in self.columns:
             raise KeyError(f"Column '{col_name}' not found")
         cdef BaseColumn col = self.columns[col_name]
         cdef int col_dtype = col.dtype
         if col_dtype != TYPE_INT and col_dtype != TYPE_DOUBLE:
             raise TypeError(f"Rolling window requires numeric column, got '{col_name}'")
-        return RollingWindow(col, window)
+        return _RollingWrapper(col, window)
 
     def value_counts(self, str col_name):
         if col_name not in self.columns:

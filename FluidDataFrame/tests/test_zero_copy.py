@@ -6,7 +6,6 @@ from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.fastdataframe import FastDataFrame
 from fluidframe.core.index import RangeIndex
-from fluidframe.core.rolling import RollingWindow
 from fluidframe.core.linalg import (
     euclidean_dist, manhattan_dist, cosine_dist,
     cosine_similarity, jaccard_sim, hamming_dist,
@@ -247,13 +246,12 @@ def test_int_view_copy_independent():
     check('int view copy append works', copied.length == 4)
 
 # ============================================================
-#  RollingWindow: zero-copy for DoubleColumn
+#  Column roll_xxx: zero-copy for DoubleColumn
 # ============================================================
 def test_rolling_double_view_zero_copy():
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
     col = DoubleColumn.load_from_1d_array(arr)
-    rw = RollingWindow(col, 3)
-    result = rw.sum()
+    result = col.roll_sum(3)
     check('rolling view sum length', result.length == 5)
     check('rolling view sum w3', approx_eq(result[2], 6.0))
     check('rolling view sum w3+1', approx_eq(result[3], 9.0))
@@ -262,8 +260,7 @@ def test_rolling_double_view_zero_copy():
 def test_rolling_double_view_mean():
     arr = np.array([10.0, 20.0, 30.0, 40.0, 50.0], dtype=np.float64)
     col = DoubleColumn.load_from_1d_array(arr)
-    rw = RollingWindow(col, 3)
-    result = rw.mean()
+    result = col.roll_mean(3)
     check('rolling view mean w3', approx_eq(result[2], 20.0))
     check('rolling view mean w3+1', approx_eq(result[3], 30.0))
     check('rolling view mean w3+2', approx_eq(result[4], 40.0))
@@ -271,9 +268,7 @@ def test_rolling_double_view_mean():
 def test_rolling_double_view_std():
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
     col = DoubleColumn.load_from_1d_array(arr)
-    rw = RollingWindow(col, 3)
-    result = rw.std()
-    # std of [1,2,3] = sqrt(2/3) ≈ 0.8165
+    result = col.roll_std(3)
     expected = math.sqrt(2.0 / 3.0)
     check('rolling view std w3', approx_eq(result[2], expected))
     check('rolling view std w3+1', approx_eq(result[3], expected))
@@ -282,8 +277,7 @@ def test_rolling_double_view_std():
 def test_rolling_double_view_min():
     arr = np.array([3.0, 1.0, 4.0, 1.0, 5.0], dtype=np.float64)
     col = DoubleColumn.load_from_1d_array(arr)
-    rw = RollingWindow(col, 3)
-    result = rw.min()
+    result = col.roll_min(3)
     check('rolling view min w3', approx_eq(result[2], 1.0))
     check('rolling view min w3+1', approx_eq(result[3], 1.0))
     check('rolling view min w3+2', approx_eq(result[4], 1.0))
@@ -291,8 +285,7 @@ def test_rolling_double_view_min():
 def test_rolling_double_view_max():
     arr = np.array([3.0, 1.0, 4.0, 1.0, 5.0], dtype=np.float64)
     col = DoubleColumn.load_from_1d_array(arr)
-    rw = RollingWindow(col, 3)
-    result = rw.max()
+    result = col.roll_max(3)
     check('rolling view max w3', approx_eq(result[2], 4.0))
     check('rolling view max w3+1', approx_eq(result[3], 4.0))
     check('rolling view max w3+2', approx_eq(result[4], 5.0))
@@ -301,8 +294,7 @@ def test_rolling_int_col_still_works():
     col = IntColumn()
     for v in [1, 2, 3, 4, 5]:
         col.append(v)
-    rw = RollingWindow(col, 3)
-    result = rw.sum()
+    result = col.roll_sum(3)
     check('rolling int sum w3', approx_eq(result[2], 6.0))
     check('rolling int sum w3+2', approx_eq(result[4], 12.0))
 

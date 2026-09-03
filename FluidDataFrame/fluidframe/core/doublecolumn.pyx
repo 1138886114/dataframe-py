@@ -2126,7 +2126,6 @@ cdef class DoubleColumn(BaseColumn):
         for col_idx in range(c):
             offset = col_idx * r
             for i in range(window - 1, r):
-                # 零拷贝构建当前窗口的轻量切片对象，传给 Python 函数
                 window_view = DoubleColumn.create_view(
                     src + offset + (i - window + 1),
                     window,
@@ -2137,17 +2136,159 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     # ============================================================
-    # 8. 统一动态分发入口 (roll)
+    # 8. roll_skew / roll_kurt / roll_corr / roll_cov
+    # ============================================================
+    def roll_skew(self, Py_ssize_t window):
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        cdef DoubleColumn res = self._make_like_nan()
+        if r < window or window < 3: return res
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef double n_f = <double>window
+        cdef Py_ssize_t col_idx, offset, i, j
+        cdef double s, mean, m2, m3, val, std_dev
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                for i in range(window - 1, r):
+                    s = 0.0
+                    for j in range(i - window + 1, i + 1):
+                        s += src[offset + j]
+                    mean = s / n_f
+                    m2 = 0.0; m3 = 0.0
+                    for j in range(i - window + 1, i + 1):
+                        val = src[offset + j] - mean
+                        m2 += val * val
+                        m3 += val * val * val
+                    if m2 > 1e-14:
+                        std_dev = sqrt(m2 / n_f)
+                        dst[offset + i] = (m3 / n_f) / (std_dev * std_dev * std_dev)
+                    else:
+                        dst[offset + i] = 0.0
+        return res
+
+    def roll_kurt(self, Py_ssize_t window):
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        cdef DoubleColumn res = self._make_like_nan()
+        if r < window or window < 4: return res
+        cdef double* src = self.data_c
+        cdef double* dst = res.data_c
+        cdef double n_f = <double>window
+        cdef Py_ssize_t col_idx, offset, i, j
+        cdef double s, mean, m2, m4, val, variance
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                for i in range(window - 1, r):
+                    s = 0.0
+                    for j in range(i - window + 1, i + 1):
+                        s += src[offset + j]
+                    mean = s / n_f
+                    m2 = 0.0; m4 = 0.0
+                    for j in range(i - window + 1, i + 1):
+                        val = src[offset + j] - mean
+                        m2 += val * val
+                        m4 += val * val * val * val
+                    if m2 > 1e-14:
+                        variance = m2 / n_f
+                        dst[offset + i] = (m4 / n_f) / (variance * variance) - 3.0
+                    else:
+                        dst[offset + i] = 0.0
+        return res
+
+    def roll_corr(self, Py_ssize_t window, object other):
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        cdef DoubleColumn res = self._make_like_nan()
+        if r < window: return res
+        cdef double* src_x = self.data_c
+        cdef double* dst = res.data_c
+        cdef double* src_y
+        cdef double n_f = <double>window, inv_w = 1.0 / n_f
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double sum_x, sum_y, sum_xx, sum_yy, sum_xy, x, y, old_x, old_y, vx, vy, denom, cov_xy
+        cdef bint other_is_double = (<object>other).dtype == TYPE_DOUBLE
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                sum_x = 0.0; sum_y = 0.0; sum_xx = 0.0; sum_yy = 0.0; sum_xy = 0.0
+                for i in range(window):
+                    x = src_x[offset + i]
+                    if other_is_double:
+                        y = (<DoubleColumn>other).data_c[offset + i]
+                    else:
+                        y = <double>((<IntColumn>other).data_c[offset + i])
+                    sum_x += x; sum_y += y; sum_xx += x * x; sum_yy += y * y; sum_xy += x * y
+                vx = sum_xx - sum_x * sum_x * inv_w
+                vy = sum_yy - sum_y * sum_y * inv_w
+                denom = sqrt(vx * vy)
+                cov_xy = sum_xy - sum_x * sum_y * inv_w
+                dst[offset + window - 1] = cov_xy / denom if (denom > 0.0) else 0.0
+                for i in range(window, r):
+                    x = src_x[offset + i]
+                    if other_is_double:
+                        y = (<DoubleColumn>other).data_c[offset + i]
+                        old_x = src_x[offset + i - window]
+                        old_y = (<DoubleColumn>other).data_c[offset + i - window]
+                    else:
+                        y = <double>((<IntColumn>other).data_c[offset + i])
+                        old_x = src_x[offset + i - window]
+                        old_y = <double>((<IntColumn>other).data_c[offset + i - window])
+                    sum_x += x - old_x; sum_y += y - old_y
+                    sum_xx += x * x - old_x * old_x; sum_yy += y * y - old_y * old_y
+                    sum_xy += x * y - old_x * old_y
+                    vx = sum_xx - sum_x * sum_x * inv_w
+                    vy = sum_yy - sum_y * sum_y * inv_w
+                    denom = sqrt(vx * vy)
+                    cov_xy = sum_xy - sum_x * sum_y * inv_w
+                    dst[offset + i] = cov_xy / denom if (denom > 0.0) else 0.0
+        return res
+
+    def roll_cov(self, Py_ssize_t window, object other):
+        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.cols
+        cdef DoubleColumn res = self._make_like_nan()
+        if r < window: return res
+        cdef double* src_x = self.data_c
+        cdef double* dst = res.data_c
+        cdef double n_f = <double>window, inv_w = 1.0 / n_f
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double sum_x, sum_y, sum_xy, x, y, old_x, old_y
+        cdef bint other_is_double = (<object>other).dtype == TYPE_DOUBLE
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                sum_x = 0.0; sum_y = 0.0; sum_xy = 0.0
+                for i in range(window):
+                    x = src_x[offset + i]
+                    if other_is_double:
+                        y = (<DoubleColumn>other).data_c[offset + i]
+                    else:
+                        y = <double>((<IntColumn>other).data_c[offset + i])
+                    sum_x += x; sum_y += y; sum_xy += x * y
+                dst[offset + window - 1] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
+                for i in range(window, r):
+                    x = src_x[offset + i]
+                    if other_is_double:
+                        y = (<DoubleColumn>other).data_c[offset + i]
+                        old_x = src_x[offset + i - window]
+                        old_y = (<DoubleColumn>other).data_c[offset + i - window]
+                    else:
+                        y = <double>((<IntColumn>other).data_c[offset + i])
+                        old_x = src_x[offset + i - window]
+                        old_y = <double>((<IntColumn>other).data_c[offset + i - window])
+                    sum_x += x - old_x; sum_y += y - old_y
+                    sum_xy += x * y - old_x * old_y
+                    dst[offset + i] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
+        return res
+
+    # ============================================================
+    # 9. 统一动态分发入口 (roll)
     # ============================================================
     @cython.binding(False)
     def roll(self, Py_ssize_t window, str method="mean", **kwargs):
-        """
-        统一滚动计算入口。
-        例如:
-            col.roll(7, "mean")
-            col.roll(14, "std", ddof=False)
-            col.roll(5, "quantile", q=0.75)
-        """
         cdef str m = method.lower()
         if m == "mean":
             return self.roll_mean(window)
@@ -2165,5 +2306,9 @@ cdef class DoubleColumn(BaseColumn):
             return self.roll_median(window)
         elif m == "quantile":
             return self.roll_quantile(window, kwargs.get("q", 0.5))
+        elif m == "skew":
+            return self.roll_skew(window)
+        elif m == "kurt":
+            return self.roll_kurt(window)
         else:
             raise ValueError(f"Unsupported rolling method: '{method}'")
