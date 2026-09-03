@@ -6,11 +6,11 @@
 # cython: initializedcheck=False
 
 cimport cython
-from libc.string cimport memcpy, memmove
+from libc.string cimport memcpy, memmove, memset
 from libc.stdio cimport snprintf
-from libc.math cimport sqrt, fabs, NAN
+from libc.math cimport sqrt, fabs, NAN, fmax
 from libc.stdlib cimport qsort, bsearch
-from libc.stdint cimport int64_t
+from libc.stdint cimport int32_t, int64_t
 from fluidframe.core._base cimport (
     TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL,
     TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
@@ -26,6 +26,7 @@ from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
+DEF US_PER_DAY = 86400000000LL
 
 cdef int _cmp_int(const void* a, const void* b) noexcept nogil:
     cdef int va = (<const int*>a)[0]
@@ -50,7 +51,8 @@ cdef class IntColumn(BaseColumn):
         self._owns_data = True
         self._base_obj = None
         self.data_c = <int*>aligned_malloc(self.capacity * sizeof(int))
-        if not self.data_c: raise MemoryError()
+        if not self.data_c:
+            raise MemoryError()
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -66,7 +68,7 @@ cdef class IntColumn(BaseColumn):
 
     @staticmethod
     cdef IntColumn create_view(int* ptr, Py_ssize_t length, object base_obj):
-        """零拷贝构造一个视图列，指向外部连续大内存的某一段"""
+        """零拷贝构造视图列，指向外部连续大内存的某一切片"""
         cdef IntColumn col = IntColumn.__new__(IntColumn)
         col.dtype = TYPE_INT
         col.capacity = length
@@ -78,7 +80,7 @@ cdef class IntColumn(BaseColumn):
 
     @staticmethod
     def load_from_1d_array(object arr):
-        """零拷贝加载 1D 连续数组 (支持 NumPy、PyTorch 等任意实现 Buffer 协议的对象)"""
+        """零拷贝加载 1D 连续数组 (支持任意遵循 Buffer 协议的对象)"""
         cdef int[::1] view
         try:
             view = arr
@@ -99,10 +101,7 @@ cdef class IntColumn(BaseColumn):
 
     @staticmethod
     def load_from_2d_array(object arr, list col_names):
-        """
-        零拷贝加载 2D 连续数组 (支持 NumPy、PyTorch 等任意实现 Buffer 协议的对象)
-        要求输入数组必须是 Fortran-contiguous (按列连续存储)
-        """
+        """零拷贝加载 2D 列优先数组 (Fortran-contiguous)"""
         cdef int[::1, :] view
         try:
             view = arr
@@ -133,36 +132,46 @@ cdef class IntColumn(BaseColumn):
             raise RuntimeError("Cannot reallocate a view/slice column. Copy it first.")
         if new_cap > self.capacity:
             self.data_c = <int*>aligned_realloc(self.data_c, self.capacity * sizeof(int), new_cap * sizeof(int))
-            if not self.data_c: raise MemoryError()
+            if not self.data_c:
+                raise MemoryError()
             self.capacity = new_cap
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, int val):
+        if not self._owns_data:
+            raise RuntimeError("Cannot append to a view/slice column. Copy it first.")
         if self.length >= self.capacity:
-            self._reserve(self.capacity * 2)
+            self._reserve(max(16, self.capacity * 2))
         self.data_c[self.length] = val
         self.length += 1
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
-        cdef IntColumn new_col = IntColumn(max(self.capacity, 1))
+        cdef IntColumn new_col = IntColumn(max(self.length, 1))
         new_col.length = self.length
-        memcpy(new_col.data_c, self.data_c, self.length * sizeof(int))
+        if self.length > 0:
+            memcpy(new_col.data_c, self.data_c, self.length * sizeof(int))
         return new_col
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_back(self):
-        if self.length == 0: raise IndexError("pop from empty column")
+        if not self._owns_data:
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
+        if self.length == 0:
+            raise IndexError("pop from empty column")
         self.length -= 1
         return self.data_c[self.length]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_front(self):
-        if self.length == 0: raise IndexError("pop from empty column")
+        if not self._owns_data:
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
+        if self.length == 0:
+            raise IndexError("pop from empty column")
         cdef int val = self.data_c[0]
         self.length -= 1
         if self.length > 0:
@@ -172,9 +181,13 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, IntColumn other):
-        self._reserve(self.length + other.length)
-        memcpy(self.data_c + self.length, other.data_c, other.length * sizeof(int))
-        self.length += other.length
+        if not self._owns_data:
+            raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
+        cdef Py_ssize_t other_len = other.length
+        if other_len == 0: return
+        self._reserve(self.length + other_len)
+        memcpy(self.data_c + self.length, other.data_c, other_len * sizeof(int))
+        self.length += other_len
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -182,10 +195,11 @@ cdef class IntColumn(BaseColumn):
         if self.length == 0: raise ValueError("empty column")
         cdef int max_val = self.data_c[0]
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(1, self.length):
-                if ptr[i] > max_val: max_val = ptr[i]
+            for i in range(1, n):
+                if ptr[i] > max_val:
+                    max_val = ptr[i]
         return max_val
 
     @cython.binding(False)
@@ -194,19 +208,18 @@ cdef class IntColumn(BaseColumn):
         if self.length == 0: raise ValueError("empty column")
         cdef int min_val = self.data_c[0]
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(1, self.length):
-                if ptr[i] < min_val: min_val = ptr[i]
+            for i in range(1, n):
+                if ptr[i] < min_val:
+                    min_val = ptr[i]
         return min_val
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sum(self):
         cdef Py_ssize_t n = self.length
-        if n == 0:
-            return 0
-
+        if n == 0: return 0
         cdef int* ptr = self.data_c
         cdef int64_t total = 0
         cdef Py_ssize_t i
@@ -230,7 +243,7 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def mean(self):
         if self.length == 0: return NAN
-        return self.sum() / <double>self.length
+        return <double>self.sum() / <double>self.length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -239,12 +252,12 @@ cdef class IntColumn(BaseColumn):
         cdef double m = self.mean()
         cdef double sum_sq = 0.0, diff
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 diff = <double>ptr[i] - m
                 sum_sq += diff * diff
-        return sum_sq / (self.length - 1)
+        return sum_sq / (n - 1)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -256,9 +269,9 @@ cdef class IntColumn(BaseColumn):
     def count_nonzeros(self):
         cdef Py_ssize_t count = 0
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 count += (ptr[i] != 0)
         return count
 
@@ -269,9 +282,9 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t max_idx = 0
         cdef int max_val = self.data_c[0]
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(1, self.length):
+            for i in range(1, n):
                 if ptr[i] > max_val:
                     max_val = ptr[i]
                     max_idx = i
@@ -284,9 +297,9 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t min_idx = 0
         cdef int min_val = self.data_c[0]
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(1, self.length):
+            for i in range(1, n):
                 if ptr[i] < min_val:
                     min_val = ptr[i]
                     min_idx = i
@@ -300,34 +313,37 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def argmin(self): return self.idxmin()
 
-    cdef double _quickselect(self, int* data, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
-        """三数中值无死循环快速选择"""
-        cdef Py_ssize_t left = 0, right = n - 1, i, j, mid
+    # ------------------------------------------------------------
+    # 工业级三路划分快速选择 (防死循环、防退化)
+    # ------------------------------------------------------------
+    cdef double _quickselect(self, int* a, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
+        cdef Py_ssize_t l = 0, r = n - 1
+        cdef Py_ssize_t i, lt, gt
         cdef int pivot, tmp
-        while left < right:
-            mid = left + (right - left) // 2
-            if data[left] > data[mid]:
-                tmp = data[left]; data[left] = data[mid]; data[mid] = tmp
-            if data[left] > data[right]:
-                tmp = data[left]; data[left] = data[right]; data[right] = tmp
-            if data[mid] > data[right]:
-                tmp = data[mid]; data[mid] = data[right]; data[right] = tmp
 
-            pivot = data[mid]
-            i = left
-            j = right
-            while True:
-                while data[i] < pivot: i += 1
-                while data[j] > pivot: j -= 1
-                if i >= j: break
-                tmp = data[i]; data[i] = data[j]; data[j] = tmp
-                i += 1
-                j -= 1
-            if k <= j:
-                right = j
+        while l <= r:
+            pivot = a[l + (r - l) // 2]
+            lt = l
+            gt = r
+            i = l
+            while i <= gt:
+                if a[i] < pivot:
+                    tmp = a[lt]; a[lt] = a[i]; a[i] = tmp
+                    lt += 1
+                    i += 1
+                elif a[i] > pivot:
+                    tmp = a[i]; a[i] = a[gt]; a[gt] = tmp
+                    gt -= 1
+                else:
+                    i += 1
+
+            if k < lt:
+                r = lt - 1
+            elif k > gt:
+                l = gt + 1
             else:
-                left = j + 1
-        return <double>data[k]
+                return <double>a[k]
+        return <double>a[k]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -338,14 +354,15 @@ cdef class IntColumn(BaseColumn):
         memcpy(temp, self.data_c, self.length * sizeof(int))
         cdef Py_ssize_t mid = self.length // 2
         cdef double v1, v2, result
-        if self.length % 2 == 0:
-            v1 = self._quickselect(temp, self.length, mid - 1)
-            v2 = self._quickselect(temp, self.length, mid)
+        try:
+            if self.length % 2 == 0:
+                v1 = self._quickselect(temp, self.length, mid - 1)
+                v2 = self._quickselect(temp, self.length, mid)
+                return (v1 + v2) * 0.5
+            result = self._quickselect(temp, self.length, mid)
+            return result
+        finally:
             os_aligned_free(temp)
-            return (v1 + v2) * 0.5
-        result = self._quickselect(temp, self.length, mid)
-        os_aligned_free(temp)
-        return result
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -354,11 +371,11 @@ cdef class IntColumn(BaseColumn):
         cdef double m = self.mean()
         cdef double total_dev = 0.0
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 total_dev += fabs(<double>ptr[i] - m)
-        return total_dev / self.length
+        return total_dev / <double>n
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -366,10 +383,10 @@ cdef class IntColumn(BaseColumn):
         if self.length == 0: return NAN
         cdef double total = 1.0
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
-                total *= ptr[i]
+            for i in range(n):
+                total *= <double>ptr[i]
         return total
 
     @cython.binding(False)
@@ -377,8 +394,8 @@ cdef class IntColumn(BaseColumn):
     def nunique(self):
         if self.length == 0: return 0
         cdef set seen = set()
-        cdef Py_ssize_t i
-        for i in range(self.length):
+        cdef Py_ssize_t i, n = self.length
+        for i in range(n):
             seen.add(self.data_c[i])
         return len(seen)
 
@@ -386,9 +403,9 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def value_counts(self):
         cdef dict counts = {}
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         cdef int val
-        for i in range(self.length):
+        for i in range(n):
             val = self.data_c[i]
             counts[val] = counts.get(val, 0) + 1
         return counts
@@ -398,9 +415,9 @@ cdef class IntColumn(BaseColumn):
     def mode(self):
         if self.length == 0: return []
         cdef dict counts = {}
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         cdef int val, count, max_count = 0
-        for i in range(self.length):
+        for i in range(n):
             val = self.data_c[i]
             count = counts.get(val, 0) + 1
             counts[val] = count
@@ -419,15 +436,15 @@ cdef class IntColumn(BaseColumn):
         cdef double pos = q * (self.length - 1)
         cdef Py_ssize_t idx = <Py_ssize_t>pos
         cdef double frac = pos - idx
-        cdef double result, v1, v2
-        if idx >= self.length - 1:
-            result = self._quickselect(temp, self.length, self.length - 1)
+        cdef double v1, v2
+        try:
+            if idx >= self.length - 1:
+                return self._quickselect(temp, self.length, self.length - 1)
+            v1 = self._quickselect(temp, self.length, idx)
+            v2 = self._quickselect(temp, self.length, idx + 1)
+            return v1 + frac * (v2 - v1)
+        finally:
             os_aligned_free(temp)
-            return result
-        v1 = self._quickselect(temp, self.length, idx)
-        v2 = self._quickselect(temp, self.length, idx + 1)
-        os_aligned_free(temp)
-        return v1 + frac * (v2 - v1)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -437,9 +454,9 @@ cdef class IntColumn(BaseColumn):
         cdef int total = 0
         cdef int* ptr = self.data_c
         cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 total += ptr[i]
                 res_ptr[i] = total
         return res
@@ -453,10 +470,10 @@ cdef class IntColumn(BaseColumn):
         cdef int cur_max = self.data_c[0]
         cdef int* ptr = self.data_c
         cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
             res_ptr[0] = cur_max
-            for i in range(1, self.length):
+            for i in range(1, n):
                 if ptr[i] > cur_max:
                     cur_max = ptr[i]
                 res_ptr[i] = cur_max
@@ -471,10 +488,10 @@ cdef class IntColumn(BaseColumn):
         cdef int cur_min = self.data_c[0]
         cdef int* ptr = self.data_c
         cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
             res_ptr[0] = cur_min
-            for i in range(1, self.length):
+            for i in range(1, n):
                 if ptr[i] < cur_min:
                     cur_min = ptr[i]
                 res_ptr[i] = cur_min
@@ -486,18 +503,18 @@ cdef class IntColumn(BaseColumn):
         res.length = self.length
         cdef int* ptr = self.data_c
         cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
             if periods >= 0:
-                for i in range(min(periods, self.length)):
+                for i in range(min(periods, n)):
                     res_ptr[i] = 0
-                for i in range(periods, self.length):
+                for i in range(periods, n):
                     res_ptr[i] = ptr[i] - ptr[i - periods]
             else:
                 periods = -periods
-                for i in range(max(0, self.length - periods), self.length):
+                for i in range(max(0, n - periods), n):
                     res_ptr[i] = 0
-                for i in range(self.length - periods):
+                for i in range(n - periods):
                     res_ptr[i] = ptr[i] - ptr[i + periods]
         return res
 
@@ -507,20 +524,20 @@ cdef class IntColumn(BaseColumn):
         res.length = self.length
         cdef int* ptr = self.data_c
         cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         cdef double prev
         with nogil:
             if periods >= 0:
-                for i in range(min(periods, self.length)):
+                for i in range(min(periods, n)):
                     res_ptr[i] = NAN
-                for i in range(periods, self.length):
+                for i in range(periods, n):
                     prev = <double>ptr[i - periods]
                     res_ptr[i] = (<double>ptr[i] - prev) / prev if prev != 0.0 else NAN
             else:
                 periods = -periods
-                for i in range(max(0, self.length - periods), self.length):
+                for i in range(max(0, n - periods), n):
                     res_ptr[i] = NAN
-                for i in range(self.length - periods):
+                for i in range(n - periods):
                     prev = <double>ptr[i + periods]
                     res_ptr[i] = (<double>ptr[i] - prev) / prev if prev != 0.0 else NAN
         return res
@@ -528,10 +545,7 @@ cdef class IntColumn(BaseColumn):
     cdef void _central_moments(self, double* out_mean, double* out_m2, double* out_m3, double* out_m4) noexcept nogil:
         cdef Py_ssize_t n = self.length
         if n == 0:
-            out_mean[0] = 0.0
-            out_m2[0] = 0.0
-            out_m3[0] = 0.0
-            out_m4[0] = 0.0
+            out_mean[0] = 0.0; out_m2[0] = 0.0; out_m3[0] = 0.0; out_m4[0] = 0.0
             return
         cdef double mean = 0.0, m2 = 0.0, m3 = 0.0, m4 = 0.0
         cdef double val, delta, delta_n, delta_n2, term1
@@ -545,13 +559,13 @@ cdef class IntColumn(BaseColumn):
             delta_n = val - mean
             term1 = delta * delta_n * n1
             delta_n2 = delta_n * delta_n
-            m4 = m4 + term1 * delta_n2 * ((n1 + 1) * (n1 + 1) - 3 * (n1 + 1) + 3) + 6.0 * delta_n2 * m2 - 4.0 * delta_n * m3
-            m3 = m3 + term1 * delta_n * (n1 - 2) - 3.0 * delta_n * m2
-            m2 = m2 + term1
+            m4 += term1 * delta_n2 * ((n1 + 1) * (n1 + 1) - 3 * (n1 + 1) + 3) + 6.0 * delta_n2 * m2 - 4.0 * delta_n * m3
+            m3 += term1 * delta_n * (n1 - 2) - 3.0 * delta_n * m2
+            m2 += term1
         out_mean[0] = mean
-        out_m2[0] = m2
+        out_m2[0] = fmax(m2, 0.0)
         out_m3[0] = m3
-        out_m4[0] = m4
+        out_m4[0] = fmax(m4, 0.0)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -559,7 +573,7 @@ cdef class IntColumn(BaseColumn):
         if self.length < 3: return NAN
         cdef double m, m2, m3, m4
         self._central_moments(&m, &m2, &m3, &m4)
-        if m2 == 0.0: return NAN
+        if m2 <= 1e-14: return NAN
         cdef double n = <double>self.length
         cdef double var_sample = m2 / (n - 1)
         return (n * m3) / ((n - 1) * (n - 2) * (var_sample * sqrt(var_sample)))
@@ -570,7 +584,7 @@ cdef class IntColumn(BaseColumn):
         if self.length < 4: return NAN
         cdef double m, m2, m3, m4
         self._central_moments(&m, &m2, &m3, &m4)
-        if m2 == 0.0: return NAN
+        if m2 <= 1e-14: return NAN
         cdef double n = <double>self.length
         cdef double var_sample = m2 / (n - 1)
         return (m4 / (n - 1)) / (var_sample * var_sample) - 3.0
@@ -593,14 +607,14 @@ cdef class IntColumn(BaseColumn):
     def cumprod(self):
         cdef IntColumn res = IntColumn(max(self.capacity, 1))
         res.length = self.length
-        cdef int total = 1
+        cdef int64_t total = 1
         cdef int* ptr = self.data_c
         cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 total *= ptr[i]
-                res_ptr[i] = total
+                res_ptr[i] = <int>total
         return res
 
     @cython.binding(False)
@@ -630,13 +644,12 @@ cdef class IntColumn(BaseColumn):
 
     cdef double _mean_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
         if n == 0: return NAN
-        return self._sum_rows(indices, n) / n
+        return self._sum_rows(indices, n) / <double>n
 
     cdef double _min_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
         if n == 0: return NAN
         cdef int* ptr = self.data_c
-        cdef double val, min_val
-        min_val = <double>ptr[indices[0]]
+        cdef double val, min_val = <double>ptr[indices[0]]
         cdef Py_ssize_t i
         for i in range(1, n):
             val = <double>ptr[indices[i]]
@@ -646,8 +659,7 @@ cdef class IntColumn(BaseColumn):
     cdef double _max_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
         if n == 0: return NAN
         cdef int* ptr = self.data_c
-        cdef double val, max_val
-        max_val = <double>ptr[indices[0]]
+        cdef double val, max_val = <double>ptr[indices[0]]
         cdef Py_ssize_t i
         for i in range(1, n):
             val = <double>ptr[indices[i]]
@@ -671,61 +683,64 @@ cdef class IntColumn(BaseColumn):
     cdef double _std_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
         return sqrt(self._var_rows(indices, n))
 
+    # ------------------------------------------------------------
+    # 标量算术 (完全向量化)
+    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def add_val(self, int val):
-        cdef IntColumn res = IntColumn(max(self.capacity, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
         cdef int* ptr = self.data_c
         cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 res_ptr[i] = ptr[i] + val
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sub_val(self, int val):
-        cdef IntColumn res = IntColumn(max(self.capacity, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
         cdef int* ptr = self.data_c
         cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 res_ptr[i] = ptr[i] - val
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mul_val(self, int val):
-        cdef IntColumn res = IntColumn(max(self.capacity, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
         cdef int* ptr = self.data_c
         cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 res_ptr[i] = ptr[i] * val
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def div_val(self, int val):
-        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1))
+        cdef DoubleColumn res = DoubleColumn(max(self.length, 1))
         res.length = self.length
         cdef int* ptr = self.data_c
         cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         cdef double inv_val
         with nogil:
             if val != 0:
                 inv_val = 1.0 / <double>val
-                for i in range(self.length):
+                for i in range(n):
                     res_ptr[i] = <double>ptr[i] * inv_val
             else:
-                for i in range(self.length):
+                for i in range(n):
                     res_ptr[i] = NAN
         return res
 
@@ -856,22 +871,17 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __add__(self, object other):
-        if isinstance(other, int):
-            return self.add_val(other)
-        if isinstance(other, (IntColumn, DoubleColumn)):
-            return self.add(other)
+        if isinstance(other, int): return self.add_val(other)
+        if isinstance(other, (IntColumn, DoubleColumn)): return self.add(other)
         return NotImplemented
 
-    def __radd__(self, object other):
-        return self.__add__(other)
+    def __radd__(self, object other): return self.__add__(other)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __sub__(self, object other):
-        if isinstance(other, int):
-            return self.sub_val(other)
-        if isinstance(other, (IntColumn, DoubleColumn)):
-            return self.sub(other)
+        if isinstance(other, int): return self.sub_val(other)
+        if isinstance(other, (IntColumn, DoubleColumn)): return self.sub(other)
         return NotImplemented
 
     def __rsub__(self, object other):
@@ -896,22 +906,17 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __mul__(self, object other):
-        if isinstance(other, int):
-            return self.mul_val(other)
-        if isinstance(other, (IntColumn, DoubleColumn)):
-            return self.mul(other)
+        if isinstance(other, int): return self.mul_val(other)
+        if isinstance(other, (IntColumn, DoubleColumn)): return self.mul(other)
         return NotImplemented
 
-    def __rmul__(self, object other):
-        return self.__mul__(other)
+    def __rmul__(self, object other): return self.__mul__(other)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __truediv__(self, object other):
-        if isinstance(other, int):
-            return self.div_val(other)
-        if isinstance(other, (IntColumn, DoubleColumn)):
-            return self.div(other)
+        if isinstance(other, int): return self.div_val(other)
+        if isinstance(other, (IntColumn, DoubleColumn)): return self.div(other)
         return NotImplemented
 
     def __rtruediv__(self, object other):
@@ -943,6 +948,7 @@ cdef class IntColumn(BaseColumn):
         if n != self.length:
             snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
             raise ValueError(err_buf.decode('ascii'))
+        if n == 0: return
 
         cdef Py_ssize_t new_cap = max(n, 1)
         cdef int* new_data = <int*>aligned_malloc(new_cap * sizeof(int))
@@ -961,10 +967,13 @@ cdef class IntColumn(BaseColumn):
             os_aligned_free(new_data)
             raise
 
-        os_aligned_free(self.data_c)
+        if self._owns_data and self.data_c != NULL:
+            os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = new_cap
         self.length = n
+        self._owns_data = True
+        self._base_obj = None
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -978,21 +987,24 @@ cdef class IntColumn(BaseColumn):
     def unique(self):
         cdef set seen = set()
         cdef list result = []
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         cdef int val
-        for i in range(self.length):
+        for i in range(n):
             val = self.data_c[i]
             if val not in seen:
                 seen.add(val)
                 result.append(val)
         return result
 
+    # ------------------------------------------------------------
+    # 纯 C 向量化比较算子
+    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _cmp_op(self, object val, int op):
-        cdef IntColumn res = IntColumn(max(self.capacity, 1))
-        res.length = self.length
         cdef Py_ssize_t i, n = self.length
+        cdef IntColumn res = IntColumn(max(n, 1))
+        res.length = n
         cdef int v
         cdef int* s_ptr = self.data_c
         cdef int* r_ptr = res.data_c
@@ -1038,22 +1050,22 @@ cdef class IntColumn(BaseColumn):
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def __lt__(self, val):  return self._cmp_op(val, 0)
+    def __lt__(self, val): return self._cmp_op(val, 0)
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def __le__(self, val):  return self._cmp_op(val, 1)
+    def __le__(self, val): return self._cmp_op(val, 1)
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def __gt__(self, val):  return self._cmp_op(val, 2)
+    def __gt__(self, val): return self._cmp_op(val, 2)
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def __ge__(self, val):  return self._cmp_op(val, 3)
+    def __ge__(self, val): return self._cmp_op(val, 3)
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def __eq__(self, val):  return self._cmp_op(val, 4)
+    def __eq__(self, val): return self._cmp_op(val, 4)
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def __ne__(self, val):  return self._cmp_op(val, 5)
+    def __ne__(self, val): return self._cmp_op(val, 5)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -1063,14 +1075,15 @@ cdef class IntColumn(BaseColumn):
         cdef IntColumn b = <IntColumn>other
         if self.length != b.length:
             raise ValueError(f"Length mismatch: {self.length} vs {b.length}")
-        cdef IntColumn res = IntColumn(max(self.capacity, 1))
-        res.length = self.length
+        cdef Py_ssize_t n = self.length
+        cdef IntColumn res = IntColumn(max(n, 1))
+        res.length = n
         cdef int* a_ptr = self.data_c
         cdef int* b_ptr = b.data_c
         cdef int* r_ptr = res.data_c
         cdef Py_ssize_t i
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 r_ptr[i] = (a_ptr[i] != 0) & (b_ptr[i] != 0)
         return res
 
@@ -1082,43 +1095,45 @@ cdef class IntColumn(BaseColumn):
         cdef IntColumn b = <IntColumn>other
         if self.length != b.length:
             raise ValueError(f"Length mismatch: {self.length} vs {b.length}")
-        cdef IntColumn res = IntColumn(max(self.capacity, 1))
-        res.length = self.length
+        cdef Py_ssize_t n = self.length
+        cdef IntColumn res = IntColumn(max(n, 1))
+        res.length = n
         cdef int* a_ptr = self.data_c
         cdef int* b_ptr = b.data_c
         cdef int* r_ptr = res.data_c
         cdef Py_ssize_t i
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 r_ptr[i] = (a_ptr[i] != 0) | (b_ptr[i] != 0)
         return res
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __invert__(self):
-        cdef IntColumn res = IntColumn(max(self.capacity, 1))
-        res.length = self.length
+        cdef Py_ssize_t n = self.length
+        cdef IntColumn res = IntColumn(max(n, 1))
+        res.length = n
         cdef int* s_ptr = self.data_c
         cdef int* r_ptr = res.data_c
         cdef Py_ssize_t i
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 r_ptr[i] = (s_ptr[i] == 0)
         return res
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def isin(self, set values):
-        cdef IntColumn res = IntColumn(max(self.capacity, 1))
-        res.length = self.length
-        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t n = self.length
+        cdef IntColumn res = IntColumn(max(n, 1))
+        res.length = n
         cdef int* s_ptr = self.data_c
         cdef int* r_ptr = res.data_c
         cdef Py_ssize_t m = len(values)
 
-        if m == 0:
-            with nogil:
-                for i in range(n): r_ptr[i] = 0
+        if m == 0 or n == 0:
+            if n > 0:
+                memset(r_ptr, 0, n * sizeof(int))
             return res
 
         cdef int* v_arr = <int*>aligned_malloc(m * sizeof(int))
@@ -1126,6 +1141,7 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t valid_m = 0
         cdef void* found
         cdef int single_val
+        cdef Py_ssize_t i
 
         try:
             for v in values:
@@ -1134,8 +1150,7 @@ cdef class IntColumn(BaseColumn):
                     valid_m += 1
 
             if valid_m == 0:
-                with nogil:
-                    for i in range(n): r_ptr[i] = 0
+                memset(r_ptr, 0, n * sizeof(int))
             elif valid_m == 1:
                 single_val = v_arr[0]
                 with nogil:
@@ -1155,13 +1170,14 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def between(self, int low, int high):
-        cdef IntColumn res = IntColumn(max(self.capacity, 1))
-        res.length = self.length
+        cdef Py_ssize_t n = self.length
+        cdef IntColumn res = IntColumn(max(n, 1))
+        res.length = n
         cdef int* s_ptr = self.data_c
         cdef int* r_ptr = res.data_c
         cdef Py_ssize_t i
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 r_ptr[i] = (low <= s_ptr[i]) & (s_ptr[i] <= high)
         return res
 
@@ -1169,8 +1185,8 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     def __str__(self):
         cdef list items = []
-        cdef Py_ssize_t i
-        for i in range(self.length):
+        cdef Py_ssize_t i, n = self.length
+        for i in range(n):
             items.append(str(self.data_c[i]))
         return f"IntColumn([{', '.join(items)}])"
 
@@ -1198,29 +1214,36 @@ cdef class IntColumn(BaseColumn):
                     new_col.data_c[i] = old_data[indices[i]]
             return new_col
         else:
-            new_data = <int*>aligned_malloc(max(n, self.capacity) * sizeof(int))
+            new_data = <int*>aligned_malloc(max(n, 1) * sizeof(int))
             if not new_data: raise MemoryError()
             with nogil:
                 for i in range(n):
                     new_data[i] = old_data[indices[i]]
-            os_aligned_free(self.data_c)
+            if self._owns_data and self.data_c != NULL:
+                os_aligned_free(self.data_c)
             self.data_c = new_data
-            self.capacity = max(n, self.capacity)
+            self.capacity = n
             self.length = n
+            self._owns_data = True
+            self._base_obj = None
             return self
 
+    # ------------------------------------------------------------
+    # 无分支 clip 优化 (编译器生成 vpmaxsd/vpminsd 指令)
+    # ------------------------------------------------------------
     cpdef IntColumn clip(self, double lower, double upper, bint inplace=False):
         cdef IntColumn col = self if inplace else self.copy()
         cdef int* ptr = col.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = col.length
         cdef int lo = <int>lower
         cdef int hi = <int>upper
+        cdef int v
         with nogil:
-            for i in range(col.length):
-                if ptr[i] < lo:
-                    ptr[i] = lo
-                elif ptr[i] > hi:
-                    ptr[i] = hi
+            for i in range(n):
+                v = ptr[i]
+                v = lo if v < lo else v
+                v = hi if v > hi else v
+                ptr[i] = v
         return col
 
     cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=False):
@@ -1230,7 +1253,7 @@ cdef class IntColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        cdef IntColumn col = self if inplace else IntColumn(max(self.capacity, 1))
+        cdef IntColumn col = self if inplace else IntColumn(max(n, 1))
         if not inplace: col.length = n
 
         cdef int* col_ptr = col.data_c
@@ -1251,7 +1274,7 @@ cdef class IntColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Mask length %zd != column length %zd", mask.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        cdef IntColumn col = IntColumn(max(self.capacity, 1))
+        cdef IntColumn col = IntColumn(max(n, 1))
         col.length = n
         cdef int fill_val = <int>fill
         cdef int* col_ptr = col.data_c
@@ -1270,7 +1293,7 @@ cdef class IntColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        cdef IntColumn col = self if inplace else IntColumn(max(self.capacity, 1))
+        cdef IntColumn col = self if inplace else IntColumn(max(n, 1))
         if not inplace: col.length = n
 
         cdef int* col_ptr = col.data_c
@@ -1283,6 +1306,8 @@ cdef class IntColumn(BaseColumn):
         return col
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+        if not self._owns_data:
+            raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
         if row_idx < 0:
             row_idx += self.length
         if row_idx < 0 or row_idx >= self.length:
@@ -1317,16 +1342,18 @@ cdef class IntColumn(BaseColumn):
         return self.count_nonzeros()
 
     cdef void gather_zero_to(self, Py_ssize_t* out):
-        """Gather indices where value == 0 into out[]"""
         cdef Py_ssize_t j = 0
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
         with nogil:
-            for i in range(self.length):
+            for i in range(n):
                 if ptr[i] == 0:
                     out[j] = i
                     j += 1
 
+    # ------------------------------------------------------------
+    # astype: 纯 C 级别零拷贝/无冗余转换
+    # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def astype(self, object target):
@@ -1341,7 +1368,7 @@ cdef class IntColumn(BaseColumn):
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
-        cdef int ival, y, m, d, sz
+        cdef int ival, sz
         cdef char buf[64]
         cdef int* s_ptr = self.data_c
 
@@ -1371,21 +1398,23 @@ cdef class IntColumn(BaseColumn):
 
         elif target_type == TYPE_CHAR256:
             cc = Char256Column_SoA(safe_cap)
-            for i in range(n):
-                sz = snprintf(buf, sizeof(buf), "%d", s_ptr[i])
-                cc.append(buf[:sz].decode('ascii'))
+            cc.length = n
+            with nogil:
+                for i in range(n):
+                    sz = snprintf(cc.data_c + (i * 256), 256, "%d", s_ptr[i])
             return cc
 
         elif target_type == TYPE_TIMESTAMP:
             tc = DateColumn(safe_cap)
             tc.length = n
+            cdef int32_t* tc_ptr = <int32_t*>tc.data_c
             with nogil:
                 for i in range(n):
                     ival = s_ptr[i]
                     if ival > 10000000:
-                        tc.data_c[i] = _ymd_to_days(ival // 10000, (ival // 100) % 100, ival % 100)
+                        tc_ptr[i] = _ymd_to_days(ival // 10000, (ival // 100) % 100, ival % 100)
                     else:
-                        tc.data_c[i] = ival
+                        tc_ptr[i] = ival
             return tc
 
         elif target_type == TYPE_CATEGORY:
@@ -1395,21 +1424,31 @@ cdef class IntColumn(BaseColumn):
                 catc.append(buf[:sz].decode('ascii'))
             return catc
 
+        # ------------------------------------------------------------
+        # Int -> DateTime: 彻底消除字符串解析，直接走纯算术微秒换算
+        # ------------------------------------------------------------
         elif target_type == TYPE_DATETIME:
             dtc = DateTimeColumn(safe_cap)
-            for i in range(n):
-                ival = s_ptr[i]
-                y = ival // 10000
-                m = (ival // 100) % 100
-                d = ival % 100
-                sz = snprintf(buf, sizeof(buf), "%04d-%02d-%02d", y, m, d)
-                dtc.append(buf[:sz].decode('ascii'))
+            dtc.length = n
+            cdef int64_t* dt_ptr = <int64_t*>dtc.data_c
+            cdef int32_t days
+            with nogil:
+                for i in range(n):
+                    ival = s_ptr[i]
+                    if ival > 10000000:
+                        days = _ymd_to_days(ival // 10000, (ival // 100) % 100, ival % 100)
+                        dt_ptr[i] = <int64_t>days * US_PER_DAY
+                    else:
+                        dt_ptr[i] = <int64_t>ival * 1000000LL
             return dtc
 
         elif target_type == TYPE_TIME:
             tmc = TimeColumn(safe_cap)
-            for i in range(n):
-                tmc.append(s_ptr[i])
+            tmc.length = n
+            cdef int* tmc_ptr = tmc.data_c
+            with nogil:
+                for i in range(n):
+                    tmc_ptr[i] = s_ptr[i]
             return tmc
 
         elif target_type == TYPE_INT:
