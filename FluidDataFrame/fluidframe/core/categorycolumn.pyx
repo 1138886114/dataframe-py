@@ -42,11 +42,15 @@ cdef class CategoryColumn(BaseColumn):
         else:
             self.codes_c = NULL
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def __dealloc__(self):
         if self.codes_c != NULL:
             os_aligned_free(self.codes_c)
             self.codes_c = NULL
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def get_size(self):
         return self.capacity * sizeof(int) + len(self.categories) * sizeof(void*)
 

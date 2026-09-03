@@ -145,6 +145,8 @@ cdef class TimeColumn(BaseColumn):
         if not self.data_c:
             raise MemoryError()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def get_size(self):
         return self.capacity * sizeof(int32_t)
 

@@ -136,11 +136,15 @@ cdef class DateColumn(BaseColumn):
         if not self.data_c:
             raise MemoryError()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def __dealloc__(self):
         if self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def get_size(self):
         return self.capacity * sizeof(int32_t)
 

@@ -26,6 +26,9 @@ from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
+cimport numpy as cnp
+cnp.import_array()
+
 
 cdef int _cmp_int(const void* a, const void* b) noexcept nogil:
     cdef int va = (<const int*>a)[0]
@@ -47,18 +50,73 @@ cdef class IntColumn(BaseColumn):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_INT
+        self._owns_data = True
+        self._base_obj = None
         self.data_c = <int*>aligned_malloc(self.capacity * sizeof(int))
         if not self.data_c: raise MemoryError()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def __dealloc__(self):
-        if self.data_c is not NULL:
+        if self._owns_data and self.data_c is not NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def get_size(self):
         return self.capacity * sizeof(int)
 
+    @staticmethod
+    cdef IntColumn create_view(int* ptr, Py_ssize_t length, object base_obj):
+        """零拷贝构造一个视图列，指向外部连续大内存的某一段"""
+        cdef IntColumn col = IntColumn.__new__(IntColumn)
+        col.dtype = TYPE_INT
+        col.capacity = length
+        col.length = length
+        col.data_c = ptr
+        col._owns_data = False
+        col._base_obj = base_obj
+        return col
+
+    @staticmethod
+    def from_numpy_1d(arr, str name=""):
+        """从1D NumPy数组创建IntColumn（零拷贝）"""
+        import numpy as np
+        cdef cnp.ndarray[int, ndim=1] np_arr = np.ascontiguousarray(arr, dtype=np.int32)
+        cdef Py_ssize_t length = np_arr.shape[0]
+        cdef IntColumn col = IntColumn.__new__(IntColumn)
+        col.dtype = TYPE_INT
+        col.capacity = length
+        col.length = length
+        col._owns_data = False
+        col._base_obj = np_arr
+        col.data_c = <int*>cnp.PyArray_DATA(np_arr)
+        return col
+
+    @staticmethod
+    def from_numpy_2d(arr, list col_names):
+        """从2D NumPy数组创建多个IntColumn（零拷贝，列优先）"""
+        import numpy as np
+        # 确保是 Fortran 连续的（列优先）
+        cdef cnp.ndarray[int, ndim=2, mode='fortran'] np_arr = np.asfortranarray(arr, dtype=np.int32)
+        cdef Py_ssize_t rows = np_arr.shape[0]
+        cdef Py_ssize_t cols = np_arr.shape[1]
+        cdef int* raw_ptr = <int*>cnp.PyArray_DATA(np_arr)
+        cdef dict result_columns = {}
+        cdef Py_ssize_t j
+
+        for j in range(cols):
+            result_columns[col_names[j]] = IntColumn.create_view(
+                raw_ptr + (j * rows),
+                rows,
+                np_arr
+            )
+        return result_columns
+
     cdef void _reserve(self, Py_ssize_t new_cap):
+        if not self._owns_data:
+            raise RuntimeError("Cannot reallocate a view/slice column. Copy it first.")
         if new_cap > self.capacity:
             self.data_c = <int*>aligned_realloc(self.data_c, self.capacity * sizeof(int), new_cap * sizeof(int))
             if not self.data_c: raise MemoryError()

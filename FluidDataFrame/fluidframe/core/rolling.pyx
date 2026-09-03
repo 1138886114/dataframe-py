@@ -31,23 +31,32 @@ cdef class RollingWindow:
             raise ValueError("window must be >= 1")
         self.length = col.length
         self.window = window
-        self._owns_data = True
-        self.data_c = <double*>aligned_malloc(max(self.length, 1) * sizeof(double))
-        if not self.data_c:
-            raise MemoryError()
+        self._base_obj = None
 
-        col_dtype = col.dtype
-        if col_dtype == TYPE_DOUBLE:
-            if self.length > 0:
-                memcpy(self.data_c, (<DoubleColumn>col).data_c, self.length * sizeof(double))
-        elif col_dtype == TYPE_INT:
-            with nogil:
-                for i in range(self.length):
-                    self.data_c[i] = <double>(<IntColumn>col).data_c[i]
+        # 优化路径：如果是 DoubleColumn，直接使用其指针（零拷贝）
+        if col.dtype == TYPE_DOUBLE:
+            self.data_c = (<DoubleColumn>col).data_c
+            self._owns_data = False
+            self._base_obj = col  # 保持引用防止 GC
         else:
-            with nogil:
-                for i in range(self.length):
-                    self.data_c[i] = 0.0
+            # 回退路径：需要复制数据
+            self._owns_data = True
+            self.data_c = <double*>aligned_malloc(max(self.length, 1) * sizeof(double))
+            if not self.data_c:
+                raise MemoryError()
+
+            col_dtype = col.dtype
+            if col_dtype == TYPE_DOUBLE:
+                if self.length > 0:
+                    memcpy(self.data_c, (<DoubleColumn>col).data_c, self.length * sizeof(double))
+            elif col_dtype == TYPE_INT:
+                with nogil:
+                    for i in range(self.length):
+                        self.data_c[i] = <double>(<IntColumn>col).data_c[i]
+            else:
+                with nogil:
+                    for i in range(self.length):
+                        self.data_c[i] = 0.0
 
     def __dealloc__(self):
         if self._owns_data and self.data_c != NULL:

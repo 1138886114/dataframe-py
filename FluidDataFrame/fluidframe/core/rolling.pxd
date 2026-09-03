@@ -9,4 +9,5 @@ cdef class RollingWindow:
     cdef Py_ssize_t length
     cdef Py_ssize_t window
     cdef bint _owns_data
+    cdef object _base_obj
     cdef DoubleColumn _make_result(self)

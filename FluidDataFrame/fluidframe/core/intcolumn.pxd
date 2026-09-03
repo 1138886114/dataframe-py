@@ -11,6 +11,8 @@ cdef class IntColumn(BaseColumn):
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef int* data_c
+    cdef bint _owns_data
+    cdef object _base_obj
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef double _sum_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
     cdef double _mean_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
@@ -30,3 +32,5 @@ cdef class IntColumn(BaseColumn):
     cdef void gather_zero_to(self, Py_ssize_t* out)
     cdef void _central_moments(self, double* out_mean, double* out_m2, double* out_m3, double* out_m4) noexcept nogil
     cdef double _quickselect(self, int* data, Py_ssize_t n, Py_ssize_t k) noexcept nogil
+    @staticmethod
+    cdef IntColumn create_view(int* ptr, Py_ssize_t length, object base_obj)

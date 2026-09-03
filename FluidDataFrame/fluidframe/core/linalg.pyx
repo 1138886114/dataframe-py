@@ -16,6 +16,69 @@ from fluidframe.core.index cimport RangeIndex
 
 
 # ============================================================
+#  Helper: Check if columns are contiguous in memory
+# ============================================================
+
+cdef bint _is_contiguous_columns(FastDataFrame df):
+    """检测 DataFrame 的列是否在内存中连续排列（列优先）"""
+    cdef list cols_list = list(df.columns.values())
+    cdef Py_ssize_t cols = len(cols_list)
+    if cols < 2:
+        return False
+
+    cdef BaseColumn col0 = <BaseColumn>cols_list[0]
+    cdef BaseColumn col1 = <BaseColumn>cols_list[1]
+
+    if col0.dtype != TYPE_DOUBLE or col1.dtype != TYPE_DOUBLE:
+        return False
+
+    cdef double* ptr0 = (<DoubleColumn>col0).data_c
+    cdef double* ptr1 = (<DoubleColumn>col1).data_c
+    cdef Py_ssize_t rows = col0.length
+
+    return (ptr0 + rows) == ptr1
+
+
+cdef double* _to_contiguous_fast(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
+    """快速路径：如果所有列都是 DoubleColumn，直接读取指针拷贝到行优先连续内存"""
+    cdef Py_ssize_t rows = df.df_length
+    cdef list cols_list = list(df.columns.values())
+    cdef Py_ssize_t cols = len(cols_list)
+
+    if cols == 0:
+        out_rows[0] = 0
+        out_cols[0] = 0
+        return NULL
+
+    cdef Py_ssize_t num_elements = rows * cols
+    if num_elements == 0: num_elements = 1
+
+    cdef double* data = <double*>aligned_malloc(num_elements * sizeof(double))
+    if not data: raise MemoryError()
+
+    cdef Py_ssize_t i, j
+    cdef BaseColumn col
+
+    try:
+        for j in range(cols):
+            col = <BaseColumn>cols_list[j]
+            if col.dtype != TYPE_DOUBLE:
+                # 回退：混合类型用传统路径
+                os_aligned_free(data)
+                return _to_contiguous(df, out_rows, out_cols)
+            with nogil:
+                for i in range(rows):
+                    data[i * cols + j] = (<DoubleColumn>col).data_c[i]
+    except Exception:
+        os_aligned_free(data)
+        raise
+
+    out_rows[0] = rows
+    out_cols[0] = cols
+    return data
+
+
+# ============================================================
 #  Conversion: DataFrame <-> Contiguous Row-Major double*
 # ============================================================
 
@@ -354,7 +417,7 @@ def euclidean_dist(FastDataFrame df):
     cdef double* D = NULL
 
     try:
-        A = _to_contiguous(df, &rows, &cols)
+        A = _to_contiguous_fast(df, &rows, &cols)
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
@@ -379,7 +442,7 @@ def manhattan_dist(FastDataFrame df):
     cdef double* D = NULL
 
     try:
-        A = _to_contiguous(df, &rows, &cols)
+        A = _to_contiguous_fast(df, &rows, &cols)
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
@@ -404,7 +467,7 @@ def cosine_dist(FastDataFrame df):
     cdef double* D = NULL
 
     try:
-        A = _to_contiguous(df, &rows, &cols)
+        A = _to_contiguous_fast(df, &rows, &cols)
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
@@ -429,7 +492,7 @@ def hamming_dist(FastDataFrame df):
     cdef double* D = NULL
 
     try:
-        A = _to_contiguous(df, &rows, &cols)
+        A = _to_contiguous_fast(df, &rows, &cols)
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
@@ -454,7 +517,7 @@ def jaccard_sim(FastDataFrame df):
     cdef double* D = NULL
 
     try:
-        A = _to_contiguous(df, &rows, &cols)
+        A = _to_contiguous_fast(df, &rows, &cols)
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
@@ -479,7 +542,7 @@ def cosine_similarity(FastDataFrame df):
     cdef double* D = NULL
 
     try:
-        A = _to_contiguous(df, &rows, &cols)
+        A = _to_contiguous_fast(df, &rows, &cols)
         D = <double*>aligned_malloc(max(rows * rows, 1) * sizeof(double))
         if not D: raise MemoryError()
 
