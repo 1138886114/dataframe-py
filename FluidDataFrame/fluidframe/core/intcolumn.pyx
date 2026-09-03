@@ -1371,6 +1371,11 @@ cdef class IntColumn(BaseColumn):
         cdef int ival, sz
         cdef char buf[64]
         cdef int* s_ptr = self.data_c
+        cdef int32_t* tc_ptr
+        cdef int64_t* dt_ptr
+        cdef int32_t days
+        cdef int32_t* tmc_ptr
+        cdef int64_t tmp_dt
 
         if target_type == TYPE_DOUBLE:
             dc = DoubleColumn(safe_cap)
@@ -1407,7 +1412,7 @@ cdef class IntColumn(BaseColumn):
         elif target_type == TYPE_TIMESTAMP:
             tc = DateColumn(safe_cap)
             tc.length = n
-            cdef int32_t* tc_ptr = <int32_t*>tc.data_c
+            tc_ptr = <int32_t*>tc.data_c
             with nogil:
                 for i in range(n):
                     ival = s_ptr[i]
@@ -1430,22 +1435,23 @@ cdef class IntColumn(BaseColumn):
         elif target_type == TYPE_DATETIME:
             dtc = DateTimeColumn(safe_cap)
             dtc.length = n
-            cdef int64_t* dt_ptr = <int64_t*>dtc.data_c
-            cdef int32_t days
+            dt_ptr = <int64_t*>dtc.data_c
             with nogil:
                 for i in range(n):
                     ival = s_ptr[i]
                     if ival > 10000000:
                         days = _ymd_to_days(ival // 10000, (ival // 100) % 100, ival % 100)
-                        dt_ptr[i] = <int64_t>days * US_PER_DAY
+                        tmp_dt = <int64_t>days
+                        dt_ptr[i] = tmp_dt * <int64_t>86400000000
                     else:
-                        dt_ptr[i] = <int64_t>ival * 1000000LL
+                        tmp_dt = <int64_t>ival
+                        dt_ptr[i] = tmp_dt * <int64_t>1000000
             return dtc
 
         elif target_type == TYPE_TIME:
             tmc = TimeColumn(safe_cap)
             tmc.length = n
-            cdef int* tmc_ptr = tmc.data_c
+            tmc_ptr = tmc.data_c
             with nogil:
                 for i in range(n):
                     tmc_ptr[i] = s_ptr[i]
