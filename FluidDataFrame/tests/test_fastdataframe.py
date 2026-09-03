@@ -11,7 +11,7 @@ from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.char256column import Char256Column_SoA
 from fluidframe.core.ucs2column import UCS2Column_SoA
 from fluidframe.core.datecolumn import DateColumn as DateColumn
-from fluidframe._schema_types import Char256, Timestamp
+from fluidframe._schema_types import Char256, Date
 
 passed = 0
 failed = 0
@@ -45,9 +45,9 @@ def make_complex_df():
       score: double
       name:  UCS2 (str)
       tag:   Char256
-      dt:    Timestamp
+      dt:    Date
     """
-    df = FastDataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Timestamp})
+    df = FastDataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
     rows = [
         (1, 88.5,  'Alice',   'senior',   20230115),
         (2, 92.0,  'Bob',     'mid',      20230620),
@@ -84,7 +84,7 @@ def test_init():
     df = FastDataFrame({'a': Char256})
     check('schema char256', isinstance(df.columns['a'], Char256Column_SoA))
 
-    df = FastDataFrame({'a': Timestamp})
+    df = FastDataFrame({'a': Date})
     check('schema timestamp', isinstance(df.columns['a'], DateColumn))
 
     df = FastDataFrame({'id': int, 'name': str, 'score': float})
@@ -100,7 +100,7 @@ def test_init_complex():
     check('complex dtypes float', df.dtypes['score'] is float)
     check('complex dtypes str', df.dtypes['name'] is str)
     check('complex dtypes char256', df.dtypes['tag'] is Char256)
-    check('complex dtypes timestamp', df.dtypes['dt'] is Timestamp)
+    check('complex dtypes timestamp', df.dtypes['dt'] is Date)
 
 
 # =====================================================================
@@ -114,7 +114,7 @@ def test_append():
     check('append id[0]', df['id'][0] == 1)
     check('append name[1]', df['name'][1] == 'Bob')
 
-    df = FastDataFrame({'i': int, 'f': float, 's': str, 'c': Char256, 't': Timestamp})
+    df = FastDataFrame({'i': int, 'f': float, 's': str, 'c': Char256, 't': Date})
     df.append_row(i=1, f=2.5, s='hello', c='world', t=20160101)
     check('append types i', df['i'][0] == 1)
     check('append types f', df['f'][0] == 2.5)
@@ -334,7 +334,7 @@ def test_csv():
     try:
         df.to_csv(fname)
         from fluidframe.core.fluidframe import read_csv
-        df2 = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Timestamp})
+        df2 = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
         check('csv shape', df2.shape == (10, 5))
         check('csv id[0]', df2['id'][0] == 1)
         check('csv name[4]', df2['name'][4] == 'Eve')
@@ -582,7 +582,7 @@ def _random_date():
 def test_stress_append():
     N = 10000
     t0 = time.time()
-    df = FastDataFrame({'id': int, 'val': float, 'name': str, 'tag': Char256, 'dt': Timestamp})
+    df = FastDataFrame({'id': int, 'val': float, 'name': str, 'tag': Char256, 'dt': Date})
     for i in range(N):
         df.append_row(id=i, val=random.random() * 100,
                       name=_random_string(random.randint(3, 8)),
@@ -695,7 +695,7 @@ def test_stress_csv_roundtrip():
 def test_stress_multi_type_filter():
     """Stress test: filter on int + float + char256 + timestamp simultaneously"""
     N = 8000
-    df = FastDataFrame({'id': int, 'score': float, 'tag': Char256, 'dt': Timestamp})
+    df = FastDataFrame({'id': int, 'score': float, 'tag': Char256, 'dt': Date})
     for i in range(N):
         df.append_row(id=i, score=random.random() * 100,
                       tag=random.choice(['alpha', 'beta', 'gamma']),

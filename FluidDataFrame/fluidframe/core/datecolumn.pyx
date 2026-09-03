@@ -13,7 +13,7 @@ from libc.stdlib cimport malloc, free
 
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
-    TYPE_TIMESTAMP, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
+    TYPE_DATE, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
     TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 )
 from fluidframe.core.intcolumn cimport IntColumn
@@ -131,7 +131,7 @@ cdef class DateColumn(BaseColumn):
     def __cinit__(self, Py_ssize_t init_capacity=16):
         self.capacity = max(init_capacity, 1)
         self.length = 0
-        self.dtype = TYPE_TIMESTAMP
+        self.dtype = TYPE_DATE
         self.data_c = <int32_t*>aligned_malloc(self.capacity * sizeof(int32_t))
         if not self.data_c:
             raise MemoryError()
@@ -1176,7 +1176,7 @@ cdef class DateColumn(BaseColumn):
                 for i in range(n):
                     tmc.data_c[i] = 0
             return tmc
-        elif target_type == TYPE_TIMESTAMP:
+        elif target_type == TYPE_DATE:
             return self.copy()
 
         raise TypeError(f"Failed to cast TIMESTAMP column to internal type id: {target_type}")

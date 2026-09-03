@@ -81,9 +81,9 @@ cdef int _resolve_astype_target(object target) except -1:
         if tname in ('bool', 'boolean'): return TYPE_BOOL
         if tname in ('str', 'string', 'ucs2', 'unicode'): return TYPE_UCS2
         if tname in ('char256', 'ascii'): return TYPE_CHAR256
-        if tname in ('timestamp', 'date'): return TYPE_TIMESTAMP
         if tname == 'datetime': return TYPE_DATETIME
         if tname == 'time': return TYPE_TIME
+        if tname in ('date', 'timestamp'): return TYPE_DATE
         if tname in ('cat', 'category'): return TYPE_CATEGORY
     else:
         if target is int: return TYPE_INT

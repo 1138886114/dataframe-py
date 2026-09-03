@@ -14,7 +14,7 @@ from libc.stdlib cimport malloc, free, qsort, bsearch
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_DATETIME, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
-    TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_TIME, _resolve_astype_target
+    TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_TIME, _resolve_astype_target
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -633,7 +633,7 @@ cdef class DateTimeColumn(BaseColumn):
         # ------------------------------------------------------------
         # DateTime -> Date (TIMESTAMP)：极致单指令截断，无任何历法开销
         # ------------------------------------------------------------
-        elif target_type == TYPE_TIMESTAMP:
+        elif target_type == TYPE_DATE:
             tc = DateColumn(safe_cap)
             tc.length = n
             tc_ptr = <int32_t*>tc.data_c

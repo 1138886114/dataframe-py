@@ -22,7 +22,7 @@ import re
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_CHAR256, TYPE_INT, TYPE_DOUBLE, TYPE_UCS2, TYPE_BOOL,
-    TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
+    TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -1328,7 +1328,7 @@ cdef class Char256Column_SoA(BaseColumn):
             for i in range(n):
                 uc._set_item(i, self._get_str(i))
             return uc
-        elif target_type == TYPE_TIMESTAMP:
+        elif target_type == TYPE_DATE:
             tc = DateColumn(safe_cap)
             for i in range(n):
                 s = self._get_str(i)

@@ -12,7 +12,7 @@ from libc.stdio cimport snprintf
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
-    TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
+    TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn

@@ -11,7 +11,7 @@ cdef enum DataType:
     TYPE_DOUBLE = 2
     TYPE_CHAR256 = 3
     TYPE_UCS2 = 4
-    TYPE_TIMESTAMP = 5
+    TYPE_DATE = 5
     TYPE_BOOL = 6
     TYPE_CATEGORY = 7
     TYPE_DATETIME = 8

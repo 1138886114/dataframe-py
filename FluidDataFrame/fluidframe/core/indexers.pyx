@@ -4,7 +4,7 @@
 
 cimport cython
 from libc.string cimport memcpy, strncpy
-from fluidframe.core._base cimport aligned_malloc, os_aligned_free, BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP
+from fluidframe.core._base cimport aligned_malloc, os_aligned_free, BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -130,7 +130,7 @@ cdef class _LocIndexer:
                         dest[255] = 0
                     elif col.dtype == TYPE_UCS2:
                         (<UCS2Column_SoA>col)._set_item(idx, str(values[i]))
-                    elif col.dtype == TYPE_TIMESTAMP:
+                    elif col.dtype == TYPE_DATE:
                         (<DateColumn>col).data_c[idx] = <long long>values[i]
             elif isinstance(values, dict):
                 for col_name, val in values.items():
@@ -148,7 +148,7 @@ cdef class _LocIndexer:
                         dest[255] = 0
                     elif col.dtype == TYPE_UCS2:
                         (<UCS2Column_SoA>col)._set_item(idx, str(val))
-                    elif col.dtype == TYPE_TIMESTAMP:
+                    elif col.dtype == TYPE_DATE:
                         (<DateColumn>col).data_c[idx] = <long long>val
             else:
                 raise TypeError(f"Cannot set row from {type(values)}")

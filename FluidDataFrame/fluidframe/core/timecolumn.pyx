@@ -14,7 +14,7 @@ from libc.stdlib cimport bsearch, qsort
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_TIME, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
-    TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, _resolve_astype_target
+    TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, _resolve_astype_target
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -596,7 +596,7 @@ cdef class TimeColumn(BaseColumn):
                 _format_time_c(ptr[i], str_buf)
                 catc.append(str_buf.decode('ascii'))
             return catc
-        elif target_type == TYPE_TIMESTAMP:
+        elif target_type == TYPE_DATE:
             tc = DateColumn(safe_cap)
             tc.length = n
             with nogil:

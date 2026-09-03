@@ -13,7 +13,7 @@ from libc.stdlib cimport qsort, bsearch
 from libc.stdint cimport int32_t, int64_t
 from fluidframe.core._base cimport (
     TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL,
-    TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
+    TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     _resolve_astype_target
 )
@@ -35,6 +35,17 @@ cdef int _cmp_int(const void* a, const void* b) noexcept nogil:
     if va > vb: return 1
     return 0
 
+cdef void _insertion_sort(int* arr, Py_ssize_t n) noexcept nogil:
+    cdef Py_ssize_t i, j
+    cdef int key
+    for i in range(1, n):
+        key = arr[i]
+        j = i - 1
+        while j >= 0 and arr[j] > key:
+            arr[j + 1] = arr[j]
+            j -= 1
+        arr[j + 1] = key
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -44,12 +55,15 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def __cinit__(self, Py_ssize_t init_capacity=16):
+    def __cinit__(self, Py_ssize_t init_capacity=16, Py_ssize_t cols=1):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_INT
-        self._owns_data = True
         self._base_obj = None
+
+        cdef int c = <int>cols if cols > 0 else 1
+        self.set_meta_c(c, True, c > 1)
+
         self.data_c = <int*>aligned_malloc(self.capacity * sizeof(int))
         if not self.data_c:
             raise MemoryError()
@@ -57,26 +71,98 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __dealloc__(self):
-        if self._owns_data and self.data_c is not NULL:
+        if self.get_owns_data_c() and self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
+
+    @property
+    def cols(self):
+        return self.get_cols_c()
+
+    @property
+    def rows(self):
+        return self.get_rows_c()
+
+    @property
+    def is_2d(self):
+        return self.get_is_2d_c()
+
+    @property
+    def _owns_data(self):
+        return self.get_owns_data_c()
+
+    @_owns_data.setter
+    def _owns_data(self, bint val):
+        if val:
+            self._meta |= 0x00010000
+        else:
+            self._meta &= ~0x00010000
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def get_size(self):
         return self.capacity * sizeof(int)
 
+    cdef inline int get_cols_c(self) noexcept nogil:
+        cdef int c = <int>(self._meta & 0x0000FFFF)
+        return c if c > 0 else 1
+
+    cdef inline bint get_owns_data_c(self) noexcept nogil:
+        return (self._meta & 0x00010000) != 0
+
+    cdef inline bint get_is_2d_c(self) noexcept nogil:
+        return (self._meta & 0x00020000) != 0
+
+    cdef inline Py_ssize_t get_rows_c(self) noexcept nogil:
+        cdef int c = self.get_cols_c()
+        return self.length // c if c > 0 else self.length
+
+    cdef inline void set_meta_c(self, int cols, bint owns_data, bint is_2d) noexcept nogil:
+        self._meta = (
+            (<unsigned int>cols & 0x0000FFFF) |
+            ((<unsigned int>(1 if owns_data else 0)) << 16) |
+            ((<unsigned int>(1 if is_2d else 0)) << 17)
+        )
+
     @staticmethod
     cdef IntColumn create_view(int* ptr, Py_ssize_t length, object base_obj):
-        """零拷贝构造视图列，指向外部连续大内存的某一切片"""
+        """零拷贝 1D 视图"""
         cdef IntColumn col = IntColumn.__new__(IntColumn)
         col.dtype = TYPE_INT
         col.capacity = length
         col.length = length
         col.data_c = ptr
-        col._owns_data = False
         col._base_obj = base_obj
+        # 1 列, owns_data=False, is_2d=False
+        col.set_meta_c(1, False, False)
         return col
+
+    @staticmethod
+    cdef IntColumn create_view_2d(int* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj):
+        """零拷贝 2D 矩阵块视图"""
+        cdef IntColumn col = IntColumn.__new__(IntColumn)
+        cdef Py_ssize_t total = rows * cols
+        col.dtype = TYPE_INT
+        col.capacity = total
+        col.length = total
+        col.data_c = ptr
+        col._base_obj = base_obj
+        # cols 列, owns_data=False, is_2d=True
+        col.set_meta_c(<int>cols, False, True)
+        return col
+
+    cdef inline DoubleColumn _make_like_nan_dbl(self):
+        """生成与自身形状一致的纯 NaN DoubleColumn 结果列"""
+        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t total = self.length
+        cdef DoubleColumn res = DoubleColumn(max(total, 1), cols=c)
+        res.length = total
+        cdef Py_ssize_t i
+        cdef double* res_ptr = res.data_c
+        with nogil:
+            for i in range(total):
+                res_ptr[i] = NAN
+        return res
 
     @staticmethod
     def load_from_1d_array(object arr):
@@ -128,7 +214,7 @@ cdef class IntColumn(BaseColumn):
         return columns
 
     cdef void _reserve(self, Py_ssize_t new_cap):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot reallocate a view/slice column. Copy it first.")
         if new_cap > self.capacity:
             self.data_c = <int*>aligned_realloc(self.data_c, self.capacity * sizeof(int), new_cap * sizeof(int))
@@ -139,7 +225,7 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, int val):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot append to a view/slice column. Copy it first.")
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
@@ -158,7 +244,7 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_back(self):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
@@ -168,7 +254,7 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_front(self):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
@@ -181,7 +267,7 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, IntColumn other):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
         cdef Py_ssize_t other_len = other.length
         if other_len == 0: return
@@ -967,12 +1053,12 @@ cdef class IntColumn(BaseColumn):
             os_aligned_free(new_data)
             raise
 
-        if self._owns_data and self.data_c != NULL:
+        if self.get_owns_data_c() and self.data_c != NULL:
             os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = new_cap
         self.length = n
-        self._owns_data = True
+        self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
         self._base_obj = None
 
     @cython.binding(False)
@@ -1219,12 +1305,12 @@ cdef class IntColumn(BaseColumn):
             with nogil:
                 for i in range(n):
                     new_data[i] = old_data[indices[i]]
-            if self._owns_data and self.data_c != NULL:
+            if self.get_owns_data_c() and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
             self.length = n
-            self._owns_data = True
+            self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
             self._base_obj = None
             return self
 
@@ -1306,7 +1392,7 @@ cdef class IntColumn(BaseColumn):
         return col
 
     cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
         if row_idx < 0:
             row_idx += self.length
@@ -1409,7 +1495,7 @@ cdef class IntColumn(BaseColumn):
                     sz = snprintf(cc.data_c + (i * 256), 256, "%d", s_ptr[i])
             return cc
 
-        elif target_type == TYPE_TIMESTAMP:
+        elif target_type == TYPE_DATE:
             tc = DateColumn(safe_cap)
             tc.length = n
             tc_ptr = <int32_t*>tc.data_c
@@ -1463,3 +1549,270 @@ cdef class IntColumn(BaseColumn):
         cdef char err_buf[128]
         snprintf(err_buf, sizeof(err_buf), "Failed to cast INT column to internal type id: %d", target_type)
         raise TypeError(err_buf.decode('ascii'))
+
+    # =================================================================
+    #  Roll 系列函数：IntColumn 版本
+    # =================================================================
+
+    def roll_mean(self, Py_ssize_t window):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window: return res
+        cdef double* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef double inv_w = 1.0 / <double>window
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double s
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                s = 0.0
+                for i in range(window):
+                    s += <double>src[offset + i]
+                dst[offset + window - 1] = s * inv_w
+                for i in range(window, r):
+                    s += <double>src[offset + i] - <double>src[offset + i - window]
+                    dst[offset + i] = s * inv_w
+        return res
+
+    def roll_sum(self, Py_ssize_t window):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window: return res
+        cdef double* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double s
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                s = 0.0
+                for i in range(window):
+                    s += <double>src[offset + i]
+                dst[offset + window - 1] = s
+                for i in range(window, r):
+                    s += <double>src[offset + i] - <double>src[offset + i - window]
+                    dst[offset + i] = s
+        return res
+
+    def roll_min(self, Py_ssize_t window):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef IntColumn res = IntColumn(max(r * c, 1), cols=c)
+        res.length = r * c
+        cdef int* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef int sentinel = 2147483647
+        cdef Py_ssize_t col_idx, offset, i, j
+        cdef int cur_min
+        with nogil:
+            if r < window:
+                for i in range(r * c): dst[i] = sentinel
+            else:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    for i in range(window - 1): dst[offset + i] = sentinel
+                    cur_min = sentinel
+                    for i in range(window):
+                        if src[offset + i] < cur_min: cur_min = src[offset + i]
+                    dst[offset + window - 1] = cur_min
+                    for i in range(window, r):
+                        cur_min = sentinel
+                        for j in range(i - window + 1, i + 1):
+                            if src[offset + j] < cur_min: cur_min = src[offset + j]
+                        dst[offset + i] = cur_min
+        return res
+
+    def roll_max(self, Py_ssize_t window):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef IntColumn res = IntColumn(max(r * c, 1), cols=c)
+        res.length = r * c
+        cdef int* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef int sentinel = -2147483647 - 1
+        cdef Py_ssize_t col_idx, offset, i, j
+        cdef int cur_max
+        with nogil:
+            if r < window:
+                for i in range(r * c): dst[i] = sentinel
+            else:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    for i in range(window - 1): dst[offset + i] = sentinel
+                    cur_max = sentinel
+                    for i in range(window):
+                        if src[offset + i] > cur_max: cur_max = src[offset + i]
+                    dst[offset + window - 1] = cur_max
+                    for i in range(window, r):
+                        cur_max = sentinel
+                        for j in range(i - window + 1, i + 1):
+                            if src[offset + j] > cur_max: cur_max = src[offset + j]
+                        dst[offset + i] = cur_max
+        return res
+
+    def roll_var(self, Py_ssize_t window, bint ddof=True):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window: return res
+        cdef double* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef double w = <double>window
+        cdef Py_ssize_t col_idx, offset, i
+        cdef double s, s2, val, val_old, mean
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                s = 0.0; s2 = 0.0
+                for i in range(window):
+                    val = <double>src[offset + i]
+                    s += val; s2 += val * val
+                mean = s / w
+                if ddof:
+                    dst[offset + window - 1] = (s2 - s * mean) / (w - 1.0)
+                else:
+                    dst[offset + window - 1] = (s2 - s * mean) / w
+                for i in range(window, r):
+                    val = <double>src[offset + i]
+                    val_old = <double>src[offset + i - window]
+                    s += val - val_old
+                    s2 += val * val - val_old * val_old
+                    mean = s / w
+                    if ddof:
+                        dst[offset + i] = (s2 - s * mean) / (w - 1.0)
+                    else:
+                        dst[offset + i] = (s2 - s * mean) / w
+        return res
+
+    def roll_std(self, Py_ssize_t window, bint ddof=True):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn var_col = self.roll_var(window, ddof)
+        cdef double* v = var_col.data_c
+        cdef Py_ssize_t col_idx, offset, i
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                for i in range(window - 1, r):
+                    if v[offset + i] == v[offset + i]:
+                        v[offset + i] = sqrt(v[offset + i])
+        return var_col
+
+    def roll_median(self, Py_ssize_t window):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window: return res
+        cdef double* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef double med
+        cdef Py_ssize_t col_idx, offset, i, j
+        cdef int* buf = <int*>malloc(window * sizeof(int))
+        if not buf: raise MemoryError()
+        try:
+            with nogil:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    for i in range(window - 1, r):
+                        for j in range(window):
+                            buf[j] = src[offset + i - window + 1 + j]
+                        _insertion_sort(buf, window)
+                        if window & 1:
+                            med = <double>buf[window // 2]
+                        else:
+                            med = (<double>buf[window // 2 - 1] + <double>buf[window // 2]) / 2.0
+                        dst[offset + i] = med
+        finally:
+            free(buf)
+        return res
+
+    def roll_quantile(self, Py_ssize_t window, double quantile):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window: return res
+        cdef double* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef Py_ssize_t col_idx, offset, i, j, idx
+        cdef int* buf = <int*>malloc(window * sizeof(int))
+        if not buf: raise MemoryError()
+        try:
+            with nogil:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    for i in range(window - 1, r):
+                        for j in range(window):
+                            buf[j] = src[offset + i - window + 1 + j]
+                        _insertion_sort(buf, window)
+                        idx = <Py_ssize_t>(quantile * (window - 1) + 0.5)
+                        if idx < 0: idx = 0
+                        if idx >= window: idx = window - 1
+                        dst[offset + i] = <double>buf[idx]
+        finally:
+            free(buf)
+        return res
+
+    def roll_apply_weights(self, Py_ssize_t window, list weights):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window: return res
+        cdef double* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef Py_ssize_t wlen = len(weights)
+        cdef Py_ssize_t col_idx, offset, i, j
+        cdef double s
+        cdef double* wbuf = <double*>malloc(wlen * sizeof(double))
+        if not wbuf: raise MemoryError()
+        for i in range(wlen): wbuf[i] = <double>weights[i]
+        try:
+            with nogil:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    for i in range(window - 1, r):
+                        s = 0.0
+                        for j in range(window):
+                            s += <double>src[offset + i - window + 1 + j] * wbuf[j]
+                        dst[offset + i] = s
+        finally:
+            free(wbuf)
+        return res
+
+    def roll_custom(self, Py_ssize_t window, object func):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r < window: return res
+        cdef double* dst = res.data_c
+        cdef int* src = self.data_c
+        cdef Py_ssize_t col_idx, offset, i, j
+        cdef list tmp
+        for col_idx in range(c):
+            offset = col_idx * r
+            for i in range(window - 1, r):
+                tmp = []
+                for j in range(window):
+                    tmp.append(src[offset + i - window + 1 + j])
+                dst[offset + i] = <double>func(tmp)
+        return res
+
+    def roll(self, Py_ssize_t window, str method="mean", bint ddof=True, double quantile=0.5, list weights=None, object func=None):
+        if method == "mean":
+            return self.roll_mean(window)
+        elif method == "sum":
+            return self.roll_sum(window)
+        elif method == "min":
+            return self.roll_min(window)
+        elif method == "max":
+            return self.roll_max(window)
+        elif method == "var":
+            return self.roll_var(window, ddof)
+        elif method == "std":
+            return self.roll_std(window, ddof)
+        elif method == "median":
+            return self.roll_median(window)
+        elif method == "quantile":
+            return self.roll_quantile(window, quantile)
+        elif method == "apply_weights":
+            if weights is None:
+                raise ValueError("weights must be provided for apply_weights method")
+            return self.roll_apply_weights(window, weights)
+        elif method == "custom":
+            if func is None:
+                raise ValueError("func must be provided for custom method")
+            return self.roll_custom(window, func)
+        else:
+            raise ValueError(f"Unknown roll method: {method}")

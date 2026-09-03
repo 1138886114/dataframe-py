@@ -14,7 +14,7 @@ from libc.math cimport NAN, sqrt, log, cos, isnan
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
 from fluidframe.core._base cimport (
     BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free,
-    TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP,
+    TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE,
     TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 )
 
@@ -149,7 +149,7 @@ from fluidframe.core.timecolumn cimport TimeColumn
 from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex, INDEX_RANGE, INDEX_INT, INDEX_MULTI
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
 from fluidframe.core.rolling cimport RollingWindow
-from fluidframe._schema_types import Char256, Timestamp, Bool, Category, DateTime, Time, _parse_schema
+from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Time, _parse_schema
 
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
@@ -251,13 +251,13 @@ cdef inline void _c_shift_left(void* buf, Py_ssize_t pos, Py_ssize_t col_len, Py
 
 cdef dict _TYPE_NAMES = {
     TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_CHAR256: 'char256',
-    TYPE_UCS2: 'ucs2', TYPE_TIMESTAMP: 'timestamp', TYPE_BOOL: 'bool',
+    TYPE_UCS2: 'ucs2', TYPE_DATE: 'date', TYPE_BOOL: 'bool',
     TYPE_CATEGORY: 'category', TYPE_DATETIME: 'datetime', TYPE_TIME: 'time',
 }
 
 cdef dict _TYPE_PYCLASSES = {
     TYPE_INT: int, TYPE_DOUBLE: float, TYPE_CHAR256: Char256,
-    TYPE_UCS2: str, TYPE_TIMESTAMP: Timestamp, TYPE_BOOL: bool,
+    TYPE_UCS2: str, TYPE_DATE: Date, TYPE_BOOL: bool,
     TYPE_CATEGORY: Category, TYPE_DATETIME: DateTime, TYPE_TIME: Time,
 }
 
@@ -276,7 +276,7 @@ cdef class FastDataFrame:
             return (<Char256Column_SoA>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_UCS2:
             return (<UCS2Column_SoA>col).take_by_indices(indices, n, inplace)
-        elif col.dtype == TYPE_TIMESTAMP:
+        elif col.dtype == TYPE_DATE:
             return (<DateColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_BOOL:
             return (<BoolColumn>col).take_by_indices(indices, n, inplace)
@@ -307,7 +307,7 @@ cdef class FastDataFrame:
             (<Char256Column_SoA>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_UCS2:
             (<UCS2Column_SoA>col).drop_row(row_idx, rem_len)
-        elif col.dtype == TYPE_TIMESTAMP:
+        elif col.dtype == TYPE_DATE:
             (<DateColumn>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_BOOL:
             (<BoolColumn>col).drop_row(row_idx, rem_len)
@@ -336,7 +336,7 @@ cdef class FastDataFrame:
                     self.columns[col_name] = Char256Column_SoA()
                 elif dtype == TYPE_UCS2:
                     self.columns[col_name] = UCS2Column_SoA()
-                elif dtype == TYPE_TIMESTAMP:
+                elif dtype == TYPE_DATE:
                     self.columns[col_name] = DateColumn()
                 elif dtype == TYPE_BOOL:
                     self.columns[col_name] = BoolColumn()
@@ -353,7 +353,7 @@ cdef class FastDataFrame:
         elif dt == TYPE_DOUBLE: return 'f64'
         elif dt == TYPE_CHAR256: return 'str'
         elif dt == TYPE_UCS2: return 'str'
-        elif dt == TYPE_TIMESTAMP: return 'date'
+        elif dt == TYPE_DATE: return 'date'
         elif dt == TYPE_DATETIME: return 'datetime'
         elif dt == TYPE_TIME: return 'time'
         elif dt == TYPE_BOOL: return 'bool'
@@ -411,7 +411,7 @@ cdef class FastDataFrame:
             sz = snprintf(buf, sizeof(buf), "%.6g", dval)
             return buf[:sz].decode('ascii')
 
-        elif dt == TYPE_TIMESTAMP:
+        elif dt == TYPE_DATE:
             date_ptr = <int32_t*>(<DateColumn>col).data_c
             _days_to_ymd(date_ptr[i], &dy, &dm, &dd)
             sz = snprintf(buf, sizeof(buf), "%04d-%02d-%02d", dy, dm, dd)
@@ -789,7 +789,7 @@ cdef class FastDataFrame:
             elif col.dtype == TYPE_UCS2:
                 with nogil:
                     _c_argsort_ucs2((<UCS2Column_SoA>col).chars_c, (<UCS2Column_SoA>col).offsets_c, indices_c, 0, n - 1)
-            elif col.dtype == TYPE_TIMESTAMP:
+            elif col.dtype == TYPE_DATE:
                 with nogil:
                     _c_argsort_numeric(<int*>(<DateColumn>col).data_c, indices_c, 0, n - 1)
             elif col.dtype == TYPE_DATETIME:
@@ -1190,7 +1190,7 @@ cdef class FastDataFrame:
                     'top': top_val,
                     'freq': max_freq,
                 }
-            elif (col_obj.dtype == TYPE_TIMESTAMP or col_obj.dtype == TYPE_DATETIME
+            elif (col_obj.dtype == TYPE_DATE or col_obj.dtype == TYPE_DATETIME
                   or col_obj.dtype == TYPE_TIME):
                 if col_len > 0:
                     ts_min = col_obj.min()
@@ -1480,7 +1480,7 @@ cdef class FastDataFrame:
         elif dtype == TYPE_DOUBLE: return DoubleColumn()
         elif dtype == TYPE_CHAR256: return Char256Column_SoA()
         elif dtype == TYPE_UCS2: return UCS2Column_SoA()
-        elif dtype == TYPE_TIMESTAMP: return DateColumn()
+        elif dtype == TYPE_DATE: return DateColumn()
         elif dtype == TYPE_BOOL: return BoolColumn()
         elif dtype == TYPE_CATEGORY: return CategoryColumn()
         elif dtype == TYPE_DATETIME: return DateTimeColumn()
@@ -1508,7 +1508,7 @@ cdef class FastDataFrame:
             ucs2_col = UCS2Column_SoA(n)
             for i in range(n): ucs2_col.append(<str>values[i])
             return ucs2_col
-        elif dtype == TYPE_TIMESTAMP:
+        elif dtype == TYPE_DATE:
             ts_col = DateColumn(n)
             ts_col.length = n
             for i in range(n): ts_col.data_c[i] = <int32_t>values[i]
@@ -1961,7 +1961,7 @@ cdef class FastDataFrame:
                         for _oi in range(pos + 1, ucs2_obj.length + 1):
                             ucs2_obj.offsets_c[_oi] += ucs2_val_len
                         ucs2_obj.char_length += ucs2_val_len
-                elif col_obj.dtype == TYPE_TIMESTAMP:
+                elif col_obj.dtype == TYPE_DATE:
                     (<DateColumn>col_obj).data_c[pos] = <int32_t>val
                 elif col_obj.dtype == TYPE_BOOL:
                     (<BoolColumn>col_obj).data_c[pos] = 1 if val else 0
@@ -2695,7 +2695,7 @@ cdef class FastDataFrame:
     def select_dtypes(self, list include_types=None, list exclude_types=None):
         cdef FastDataFrame result = FastDataFrame()
         cdef dict dtype_map = {TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_CHAR256: 'char256',
-                               TYPE_UCS2: 'ucs2', TYPE_TIMESTAMP: 'timestamp',
+                               TYPE_UCS2: 'ucs2', TYPE_DATE: 'date',
                                TYPE_BOOL: 'bool', TYPE_CATEGORY: 'category',
                                TYPE_DATETIME: 'datetime', TYPE_TIME: 'time'}
         for name, col in self.columns.items():
@@ -2760,7 +2760,7 @@ cdef class FastDataFrame:
             if col_len >= cc.capacity: cc._reserve(cc.capacity * 2)
             _c_shift_right(cc.data_c, pos, col_len, 256)
             cc.length = col_len + 1
-        elif col.dtype == TYPE_TIMESTAMP:
+        elif col.dtype == TYPE_DATE:
             tc = <DateColumn>col
             col_len = tc.length
             if col_len >= tc.capacity: tc._reserve(tc.capacity * 2)
@@ -2833,7 +2833,7 @@ cdef class FastDataFrame:
             for i in range(pos, col_len):
                 ucs2_col.offsets_c[i] = ucs2_col.offsets_c[i + 1] - removed_len
             ucs2_col.length = col_len - 1
-        elif col.dtype == TYPE_TIMESTAMP:
+        elif col.dtype == TYPE_DATE:
             tc = <DateColumn>col
             col_len = tc.length
             _c_shift_left(tc.data_c, pos, col_len, sizeof(int32_t))

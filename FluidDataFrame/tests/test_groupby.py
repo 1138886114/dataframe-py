@@ -1,7 +1,7 @@
 import sys
 sys.path.insert(0, '.')
 
-from fluidframe._schema_types import Char256, Timestamp
+from fluidframe._schema_types import Char256, Date
 from fluidframe.core.fastdataframe import FastDataFrame
 
 passed = 0

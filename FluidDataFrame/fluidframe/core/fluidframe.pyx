@@ -6,7 +6,7 @@
 cimport cython
 from libc.math cimport NAN
 
-from fluidframe.core._base cimport BaseColumn, DataType, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
+from fluidframe.core._base cimport BaseColumn, DataType, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -14,7 +14,7 @@ from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
-from fluidframe._schema_types import Char256, Timestamp, Bool, Category, DateTime, Time, _parse_schema
+from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Time, _parse_schema
 
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
@@ -130,7 +130,7 @@ def read_csv(filename, dict schema, sep=','):
                 df.columns[name] = DoubleColumn()
             elif dtype == TYPE_CHAR256:
                 df.columns[name] = Char256Column_SoA()
-            elif dtype == TYPE_TIMESTAMP:
+            elif dtype == TYPE_DATE:
                 df.columns[name] = DateColumn()
             elif dtype == TYPE_BOOL:
                 df.columns[name] = BoolColumn()
@@ -160,7 +160,7 @@ def read_csv(filename, dict schema, sep=','):
             col = Char256Column_SoA(n_rows)
             for i in range(n_rows):
                 col.append(rows[i][j])
-        elif py_type == TYPE_TIMESTAMP:
+        elif py_type == TYPE_DATE:
             col = DateColumn(n_rows)
             for i in range(n_rows):
                 col.append(rows[i][j].strip())

@@ -5,7 +5,7 @@ TYPE_FLOAT = 1
 TYPE_DOUBLE = 2
 TYPE_CHAR256 = 3
 TYPE_UCS2 = 4
-TYPE_TIMESTAMP = 5
+TYPE_DATE = 5
 TYPE_BOOL = 6
 TYPE_CATEGORY = 7
 TYPE_DATETIME = 8
@@ -15,12 +15,6 @@ TYPE_TIME = 9
 class Char256:
     """用于在 Schema 中标记纯 ASCII 256字节定长字符串类型的占位类"""
     pass
-
-
-class Timestamp:
-    """时间戳类型，内部按 YYYYMMDD 整数存储；构造时支持 Timestamp('20160101') 或 Timestamp(20160101)"""
-    def __init__(self, val=None):
-        pass
 
 
 class Date:
@@ -56,8 +50,7 @@ _STRING_TYPE_MAP = {
     'ucs2': TYPE_UCS2,
     'str': TYPE_UCS2,
     'string': TYPE_UCS2,
-    'timestamp': TYPE_TIMESTAMP,
-    'date': TYPE_TIMESTAMP,
+    'date': TYPE_DATE,
     'datetime': TYPE_DATETIME,
     'time': TYPE_TIME,
     'bool': TYPE_BOOL,
@@ -74,8 +67,7 @@ def _parse_schema(schema_dict):
         elif v is float: parsed[k] = TYPE_DOUBLE
         elif v is Char256: parsed[k] = TYPE_CHAR256
         elif v is str: parsed[k] = TYPE_UCS2
-        elif v is Timestamp: parsed[k] = TYPE_TIMESTAMP
-        elif v is Date: parsed[k] = TYPE_TIMESTAMP
+        elif v is Date: parsed[k] = TYPE_DATE
         elif v is DateTime: parsed[k] = TYPE_DATETIME
         elif v is Time: parsed[k] = TYPE_TIME
         elif v is Bool: parsed[k] = TYPE_BOOL

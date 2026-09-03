@@ -15,7 +15,7 @@ from libc.stdlib cimport qsort, bsearch
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_DOUBLE, TYPE_INT, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL,
-    TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
+    TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
     _resolve_astype_target
 )
 from fluidframe.core.intcolumn cimport IntColumn
@@ -1753,7 +1753,7 @@ cdef class DoubleColumn(BaseColumn):
         # ------------------------------------------------------------
         # Double -> Date (TIMESTAMP)：基于 1970 纪元天数转换
         # ------------------------------------------------------------
-        elif target_type == TYPE_TIMESTAMP:
+        elif target_type == TYPE_DATE:
             tc = DateColumn(safe_cap)
             tc.length = n
             tc_ptr = <int32_t*>tc.data_c

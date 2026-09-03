@@ -13,7 +13,7 @@ from cpython.unicode cimport Py_UCS2
 
 
 from fluidframe.core._base cimport (
-    BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_TIMESTAMP, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
+    BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE, TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
     aligned_malloc, os_aligned_free
 )
 from fluidframe.core.fastdataframe cimport FastDataFrame
@@ -102,7 +102,7 @@ cdef class FastDataFrameGroupBy:
             elif col.dtype == TYPE_UCS2:
                 self._by_col_data[idx] = <void*>(<UCS2Column_SoA>col).chars_c
                 self._by_col_offsets[idx] = <void*>(<UCS2Column_SoA>col).offsets_c
-            elif col.dtype == TYPE_TIMESTAMP:
+            elif col.dtype == TYPE_DATE:
                 self._by_col_data[idx] = <void*>(<DateColumn>col).data_c
             elif col.dtype == TYPE_BOOL:
                 self._by_col_data[idx] = <void*>(<BoolColumn>col).data_c
@@ -132,7 +132,7 @@ cdef class FastDataFrameGroupBy:
             elif self._by_col_types[col_idx] == TYPE_DOUBLE:
                 d_data = <double*>self._by_col_data[col_idx]
                 val = (<uint64_t*>(&d_data[row_idx]))[0]
-            elif self._by_col_types[col_idx] == TYPE_TIMESTAMP:
+            elif self._by_col_types[col_idx] == TYPE_DATE:
                 t_data = <long long*>self._by_col_data[col_idx]
                 val = <uint64_t>t_data[row_idx]
             elif self._by_col_types[col_idx] == TYPE_CHAR256:

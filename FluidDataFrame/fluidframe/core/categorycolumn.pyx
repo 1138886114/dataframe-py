@@ -12,7 +12,7 @@ from libc.stdio cimport snprintf
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_CATEGORY, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
-    TYPE_BOOL, TYPE_TIMESTAMP, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
+    TYPE_BOOL, TYPE_DATE, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -462,7 +462,7 @@ cdef class CategoryColumn(BaseColumn):
             for i in range(n):
                 cc.append(self._resolve(i))
             return cc
-        elif target_type == TYPE_TIMESTAMP:
+        elif target_type == TYPE_DATE:
             tc = DateColumn(safe_cap)
             for i in range(n):
                 s = self._resolve(i)

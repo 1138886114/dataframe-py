@@ -9,7 +9,7 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdio cimport snprintf
 import re
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_TIMESTAMP, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -1317,7 +1317,7 @@ cdef class UCS2Column_SoA(BaseColumn):
                 cc.append(self._get_str(i))
             return cc
 
-        elif target_type == TYPE_TIMESTAMP:
+        elif target_type == TYPE_DATE:
             tc = DateColumn(safe_cap)
             for i in range(n):
                 s = self._get_str(i)
