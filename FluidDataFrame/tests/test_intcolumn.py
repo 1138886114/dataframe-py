@@ -710,7 +710,7 @@ def test_2d_describe():
 def test_2d_drop_row():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     col2 = col.copy()
-    col2.drop_row(1, 2)
+    col2.drop_row(1)
     check('2d drop_row len', col2.length == 5)
 
 def test_2d_pop_back():
@@ -947,7 +947,7 @@ def test_drop_row():
     col = IntColumn(5)
     for v in [1, 2, 3, 4, 5]:
         col.append(v)
-    col.drop_row(2, 4)
+    col.drop_row(2)
     check('drop_row len', col.length == 4)
     check('drop_row [2]', col[2] == 4)
 

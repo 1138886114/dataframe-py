@@ -16,7 +16,11 @@ from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_DOUBLE, TYPE_INT, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL,
     TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
-    _resolve_astype_target
+    _resolve_astype_target, NumericType,
+    _vec_pearson_corr, _vec_pearson_cov, _vec_euclidean_dist,
+    _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist,
+    _double_int_pearson_corr, _double_int_pearson_cov, _double_int_euclidean_dist,
+    _double_int_manhattan_dist, _double_int_cosine_sim, _double_int_jaccard_sim, _double_int_hamming_dist
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -58,146 +62,6 @@ cdef int _cmp_double_asc(const void* a, const void* b) noexcept nogil:
     if va < vb: return -1
     if va > vb: return 1
     return 0
-
-
-cdef double _c_corr(double* a, double* b, Py_ssize_t n) noexcept nogil:
-    if n < 2: return NAN
-    cdef double sum_a = 0.0, sum_b = 0.0
-    cdef double mean_a, mean_b
-    cdef double cov = 0.0, std_a = 0.0, std_b = 0.0
-    cdef double xi, xj, denom
-    cdef Py_ssize_t k
-
-    cdef double s_a0 = 0.0, s_a1 = 0.0, s_a2 = 0.0, s_a3 = 0.0
-    cdef double s_b0 = 0.0, s_b1 = 0.0, s_b2 = 0.0, s_b3 = 0.0
-    cdef Py_ssize_t n_unrolled = n - (n % 4)
-
-    for k in range(0, n_unrolled, 4):
-        s_a0 += a[k]
-        s_a1 += a[k+1]
-        s_a2 += a[k+2]
-        s_a3 += a[k+3]
-        s_b0 += b[k]
-        s_b1 += b[k+1]
-        s_b2 += b[k+2]
-        s_b3 += b[k+3]
-    sum_a = (s_a0 + s_a1) + (s_a2 + s_a3)
-    sum_b = (s_b0 + s_b1) + (s_b2 + s_b3)
-    for k in range(n_unrolled, n):
-        sum_a += a[k]
-        sum_b += b[k]
-
-    mean_a = sum_a / <double>n
-    mean_b = sum_b / <double>n
-
-    for k in range(n):
-        xi = a[k] - mean_a
-        xj = b[k] - mean_b
-        cov += xi * xj
-        std_a += xi * xi
-        std_b += xj * xj
-
-    denom = sqrt(std_a * std_b)
-    if denom > 1e-15:
-        return cov / denom
-    return NAN
-
-
-cdef double _c_cov(double* a, double* b, Py_ssize_t n) noexcept nogil:
-    if n < 2: return NAN
-    cdef double sum_a = 0.0, sum_b = 0.0
-    cdef double mean_a, mean_b
-    cdef double cov_val = 0.0
-    cdef Py_ssize_t k
-
-    for k in range(n):
-        sum_a += a[k]
-        sum_b += b[k]
-    mean_a = sum_a / <double>n
-    mean_b = sum_b / <double>n
-
-    for k in range(n):
-        cov_val += (a[k] - mean_a) * (b[k] - mean_b)
-    return cov_val / <double>(n - 1)
-
-
-cdef double _c_euclidean_dist(double* a, double* b, Py_ssize_t n) noexcept nogil:
-    if n == 0: return 0.0
-    cdef double s0 = 0.0, s1 = 0.0, s2 = 0.0, s3 = 0.0
-    cdef double d0, d1, d2, d3
-    cdef Py_ssize_t k
-    cdef Py_ssize_t n_unrolled = n - (n % 4)
-
-    for k in range(0, n_unrolled, 4):
-        d0 = a[k] - b[k]
-        d1 = a[k+1] - b[k+1]
-        d2 = a[k+2] - b[k+2]
-        d3 = a[k+3] - b[k+3]
-        s0 += d0 * d0
-        s1 += d1 * d1
-        s2 += d2 * d2
-        s3 += d3 * d3
-
-    cdef double s = (s0 + s1) + (s2 + s3)
-    for k in range(n_unrolled, n):
-        d0 = a[k] - b[k]
-        s += d0 * d0
-    return sqrt(s)
-
-
-cdef double _c_manhattan_dist(double* a, double* b, Py_ssize_t n) noexcept nogil:
-    if n == 0: return 0.0
-    cdef double s = 0.0
-    cdef Py_ssize_t k
-    for k in range(n):
-        s += fabs(a[k] - b[k])
-    return s
-
-
-cdef double _c_cosine_similarity(double* a, double* b, Py_ssize_t n) noexcept nogil:
-    if n == 0: return 0.0
-    cdef double dot_val = 0.0, norm_a = 0.0, norm_b = 0.0, prod
-    cdef Py_ssize_t k
-    for k in range(n):
-        dot_val += a[k] * b[k]
-        norm_a += a[k] * a[k]
-        norm_b += b[k] * b[k]
-    prod = sqrt(norm_a * norm_b)
-    if prod < 1e-15:
-        return 0.0
-    cdef double sim = dot_val / prod
-    if sim > 1.0: return 1.0
-    elif sim < -1.0: return -1.0
-    return sim
-
-
-cdef double _c_cosine_dist(double* a, double* b, Py_ssize_t n) noexcept nogil:
-    if n == 0: return 1.0
-    return 1.0 - _c_cosine_similarity(a, b, n)
-
-
-cdef double _c_jaccard_sim(double* a, double* b, Py_ssize_t n) noexcept nogil:
-    if n == 0: return 0.0
-    cdef Py_ssize_t intersection = 0, union_cnt = 0
-    cdef Py_ssize_t k
-    cdef int bi, bj
-    for k in range(n):
-        bi = (a[k] != 0.0)
-        bj = (b[k] != 0.0)
-        intersection += (bi & bj)
-        union_cnt += (bi | bj)
-    if union_cnt == 0:
-        return 0.0
-    return <double>intersection / <double>union_cnt
-
-
-cdef double _c_hamming_dist(double* a, double* b, Py_ssize_t n) noexcept nogil:
-    if n == 0: return 0.0
-    cdef Py_ssize_t diff_count = 0
-    cdef Py_ssize_t k
-    for k in range(n):
-        diff_count += (a[k] != b[k])
-    return <double>diff_count / <double>n
 
 
 cdef void _col_to_double(object col, double* buf, Py_ssize_t n) except *:
@@ -1588,10 +1452,10 @@ cdef class DoubleColumn(BaseColumn):
             memcpy(out, self.data_c, n * sizeof(double))
 
     cdef double corr_with(self, double* other, Py_ssize_t n):
-        return _c_corr(self.data_c, other, n)
+        return _vec_pearson_corr(self.data_c, other, n)
 
     cdef double cov_with(self, double* other, Py_ssize_t n):
-        return _c_cov(self.data_c, other, n)
+        return _vec_pearson_cov(self.data_c, other, n)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1621,7 +1485,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn temp = DoubleColumn(max(n, 1))
         temp.length = n
         _col_to_double(other, temp.data_c, n)
-        return _c_euclidean_dist(self.data_c, temp.data_c, n)
+        return _vec_euclidean_dist(self.data_c, temp.data_c, n)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1631,7 +1495,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn temp = DoubleColumn(max(n, 1))
         temp.length = n
         _col_to_double(other, temp.data_c, n)
-        return _c_manhattan_dist(self.data_c, temp.data_c, n)
+        return _vec_manhattan_dist(self.data_c, temp.data_c, n)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1641,7 +1505,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn temp = DoubleColumn(max(n, 1))
         temp.length = n
         _col_to_double(other, temp.data_c, n)
-        return _c_cosine_dist(self.data_c, temp.data_c, n)
+        return 1.0 - _vec_cosine_sim(self.data_c, temp.data_c, n)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1651,7 +1515,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn temp = DoubleColumn(max(n, 1))
         temp.length = n
         _col_to_double(other, temp.data_c, n)
-        return _c_cosine_similarity(self.data_c, temp.data_c, n)
+        return _vec_cosine_sim(self.data_c, temp.data_c, n)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1661,7 +1525,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn temp = DoubleColumn(max(n, 1))
         temp.length = n
         _col_to_double(other, temp.data_c, n)
-        return _c_jaccard_sim(self.data_c, temp.data_c, n)
+        return _vec_jaccard_sim(self.data_c, temp.data_c, n)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1671,7 +1535,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn temp = DoubleColumn(max(n, 1))
         temp.length = n
         _col_to_double(other, temp.data_c, n)
-        return _c_hamming_dist(self.data_c, temp.data_c, n)
+        return _vec_hamming_dist(self.data_c, temp.data_c, n)
 
     cdef DoubleColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, double sentinel):
         cdef DoubleColumn new_col = DoubleColumn(max(n, 1))

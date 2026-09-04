@@ -11,7 +11,10 @@ from libc.stdlib cimport malloc, free
 from fluidframe.core._base cimport BaseColumn, TYPE_INT, TYPE_DOUBLE, aligned_malloc, os_aligned_free
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
-from fluidframe.core.doublecolumn cimport DoubleColumn, _c_euclidean_dist, _c_manhattan_dist, _c_cosine_dist, _c_cosine_similarity, _c_jaccard_sim, _c_hamming_dist
+from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core._base cimport (
+    _vec_euclidean_dist, _vec_manhattan_dist, _vec_cosine_sim, _vec_hamming_dist, _vec_jaccard_sim
+)
 from fluidframe.core.index cimport RangeIndex
 
 
@@ -425,7 +428,7 @@ def euclidean_dist(FastDataFrame df):
             for i in range(rows):
                 D[i * rows + i] = 0.0
                 for j in range(i + 1, rows):
-                    D[i * rows + j] = _c_euclidean_dist(A + i * cols, A + j * cols, cols)
+                    D[i * rows + j] = _vec_euclidean_dist(A + i * cols, A + j * cols, cols)
                     D[j * rows + i] = D[i * rows + j]
 
         return _from_contiguous(D, rows, rows)
@@ -450,7 +453,7 @@ def manhattan_dist(FastDataFrame df):
             for i in range(rows):
                 D[i * rows + i] = 0.0
                 for j in range(i + 1, rows):
-                    D[i * rows + j] = _c_manhattan_dist(A + i * cols, A + j * cols, cols)
+                    D[i * rows + j] = _vec_manhattan_dist(A + i * cols, A + j * cols, cols)
                     D[j * rows + i] = D[i * rows + j]
 
         return _from_contiguous(D, rows, rows)
@@ -475,7 +478,7 @@ def cosine_dist(FastDataFrame df):
             for i in range(rows):
                 D[i * rows + i] = 0.0
                 for j in range(i + 1, rows):
-                    D[i * rows + j] = _c_cosine_dist(A + i * cols, A + j * cols, cols)
+                    D[i * rows + j] = 1.0 - _vec_cosine_sim(A + i * cols, A + j * cols, cols)
                     D[j * rows + i] = D[i * rows + j]
 
         return _from_contiguous(D, rows, rows)
@@ -500,7 +503,7 @@ def hamming_dist(FastDataFrame df):
             for i in range(rows):
                 D[i * rows + i] = 0.0
                 for j in range(i + 1, rows):
-                    D[i * rows + j] = _c_hamming_dist(A + i * cols, A + j * cols, cols)
+                    D[i * rows + j] = _vec_hamming_dist(A + i * cols, A + j * cols, cols)
                     D[j * rows + i] = D[i * rows + j]
 
         return _from_contiguous(D, rows, rows)
@@ -525,7 +528,7 @@ def jaccard_sim(FastDataFrame df):
             for i in range(rows):
                 D[i * rows + i] = 1.0
                 for j in range(i + 1, rows):
-                    D[i * rows + j] = _c_jaccard_sim(A + i * cols, A + j * cols, cols)
+                    D[i * rows + j] = _vec_jaccard_sim(A + i * cols, A + j * cols, cols)
                     D[j * rows + i] = D[i * rows + j]
 
         return _from_contiguous(D, rows, rows)
@@ -550,7 +553,7 @@ def cosine_similarity(FastDataFrame df):
             for i in range(rows):
                 D[i * rows + i] = 1.0
                 for j in range(i + 1, rows):
-                    D[i * rows + j] = _c_cosine_similarity(A + i * cols, A + j * cols, cols)
+                    D[i * rows + j] = _vec_cosine_sim(A + i * cols, A + j * cols, cols)
                     D[j * rows + i] = D[i * rows + j]
 
         return _from_contiguous(D, rows, rows)

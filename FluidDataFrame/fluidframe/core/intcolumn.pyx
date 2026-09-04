@@ -15,7 +15,11 @@ from fluidframe.core._base cimport (
     TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL,
     TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
-    _resolve_astype_target, NumericType
+    _resolve_astype_target, NumericType,
+    _vec_pearson_corr, _vec_pearson_cov, _vec_euclidean_dist,
+    _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist,
+    _int_double_pearson_corr, _int_double_pearson_cov, _int_double_euclidean_dist,
+    _int_double_manhattan_dist, _int_double_cosine_sim, _int_double_jaccard_sim, _int_double_hamming_dist
 )
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -34,96 +38,6 @@ cdef int _cmp_int(const void* a, const void* b) noexcept nogil:
     if va < vb: return -1
     if va > vb: return 1
     return 0
-
-
-cdef inline double _inline_pearson_corr(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n < 2: return NAN
-    cdef double sum_x = 0.0, sum_y = 0.0, sum_xx = 0.0, sum_yy = 0.0, sum_xy = 0.0
-    cdef double val_x, val_y
-    cdef Py_ssize_t i
-    for i in range(n):
-        val_x = <double>x[i]
-        val_y = <double>y[i]
-        sum_x += val_x
-        sum_y += val_y
-        sum_xx += val_x * val_x
-        sum_yy += val_y * val_y
-        sum_xy += val_x * val_y
-    cdef double inv_n = 1.0 / <double>n
-    cdef double cov_xy = sum_xy - sum_x * sum_y * inv_n
-    cdef double var_x = sum_xx - sum_x * sum_x * inv_n
-    cdef double var_y = sum_yy - sum_y * sum_y * inv_n
-    cdef double denom = sqrt(var_x * var_y)
-    return cov_xy / denom if denom > 0.0 else 0.0
-
-cdef inline double _inline_pearson_cov(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n < 2: return NAN
-    cdef double sum_x = 0.0, sum_y = 0.0, sum_xy = 0.0
-    cdef double val_x, val_y
-    cdef Py_ssize_t i
-    for i in range(n):
-        val_x = <double>x[i]
-        val_y = <double>y[i]
-        sum_x += val_x
-        sum_y += val_y
-        sum_xy += val_x * val_y
-    return (sum_xy - (sum_x * sum_y) / <double>n) / <double>(n - 1.0)
-
-cdef inline double _inline_euclidean_dist(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef double sum_sq = 0.0
-    cdef double diff
-    cdef Py_ssize_t i
-    for i in range(n):
-        diff = <double>x[i] - <double>y[i]
-        sum_sq += diff * diff
-    return sqrt(sum_sq)
-
-cdef inline double _inline_manhattan_dist(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef double sum_abs = 0.0
-    cdef Py_ssize_t i
-    for i in range(n):
-        sum_abs += fabs(<double>x[i] - <double>y[i])
-    return sum_abs
-
-cdef inline double _inline_cosine_sim(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef double sum_xx = 0.0, sum_yy = 0.0, sum_xy = 0.0
-    cdef double val_x, val_y
-    cdef Py_ssize_t i
-    for i in range(n):
-        val_x = <double>x[i]
-        val_y = <double>y[i]
-        sum_xx += val_x * val_x
-        sum_yy += val_y * val_y
-        sum_xy += val_x * val_y
-    cdef double denom = sqrt(sum_xx * sum_yy)
-    return sum_xy / denom if denom > 0.0 else 0.0
-
-cdef inline double _inline_jaccard_sim(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef Py_ssize_t intersection = 0
-    cdef Py_ssize_t union_cnt = 0
-    cdef bint bx, by
-    cdef Py_ssize_t i
-    for i in range(n):
-        bx = (x[i] != 0)
-        by = (y[i] != 0)
-        if bx and by:
-            intersection += 1
-        if bx or by:
-            union_cnt += 1
-    return <double>intersection / <double>union_cnt if union_cnt > 0 else 1.0
-
-cdef inline double _inline_hamming_dist(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef Py_ssize_t diffs = 0
-    cdef Py_ssize_t i
-    for i in range(n):
-        if <double>x[i] != <double>y[i]:
-            diffs += 1
-    return <double>diffs / <double>n
 
 
 @cython.final
@@ -1472,32 +1386,14 @@ cdef class IntColumn(BaseColumn):
             for i in range(n):
                 out[i] = <double>ptr[i]
 
-    cdef double corr_with(self, double* other, Py_ssize_t n):
-        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
-        if not buf: raise MemoryError()
-        try:
-            self.to_double_buffer(buf, n)
-            return _c_corr(buf, other, n)
-        finally:
-            os_aligned_free(buf)
-
-    cdef double cov_with(self, double* other, Py_ssize_t n):
-        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
-        if not buf: raise MemoryError()
-        try:
-            self.to_double_buffer(buf, n)
-            return _c_cov(buf, other, n)
-        finally:
-            os_aligned_free(buf)
-
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pearson_corr_with(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if isinstance(other, IntColumn):
-            return _inline_pearson_corr(self.data_c, (<IntColumn>other).data_c, n)
+            return _vec_pearson_corr(self.data_c, (<IntColumn>other).data_c, n)
         elif isinstance(other, DoubleColumn):
-            return _inline_pearson_corr(self.data_c, (<DoubleColumn>other).data_c, n)
+            return _int_double_pearson_corr(self.data_c, (<DoubleColumn>other).data_c, n)
         else:
             raise TypeError(f"Unsupported type: {type(other)}")
 
@@ -1506,9 +1402,9 @@ cdef class IntColumn(BaseColumn):
     def pearson_cov_with(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if isinstance(other, IntColumn):
-            return _inline_pearson_cov(self.data_c, (<IntColumn>other).data_c, n)
+            return _vec_pearson_cov(self.data_c, (<IntColumn>other).data_c, n)
         elif isinstance(other, DoubleColumn):
-            return _inline_pearson_cov(self.data_c, (<DoubleColumn>other).data_c, n)
+            return _int_double_pearson_cov(self.data_c, (<DoubleColumn>other).data_c, n)
         else:
             raise TypeError(f"Unsupported type: {type(other)}")
 
@@ -1517,9 +1413,9 @@ cdef class IntColumn(BaseColumn):
     def euclidean_dist(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if isinstance(other, IntColumn):
-            return _inline_euclidean_dist(self.data_c, (<IntColumn>other).data_c, n)
+            return _vec_euclidean_dist(self.data_c, (<IntColumn>other).data_c, n)
         elif isinstance(other, DoubleColumn):
-            return _inline_euclidean_dist(self.data_c, (<DoubleColumn>other).data_c, n)
+            return _int_double_euclidean_dist(self.data_c, (<DoubleColumn>other).data_c, n)
         else:
             raise TypeError(f"Unsupported type: {type(other)}")
 
@@ -1528,9 +1424,9 @@ cdef class IntColumn(BaseColumn):
     def manhattan_dist(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if isinstance(other, IntColumn):
-            return _inline_manhattan_dist(self.data_c, (<IntColumn>other).data_c, n)
+            return _vec_manhattan_dist(self.data_c, (<IntColumn>other).data_c, n)
         elif isinstance(other, DoubleColumn):
-            return _inline_manhattan_dist(self.data_c, (<DoubleColumn>other).data_c, n)
+            return _int_double_manhattan_dist(self.data_c, (<DoubleColumn>other).data_c, n)
         else:
             raise TypeError(f"Unsupported type: {type(other)}")
 
@@ -1539,9 +1435,9 @@ cdef class IntColumn(BaseColumn):
     def cosine_similarity(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if isinstance(other, IntColumn):
-            return _inline_cosine_sim(self.data_c, (<IntColumn>other).data_c, n)
+            return _vec_cosine_sim(self.data_c, (<IntColumn>other).data_c, n)
         elif isinstance(other, DoubleColumn):
-            return _inline_cosine_sim(self.data_c, (<DoubleColumn>other).data_c, n)
+            return _int_double_cosine_sim(self.data_c, (<DoubleColumn>other).data_c, n)
         else:
             raise TypeError(f"Unsupported type: {type(other)}")
 
@@ -1555,9 +1451,9 @@ cdef class IntColumn(BaseColumn):
     def jaccard_sim(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if isinstance(other, IntColumn):
-            return _inline_jaccard_sim(self.data_c, (<IntColumn>other).data_c, n)
+            return _vec_jaccard_sim(self.data_c, (<IntColumn>other).data_c, n)
         elif isinstance(other, DoubleColumn):
-            return _inline_jaccard_sim(self.data_c, (<DoubleColumn>other).data_c, n)
+            return _int_double_jaccard_sim(self.data_c, (<DoubleColumn>other).data_c, n)
         else:
             raise TypeError(f"Unsupported type: {type(other)}")
 
@@ -1566,9 +1462,9 @@ cdef class IntColumn(BaseColumn):
     def hamming_dist(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if isinstance(other, IntColumn):
-            return _inline_hamming_dist(self.data_c, (<IntColumn>other).data_c, n)
+            return _vec_hamming_dist(self.data_c, (<IntColumn>other).data_c, n)
         elif isinstance(other, DoubleColumn):
-            return _inline_hamming_dist(self.data_c, (<DoubleColumn>other).data_c, n)
+            return _int_double_hamming_dist(self.data_c, (<DoubleColumn>other).data_c, n)
         else:
             raise TypeError(f"Unsupported type: {type(other)}")
 

@@ -134,10 +134,10 @@ cdef extern from *:
 
 
 from fluidframe.core.intcolumn cimport IntColumn
-from fluidframe.core.doublecolumn cimport (
-    DoubleColumn, _c_corr, _c_cov, _c_euclidean_dist,
-    _c_manhattan_dist, _c_cosine_dist, _c_cosine_similarity,
-    _c_jaccard_sim, _c_hamming_dist
+from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core._base cimport (
+    _vec_pearson_corr, _vec_pearson_cov, _vec_euclidean_dist,
+    _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist
 )
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
@@ -320,7 +320,7 @@ cdef class FastDataFrame:
 
     cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx, Py_ssize_t rem_len):
         if col.dtype == TYPE_INT:
-            (<IntColumn>col).drop_row(row_idx, rem_len)
+            (<IntColumn>col).drop_row(row_idx)
         elif col.dtype == TYPE_DOUBLE:
             (<DoubleColumn>col).drop_row(row_idx, rem_len)
         elif col.dtype == TYPE_CHAR256:
@@ -2360,7 +2360,7 @@ cdef class FastDataFrame:
                 c_i.data_c[i] = 1.0
                 for j in range(i + 1, n_cols):
                     c_j = <DoubleColumn>result.columns[num_cols[j]]
-                    val = _c_corr(data[i], data[j], n_rows)
+                    val = _vec_pearson_corr(data[i], data[j], n_rows)
                     c_i.data_c[j] = val
                     c_j.data_c[i] = val
             return result
@@ -2405,10 +2405,10 @@ cdef class FastDataFrame:
 
             for i in range(n_cols):
                 c_i = <DoubleColumn>result.columns[num_cols[i]]
-                c_i.data_c[i] = _c_cov(data[i], data[i], n_rows)
+                c_i.data_c[i] = _vec_pearson_cov(data[i], data[i], n_rows)
                 for j in range(i + 1, n_cols):
                     c_j = <DoubleColumn>result.columns[num_cols[j]]
-                    val = _c_cov(data[i], data[j], n_rows)
+                    val = _vec_pearson_cov(data[i], data[j], n_rows)
                     c_i.data_c[j] = val
                     c_j.data_c[i] = val
             return result
@@ -2436,7 +2436,7 @@ cdef class FastDataFrame:
                 temp = DoubleColumn(max(n, 1))
                 temp.length = n
                 self._col_to_double_buffer(col, temp.data_c, n)
-                result[name] = _c_corr(temp.data_c, other_buf.data_c, n)
+                result[name] = _vec_pearson_corr(temp.data_c, other_buf.data_c, n)
         return result
 
     @cython.binding(False)
@@ -2450,7 +2450,7 @@ cdef class FastDataFrame:
         buf_b.length = n
         self._col_to_double_buffer(col_a, buf_a.data_c, n)
         self._col_to_double_buffer(col_b, buf_b.data_c, n)
-        return _c_corr(buf_a.data_c, buf_b.data_c, n)
+        return _vec_pearson_corr(buf_a.data_c, buf_b.data_c, n)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -2463,7 +2463,7 @@ cdef class FastDataFrame:
         buf_b.length = n
         self._col_to_double_buffer(col_a, buf_a.data_c, n)
         self._col_to_double_buffer(col_b, buf_b.data_c, n)
-        return _c_cov(buf_a.data_c, buf_b.data_c, n)
+        return _vec_pearson_cov(buf_a.data_c, buf_b.data_c, n)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -2509,7 +2509,7 @@ cdef class FastDataFrame:
                         result_col.data_c[j] = 1.0
                     else:
                         self._col_to_double_buffer(<BaseColumn>num_cols[j], buf_j, n_rows)
-                        result_col.data_c[j] = _c_corr(buf_i, buf_j, n_rows)
+                        result_col.data_c[j] = _vec_pearson_corr(buf_i, buf_j, n_rows)
                 result.columns[num_names[i]] = result_col
             return result
         finally:
