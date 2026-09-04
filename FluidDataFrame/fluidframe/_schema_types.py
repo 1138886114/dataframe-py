@@ -67,6 +67,7 @@ def _parse_schema(schema_dict):
     for k, v in schema_dict.items():
         if v is int: parsed[k] = TYPE_INT
         elif v is float: parsed[k] = TYPE_DOUBLE
+        elif v is bool: parsed[k] = TYPE_BOOL
         elif v is Char256: parsed[k] = TYPE_CHAR256
         elif v is str: parsed[k] = TYPE_UCS2
         elif v is Date: parsed[k] = TYPE_DATE

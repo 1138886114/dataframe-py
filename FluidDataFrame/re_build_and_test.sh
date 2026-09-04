@@ -37,24 +37,27 @@ echo "[2/3] 运行测试..."
 echo "-----------------------------------------"
 
 TESTS=(
-    test_construction_linalg
-    test_linalg_distances
-    test_col_dist_withcols
-    test_boolcategory
-    test_fastdataframe
     test_astype
-    test_new_features
-    test_groupby
-    test_new_stats
-    test_rolling
-    test_str_accessor
-    test_doublecolumn
-    test_intcolumn
-    test_timestampcolumn
-    test_datetime_time
-    test_ucs2column
-    test_index
+    test_boolcolumn
+    test_categorycolumn
+    test_char256_str_accessor
     test_char256column
+    test_datecolumn
+    test_datetimecolumn
+    test_doublecolumn
+    test_fastdataframe
+    test_fluidframe
+    test_groupby
+    test_index
+    test_indexers
+    test_intcolumn
+    test_linalg
+    test_rolling
+    test_shift_and_drop
+    test_timecolumn
+    test_ucs2_str_accessor
+    test_ucs2column
+    test_zero_copy
 )
 
 TOTAL_PASSED=0
