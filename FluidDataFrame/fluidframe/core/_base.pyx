@@ -71,6 +71,12 @@ cdef class BaseColumn:
     def get_size(self):
         return 0
 
+    cpdef void drop_row(self, Py_ssize_t row_idx):
+        raise NotImplementedError
+
+    cpdef void shift_left(self, Py_ssize_t pos):
+        raise NotImplementedError
+
 
 cdef int _resolve_astype_target(object target) except -1:
     cdef str tname

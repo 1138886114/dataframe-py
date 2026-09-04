@@ -9,7 +9,7 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdio cimport snprintf
 import re
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target, _c_shift_left
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -1260,6 +1260,22 @@ cdef class UCS2Column_SoA(BaseColumn):
         for i in range(row_idx, self.length):
             self.offsets_c[i] = self.offsets_c[i + 1] - char_len
         self.length -= 1
+
+    cpdef void shift_left(self, Py_ssize_t pos):
+        cdef Py_ssize_t col_len = self.length
+        cdef Py_ssize_t start_offset = self.offsets_c[pos]
+        cdef Py_ssize_t end_offset = self.offsets_c[pos + 1]
+        cdef Py_ssize_t removed_len = end_offset - start_offset
+        cdef Py_ssize_t rem = self.char_length - end_offset
+        cdef Py_ssize_t i
+        if rem > 0:
+            memmove(self.chars_c + start_offset,
+                    self.chars_c + end_offset,
+                    rem * sizeof(Py_UCS2))
+        self.char_length -= removed_len
+        for i in range(pos, col_len):
+            self.offsets_c[i] = self.offsets_c[i + 1] - removed_len
+        self.length = col_len - 1
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)

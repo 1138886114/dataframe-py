@@ -27,6 +27,7 @@ cdef class IntColumn(BaseColumn):
     cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=*)
     cpdef IntColumn mask(self, IntColumn cond, int other, bint inplace=*)
     cpdef void drop_row(self, Py_ssize_t row_idx)
+    cpdef void shift_left(self, Py_ssize_t pos)
     cdef void to_double_buffer(self, double* out, Py_ssize_t n)
     cdef IntColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, int sentinel)
     cpdef Py_ssize_t count_nonzero(self)

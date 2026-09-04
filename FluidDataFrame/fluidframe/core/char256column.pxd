@@ -19,3 +19,4 @@ cdef class Char256Column_SoA(BaseColumn):
     cdef void _set_item(self, Py_ssize_t idx, str val) except *
     cdef Char256Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
     cpdef void drop_row(self, Py_ssize_t row_idx)
+    cpdef void shift_left(self, Py_ssize_t pos)

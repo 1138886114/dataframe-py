@@ -29,3 +29,4 @@ cdef class UCS2Column_SoA(BaseColumn):
     cdef inline void _set_item(self, Py_ssize_t idx, str val)
     cdef inline str _get_str(self, Py_ssize_t idx)
     cpdef void drop_row(self, Py_ssize_t row_idx)
+    cpdef void shift_left(self, Py_ssize_t pos)

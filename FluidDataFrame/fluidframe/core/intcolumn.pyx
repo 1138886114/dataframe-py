@@ -19,7 +19,8 @@ from fluidframe.core._base cimport (
     _vec_pearson_corr, _vec_pearson_cov, _vec_euclidean_dist,
     _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist,
     _int_double_pearson_corr, _int_double_pearson_cov, _int_double_euclidean_dist,
-    _int_double_manhattan_dist, _int_double_cosine_sim, _int_double_jaccard_sim, _int_double_hamming_dist
+    _int_double_manhattan_dist, _int_double_cosine_sim, _int_double_jaccard_sim, _int_double_hamming_dist,
+    _c_shift_left
 )
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -1377,6 +1378,11 @@ cdef class IntColumn(BaseColumn):
                     self.data_c + row_idx + 1,
                     rem_len * sizeof(int))
         self.length -= 1
+
+    cpdef void shift_left(self, Py_ssize_t pos):
+        cdef Py_ssize_t col_len = self.length
+        _c_shift_left(self.data_c, pos, col_len, sizeof(int))
+        self.length = col_len - 1
 
     cdef void to_double_buffer(self, double* out, Py_ssize_t n):
         cdef int* ptr = self.data_c

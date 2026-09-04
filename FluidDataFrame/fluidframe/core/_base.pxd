@@ -1,5 +1,6 @@
 # cython: language_level=3
 from libc.math cimport sqrt, fabs, NAN
+from libc.string cimport memmove
 
 cdef void* aligned_malloc(size_t size, size_t alignment=*) nogil
 cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t alignment=*) nogil
@@ -24,6 +25,24 @@ cdef class BaseColumn:
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef public int dtype
+    cpdef void drop_row(self, Py_ssize_t row_idx)
+    cpdef void shift_left(self, Py_ssize_t pos)
+
+
+cdef inline void _c_shift_right(void* buf, Py_ssize_t pos, Py_ssize_t col_len, Py_ssize_t elem_size) noexcept nogil:
+    cdef Py_ssize_t n = col_len - pos
+    if n > 0:
+        memmove(<char*>buf + (pos + 1) * elem_size,
+                <char*>buf + pos * elem_size,
+                n * elem_size)
+
+
+cdef inline void _c_shift_left(void* buf, Py_ssize_t pos, Py_ssize_t col_len, Py_ssize_t elem_size) noexcept nogil:
+    cdef Py_ssize_t n = col_len - pos - 1
+    if n > 0:
+        memmove(<char*>buf + pos * elem_size,
+                <char*>buf + (pos + 1) * elem_size,
+                n * elem_size)
 
 
 ctypedef fused NumericType:

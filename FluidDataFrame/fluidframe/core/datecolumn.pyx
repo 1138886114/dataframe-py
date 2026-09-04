@@ -14,7 +14,8 @@ from libc.stdlib cimport malloc, free
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_DATE, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
-    TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
+    TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target,
+    _c_shift_left
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -1092,6 +1093,11 @@ cdef class DateColumn(BaseColumn):
                     <int32_t*>self.data_c + row_idx + 1,
                     rem_len * sizeof(int32_t))
         self.length -= 1
+
+    cpdef void shift_left(self, Py_ssize_t pos):
+        cdef Py_ssize_t col_len = self.length
+        _c_shift_left(self.data_c, pos, col_len, sizeof(int32_t))
+        self.length = col_len - 1
 
     # ------------------------------------------------------------
     # 类型转换 astype (无 Python 堆分配直写)
