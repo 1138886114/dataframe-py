@@ -61,7 +61,6 @@ extensions = [
               extra_link_args=COMMON_link_args),
     Extension("fluidframe.core.index",
               ["fluidframe/core/index.pyx"],
-              language="c++",
               extra_compile_args=CXX_compile_args,
               extra_link_args=COMMON_link_args),
     Extension("fluidframe.core.indexers",

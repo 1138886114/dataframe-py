@@ -7,8 +7,7 @@ cimport cython
 from fluidframe.core._base cimport aligned_malloc, os_aligned_free
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.index cimport IndexBase, IntIndex, RangeIndex, MultiIndex
-from libcpp.unordered_map cimport unordered_map
-from libcpp.vector cimport vector
+
 
 
 cdef class IndexBase:
