@@ -2,6 +2,7 @@
 
 from libc.string cimport memcpy
 cimport cython
+from cpython.unicode cimport PyUnicode_AsUTF8AndSize
 
 cdef extern from *:
     """
@@ -73,6 +74,11 @@ cdef class BaseColumn:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
+    def copy(self):
+        raise NotImplementedError("Subclasses must implement copy()")
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
         raise NotImplementedError
 
@@ -82,23 +88,60 @@ cdef class BaseColumn:
         raise NotImplementedError
 
 
+cdef inline bint _fast_match(const char* s, const char* expected, Py_ssize_t length) noexcept nogil:
+    cdef Py_ssize_t i
+    for i in range(length):
+        if (s[i] | 0x20) != expected[i]:
+            return False
+    return True
+
 cdef int _resolve_astype_target(object target) except -1:
-    cdef str tname
+    if target is int: return TYPE_INT
+    if target is float: return TYPE_DOUBLE
+    if target is bool: return TYPE_BOOL
+    if target is str: return TYPE_UCS2
+
+    cdef Py_ssize_t length
+    cdef const char* c_str
+
     if isinstance(target, str):
-        tname = target.lower()
-        if tname in ('int', 'i4', 'i8', 'int32', 'int64', 'integer'): return TYPE_INT
-        if tname in ('double', 'float', 'f8', 'f4', 'float64'): return TYPE_DOUBLE
-        if tname in ('bool', 'boolean'): return TYPE_BOOL
-        if tname in ('str', 'string', 'ucs2', 'unicode'): return TYPE_UCS2
-        if tname in ('char256', 'ascii'): return TYPE_CHAR256
-        if tname == 'datetime': return TYPE_DATETIME
-        if tname == 'time': return TYPE_TIME
-        if tname in ('date', 'timestamp'): return TYPE_DATE
-        if tname in ('cat', 'category'): return TYPE_CATEGORY
-    else:
-        if target is int: return TYPE_INT
-        if target is float: return TYPE_DOUBLE
-        if target is bool: return TYPE_BOOL
-        if target is str: return TYPE_UCS2
+        c_str = PyUnicode_AsUTF8AndSize(target, &length)
+        if c_str == NULL:
+            raise TypeError(f"Invalid string type: {target}")
+
+        if length == 2:
+            if _fast_match(c_str, b"i4", 2): return TYPE_INT
+            if _fast_match(c_str, b"i8", 2): return TYPE_INT
+            if _fast_match(c_str, b"f4", 2): return TYPE_DOUBLE
+            if _fast_match(c_str, b"f8", 2): return TYPE_DOUBLE
+        elif length == 3:
+            if _fast_match(c_str, b"int", 3): return TYPE_INT
+            if _fast_match(c_str, b"str", 3): return TYPE_UCS2
+            if _fast_match(c_str, b"cat", 3): return TYPE_CATEGORY
+        elif length == 4:
+            if _fast_match(c_str, b"bool", 4): return TYPE_BOOL
+            if _fast_match(c_str, b"date", 4): return TYPE_DATE
+            if _fast_match(c_str, b"time", 4): return TYPE_TIME
+            if _fast_match(c_str, b"ucs2", 4): return TYPE_UCS2
+            if _fast_match(c_str, b"cate", 4): return TYPE_CATEGORY
+        elif length == 5:
+            if _fast_match(c_str, b"float", 5): return TYPE_DOUBLE
+            if _fast_match(c_str, b"int32", 5): return TYPE_INT
+            if _fast_match(c_str, b"int64", 5): return TYPE_INT
+            if _fast_match(c_str, b"ascii", 5): return TYPE_CHAR256
+        elif length == 6:
+            if _fast_match(c_str, b"double", 6): return TYPE_DOUBLE
+            if _fast_match(c_str, b"string", 6): return TYPE_UCS2
+        elif length == 7:
+            if _fast_match(c_str, b"integer", 7): return TYPE_INT
+            if _fast_match(c_str, b"float64", 7): return TYPE_DOUBLE
+            if _fast_match(c_str, b"boolean", 7): return TYPE_BOOL
+            if _fast_match(c_str, b"unicode", 7): return TYPE_UCS2
+            if _fast_match(c_str, b"char256", 7): return TYPE_CHAR256
+        elif length == 8:
+            if _fast_match(c_str, b"datetime", 8): return TYPE_DATETIME
+            if _fast_match(c_str, b"category", 8): return TYPE_CATEGORY
+        elif length == 9:
+            if _fast_match(c_str, b"timestamp", 9): return TYPE_DATE
 
     raise TypeError(f"Cannot cast to unsupported target type: {target}")

@@ -9,7 +9,7 @@ cdef int _resolve_astype_target(object target) except -1
 
 cdef enum DataType:
     TYPE_INT = 0
-    TYPE_FLOAT = 1
+    TYPE_FLOAT = 2
     TYPE_DOUBLE = 2
     TYPE_CHAR256 = 3
     TYPE_UCS2 = 4

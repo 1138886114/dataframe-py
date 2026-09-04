@@ -154,9 +154,14 @@ from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Ti
 class _RollingWrapper:
     """轻量级滚动窗口包装器，委托给列的 roll_xxx 方法"""
 
+    _SUPPORTED_TYPES = {TYPE_INT, TYPE_DOUBLE}
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __init__(self, col, window):
+        if col.dtype not in self._SUPPORTED_TYPES:
+            type_name = _fast_type_name(col.dtype)
+            raise TypeError(f"Rolling window operations are not supported for {type_name} columns")
         self._col = col
         self._window = window
         self.length = col.length
@@ -379,6 +384,10 @@ cdef class FastDataFrame:
                     self.columns[col_name] = DateTimeColumn()
                 elif dtype == TYPE_TIME:
                     self.columns[col_name] = TimeColumn()
+
+    def __len__(self):
+        """Return the number of rows in the DataFrame."""
+        return self.df_length
 
     cdef inline str _fast_type_name(self, int dt):
         """纯 C 级别的类型映射，零装箱开销"""
@@ -636,6 +645,11 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     def eval(self, str expr, bint inplace=False):
+        """Evaluate expression against columns.
+
+        Security: Only supports basic arithmetic and comparison operations.
+        Function calls, imports, and attribute access are blocked.
+        """
         cdef FastDataFrame target_df = self if inplace else self.copy()
         cdef bint is_assignment = False
         cdef str target_col = ""
@@ -647,6 +661,26 @@ cdef class FastDataFrame:
                 target_col = parts[0].strip()
                 calc_expr = parts[1].strip()
                 is_assignment = True
+
+        # Security check: block dangerous patterns
+        import re
+        dangerous_patterns = [
+            r'__\w+__',  # dunder attributes
+            r'\bimport\b',  # import statements
+            r'\bfrom\b',  # from imports
+            r'\bexec\b',  # exec calls
+            r'\beval\b',  # nested eval
+            r'\bcompile\b',  # compile calls
+            r'\bglobals\b',  # globals access
+            r'\blocals\b',  # locals access
+            r'\bgetattr\b',  # getattr calls
+            r'\bsetattr\b',  # setattr calls
+            r'\bdelattr\b',  # delattr calls
+            r'\b__import__\b',  # __import__ calls
+        ]
+        for pattern in dangerous_patterns:
+            if re.search(pattern, calc_expr, re.IGNORECASE):
+                raise ValueError(f"Expression contains blocked pattern: {pattern}")
 
         cdef dict env = dict(self.columns)
         try:
@@ -1024,6 +1058,7 @@ cdef class FastDataFrame:
                 elif row_idx == self.index.length - 1:
                     pass
                 else:
+                    # When deleting from middle, convert to IntIndex
                     rem_len_idx = self.index.length - row_idx - 1
                     tmp_col = IntColumn(self.index.length)
                     tmp_col.length = self.index.length
@@ -2871,3 +2906,5 @@ cdef class FastDataFrame:
             (<IntColumn>col).to_double_buffer(out, n)
         elif col.dtype == TYPE_DOUBLE:
             (<DoubleColumn>col).to_double_buffer(out, n)
+        else:
+            raise TypeError(f"Cannot convert column of type {_fast_type_name(col.dtype)} to double buffer")

@@ -160,6 +160,33 @@ cdef class MultiIndex(IndexBase):
         self.nlevels = len(levels)
         self.names = names if names else [None] * self.nlevels
         self.length = (<IntColumn>codes[0]).length if len(codes) > 0 else 0
+        self._hash_cache = None
+
+    cdef void _build_hash_cache(self):
+        """Build hash cache for O(1) lookups."""
+        cdef unordered_map[long long, vector[Py_ssize_t]] hash_map
+        cdef Py_ssize_t i, j
+        cdef IntColumn col
+        cdef long long hash_val
+        cdef list row_codes
+
+        for i in range(self.length):
+            row_codes = []
+            for j in range(self.nlevels):
+                col = <IntColumn>self.codes[j]
+                row_codes.append(col.data_c[i])
+            # Use a simple hash: sum of codes weighted by position
+            hash_val = 0
+            for j in range(self.nlevels):
+                hash_val = hash_val * 1000000 + row_codes[j]
+            hash_map[hash_val].push_back(i)
+
+        # Convert to Python dict for caching
+        self._hash_cache = {}
+        for it in hash_map:
+            key = it.first
+            indices = list(it.second)
+            self._hash_cache[key] = indices
 
     cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n):
         cdef list new_codes = []
@@ -189,38 +216,25 @@ cdef class MultiIndex(IndexBase):
             except ValueError:
                 raise KeyError(target[level_idx])
 
-        cdef int* c_target_codes = <int*>aligned_malloc(max(target_len, 1) * sizeof(int))
-        if not c_target_codes: raise MemoryError()
+        # Build hash key
+        cdef long long hash_val = 0
         for level_idx in range(target_len):
-            c_target_codes[level_idx] = target_codes[level_idx]
+            hash_val = hash_val * 1000000 + target_codes[level_idx]
 
-        cdef int** code_ptrs = <int**>aligned_malloc(max(target_len, 1) * sizeof(int*))
-        if not code_ptrs:
-            os_aligned_free(c_target_codes)
-            raise MemoryError()
-        for level_idx in range(target_len):
-            code_ptrs[level_idx] = (<IntColumn>self.codes[level_idx]).data_c
+        # Build cache if not exists
+        if self._hash_cache is None:
+            self._build_hash_cache()
 
-        cdef list matches = []
-        cdef Py_ssize_t i
-        cdef bint match
+        # Lookup in hash cache
+        if hash_val in self._hash_cache:
+            matches = self._hash_cache[hash_val]
+            if not matches:
+                raise KeyError(key)
+            if len(matches) == 1:
+                return matches[0]
+            return matches
 
-        try:
-            for i in range(self.length):
-                match = True
-                for level_idx in range(target_len):
-                    if code_ptrs[level_idx][i] != c_target_codes[level_idx]:
-                        match = False
-                        break
-                if match:
-                    matches.append(i)
-        finally:
-            os_aligned_free(c_target_codes)
-            os_aligned_free(code_ptrs)
-
-        if not matches: raise KeyError(key)
-        if len(matches) == 1: return matches[0]
-        return matches
+        raise KeyError(key)
 
     @cython.always_allow_keywords(False)
     cpdef list values(self):

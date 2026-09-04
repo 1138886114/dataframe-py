@@ -225,6 +225,7 @@ cdef class _LocIndexer:
 
         if keep_count == 0:
             result = FastDataFrame()
+            result.df_length = 0
             for col_name, col_obj in self.frame.columns.items():
                 result.columns[col_name] = col_obj.copy()
                 result.columns[col_name].length = 0
@@ -256,6 +257,7 @@ cdef class _LocIndexer:
 
         if keep_count == 0:
             result = FastDataFrame()
+            result.df_length = 0
             for col_name, col_obj in self.frame.columns.items():
                 result.columns[col_name] = col_obj.copy()
                 result.columns[col_name].length = 0

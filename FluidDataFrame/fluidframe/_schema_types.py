@@ -1,7 +1,6 @@
 # Shared type definitions for the fluidframe package
 
 TYPE_INT = 0
-TYPE_FLOAT = 1
 TYPE_DOUBLE = 2
 TYPE_CHAR256 = 3
 TYPE_UCS2 = 4
@@ -10,6 +9,9 @@ TYPE_BOOL = 6
 TYPE_CATEGORY = 7
 TYPE_DATETIME = 8
 TYPE_TIME = 9
+
+# Deprecated: TYPE_FLOAT was never used, kept for backward compatibility
+TYPE_FLOAT = TYPE_DOUBLE
 
 
 class Char256:

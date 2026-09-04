@@ -14,6 +14,8 @@ from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 
+import pickle
+
 from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Time, _parse_schema
 
 from fluidframe.core.intcolumn import IntColumn
@@ -27,6 +29,29 @@ from fluidframe.core.timecolumn import TimeColumn
 from fluidframe.core.index import RangeIndex
 
 
+class _SafeUnpickler(pickle.Unpickler):
+    """Safe unpickler that restricts deserialization to built-in types."""
+    _ALLOWED_BUILTINS = frozenset({
+        'dict', 'list', 'tuple', 'int', 'float', 'str', 'bytes',
+        'NoneType', 'bool', 'set',
+    })
+
+    def __init__(self, file, allow_raw_pickle=False):
+        super().__init__(file)
+        self._allow_raw_pickle = allow_raw_pickle
+
+    def find_class(self, module, name):
+        if self._allow_raw_pickle:
+            return super().find_class(module, name)
+        if module == 'builtins' and name in self._ALLOWED_BUILTINS:
+            return super().find_class(module, name)
+        full = f"{module}.{name}"
+        raise pickle.UnpicklingError(
+            f"Deserialization of '{full}' is not allowed. "
+            f"Use allow_raw_pickle=True to bypass (unsafe)."
+        )
+
+
 def from_pickle(filename, bint allow_raw_pickle=False):
     """从 pickle 文件恢复 FastDataFrame。
 
@@ -38,29 +63,8 @@ def from_pickle(filename, bint allow_raw_pickle=False):
         If True, allow unrestricted pickle loading (WARNING: can execute
         arbitrary code). If False (default), only allows safe types.
     """
-    import pickle
-
-    class _SafeUnpickler(pickle.Unpickler):
-        _ALLOWED = {
-            'builtins', 'builtins.dict', 'builtins.list', 'builtins.tuple',
-            'builtins.int', 'builtins.float', 'builtins.str', 'builtins.bytes',
-            'builtins.NoneType', 'builtins.bool', 'builtins.set',
-        }
-
-        def find_class(self, module, name):
-            if allow_raw_pickle:
-                return super().find_class(module, name)
-            full = f"{module}.{name}"
-            # Allow FluidDataFrame's own internal dict/list/tuple usage
-            if module == 'builtins' and name in ('dict', 'list', 'tuple', 'int', 'float', 'str', 'bytes', 'NoneType', 'bool', 'set'):
-                return super().find_class(module, name)
-            raise pickle.UnpicklingError(
-                f"Deserialization of '{full}' is not allowed. "
-                f"Use allow_raw_pickle=True to bypass (unsafe)."
-            )
-
     with open(filename, 'rb') as f:
-        data = _SafeUnpickler(f).load()
+        data = _SafeUnpickler(f, allow_raw_pickle).load()
     df = FastDataFrame()
     df.df_length = data['df_length']
     for col_name, (typ, values) in data['columns'].items():
@@ -80,7 +84,7 @@ def from_pickle(filename, bint allow_raw_pickle=False):
             col = UCS2Column_SoA()
             for v in values:
                 col.append(v)
-        elif typ == 'timestamp':
+        elif typ == 'date':
             col = DateColumn()
             for v in values:
                 col.append(v)
@@ -269,118 +273,6 @@ def concat(list dfs, bint ignore_index=False):
     cdef FastDataFrame result = concat_outer(dfs)
     if ignore_index:
         result.index = RangeIndex(0, result.df_length)
-    return result
-
-
-cdef list _build_pairs(df1, df2, str left_on, str right_on, str how):
-    cdef dict right_lookup = {}
-    cdef BaseColumn right_key = df2.columns[right_on]
-    cdef Py_ssize_t i, j
-    cdef object val
-
-    for i in range(df2.df_length):
-        val = right_key[i]
-        if val not in right_lookup:
-            right_lookup[val] = []
-        right_lookup[val].append(i)
-
-    cdef BaseColumn left_key = df1.columns[left_on]
-    cdef list pairs = []
-    cdef set right_matched = set()
-    cdef list matches
-
-    for i in range(df1.df_length):
-        val = left_key[i]
-        matches = right_lookup.get(val)
-        if matches:
-            for j in matches:
-                pairs.append((i, j))
-                right_matched.add(j)
-        elif how in ('left', 'outer'):
-            pairs.append((i, -1))
-
-    if how in ('right', 'outer'):
-        for j in range(df2.df_length):
-            if j not in right_matched:
-                pairs.append((-1, j))
-
-    return pairs
-
-
-def merge_inner(dfs, str left_on, str right_on):
-    """内连接：仅保留两表共同拥有匹配键的行"""
-    df1, df2 = dfs
-    cdef list pairs = _build_pairs(df1, df2, left_on, right_on, 'inner')
-    return _build_merge_result(df1, df2, left_on, right_on, pairs)
-
-
-def merge_left(dfs, str left_on, str right_on):
-    """左连接：保留左表所有行，右表无匹配则填充默认值"""
-    df1, df2 = dfs
-    cdef list pairs = _build_pairs(df1, df2, left_on, right_on, 'left')
-    return _build_merge_result(df1, df2, left_on, right_on, pairs)
-
-
-def merge_right(dfs, str left_on, str right_on):
-    """右连接：保留右表所有行，左表无匹配则填充默认值"""
-    df1, df2 = dfs
-    cdef list pairs = _build_pairs(df1, df2, left_on, right_on, 'right')
-    return _build_merge_result(df1, df2, left_on, right_on, pairs)
-
-
-def merge_outer(dfs, str left_on, str right_on):
-    """外连接：保留两表所有行，无匹配则填充默认值"""
-    df1, df2 = dfs
-    cdef list pairs = _build_pairs(df1, df2, left_on, right_on, 'outer')
-    return _build_merge_result(df1, df2, left_on, right_on, pairs)
-
-
-cdef _build_merge_result(df1, df2, str left_on, str right_on, list pairs):
-    cdef FastDataFrame result = FastDataFrame()
-    cdef Py_ssize_t n = len(pairs)
-    if n == 0:
-        result.df_length = 0
-        for name in df1.columns:
-            result.columns[name] = _empty_col(df1.columns[name])
-        for name in df2.columns:
-            if name == right_on and name == left_on:
-                continue
-            if name not in result.columns:
-                result.columns[name] = _empty_col(df2.columns[name])
-        return result
-
-    cdef tuple pair
-    cdef Py_ssize_t i, j
-    cdef BaseColumn src_col, new_col
-
-    for name in df1.columns:
-        src_col = df1.columns[name]
-        new_col = _empty_col(src_col)
-        for pair in pairs:
-            i = pair[0]
-            if i >= 0:
-                new_col.append(src_col[i])
-            else:
-                new_col.append(_default_val(src_col))
-        result.columns[name] = new_col
-
-    for name in df2.columns:
-        if name == right_on and name == left_on:
-            continue
-        col_name = name
-        if col_name in result.columns:
-            col_name = name + '_right'
-        src_col = df2.columns[name]
-        new_col = _empty_col(src_col)
-        for pair in pairs:
-            j = pair[1]
-            if j >= 0:
-                new_col.append(src_col[j])
-            else:
-                new_col.append(_default_val(src_col))
-        result.columns[col_name] = new_col
-
-    result.df_length = n
     return result
 
 
