@@ -18,10 +18,14 @@ cdef class IndexBase:
     cdef IndexBase _concat(self, IndexBase other):
         raise NotImplementedError()
 
-    cpdef get_loc(self, object key):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def get_loc(self, object key):
         raise NotImplementedError()
 
-    cpdef list values(self):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def values(self):
         raise NotImplementedError()
 
 
@@ -31,7 +35,9 @@ cdef class IntIndex(IndexBase):
         self.length = col.length
         self.index_type = INDEX_INT
 
-    cpdef list values(self):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def values(self):
         cdef list result = []
         cdef Py_ssize_t i
         for i in range(self.length):
@@ -49,7 +55,9 @@ cdef class IntIndex(IndexBase):
                 new_data[i] = old_data[indices[i]]
         return IntIndex(new_col)
 
-    cpdef get_loc(self, object key):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def get_loc(self, object key):
         cdef int target = <int>key
         cdef list matches = []
         cdef Py_ssize_t i
@@ -112,7 +120,9 @@ cdef class RangeIndex(IndexBase):
                 out_data[i] = <int>(self.start + indices[i] * self.step)
         return IntIndex(new_col)
 
-    cpdef get_loc(self, object key):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def get_loc(self, object key):
         if not isinstance(key, int): raise KeyError(key)
         cdef Py_ssize_t val = <Py_ssize_t>key
         cdef Py_ssize_t diff = val - self.start
@@ -123,8 +133,9 @@ cdef class RangeIndex(IndexBase):
         if idx < 0 or idx >= self.length: raise KeyError(key)
         return idx
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef list values(self):
+    def values(self):
         cdef list result = []
         cdef Py_ssize_t i
         for i in range(self.length):
@@ -177,17 +188,18 @@ cdef class MultiIndex(IndexBase):
         cdef int** ptrs = <int**>aligned_malloc(n_levels * sizeof(int*))
         cdef int* buf = <int*>aligned_malloc(n_levels * sizeof(int))
         if not ptrs or not buf:
-            if ptrs: free(ptrs)
-            if buf: free(buf)
+            if ptrs: os_aligned_free(ptrs)
+            if buf: os_aligned_free(buf)
             raise MemoryError()
+
+        cdef Py_ssize_t bytes_len = n_levels * sizeof(int)
+        cdef bytes b_key
 
         try:
             for j in range(n_levels):
                 ptrs[j] = (<IntColumn>self.codes[j]).data_c
 
             self._hash_cache = {}
-            cdef Py_ssize_t bytes_len = n_levels * sizeof(int)
-            cdef bytes b_key
 
             for i in range(self.length):
                 for j in range(n_levels):
@@ -217,7 +229,9 @@ cdef class MultiIndex(IndexBase):
             new_codes.append(new_col)
         return MultiIndex(self.levels, new_codes, self.names)
 
-    cpdef get_loc(self, object key):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def get_loc(self, object key):
         cdef tuple target = key if isinstance(key, tuple) else (key,)
         cdef Py_ssize_t target_len = len(target)
         if target_len > self.nlevels: raise KeyError(key)
@@ -231,6 +245,11 @@ cdef class MultiIndex(IndexBase):
         cdef int level_idx
         cdef object val
         cdef dict level_map
+        cdef list matches = []
+        cdef Py_ssize_t i, j
+        cdef bint match
+        cdef int** ptrs
+        cdef bytes target_b_key
 
         try:
             for level_idx in range(target_len):
@@ -240,12 +259,8 @@ cdef class MultiIndex(IndexBase):
                     raise KeyError(val)
                 target_buf[level_idx] = level_map[val]
 
-            cdef list matches = []
-            cdef Py_ssize_t i, j
-            cdef bint match
-
             if target_len < self.nlevels:
-                cdef int** ptrs = <int**>aligned_malloc(target_len * sizeof(int*))
+                ptrs = <int**>aligned_malloc(target_len * sizeof(int*))
                 if not ptrs: raise MemoryError()
                 try:
                     for j in range(target_len):
@@ -269,7 +284,7 @@ cdef class MultiIndex(IndexBase):
             if self._hash_cache is None:
                 self._build_hash_cache()
 
-            cdef bytes target_b_key = (<char*>target_buf)[:target_len * sizeof(int)]
+            target_b_key = (<char*>target_buf)[:target_len * sizeof(int)]
             matches = self._hash_cache.get(target_b_key)
 
             if matches is None:
@@ -279,8 +294,9 @@ cdef class MultiIndex(IndexBase):
         finally:
             os_aligned_free(target_buf)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
-    cpdef list values(self):
+    def values(self):
         cdef list result = []
         cdef Py_ssize_t i, j
         cdef int code_val

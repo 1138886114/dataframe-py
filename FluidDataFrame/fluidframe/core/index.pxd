@@ -11,18 +11,14 @@ cdef class IndexBase:
 
     cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n)
     cdef IndexBase _concat(self, IndexBase other)
-    cpdef get_loc(self, object key)
-    cpdef list values(self)
 
 
 cdef class IntIndex(IndexBase):
     cdef public IntColumn data
-    cpdef list values(self)
 
 cdef class RangeIndex(IndexBase):
     cdef public Py_ssize_t start
     cdef public Py_ssize_t step
-    cpdef list values(self)
 
 cdef class MultiIndex(IndexBase):
     cdef public list levels          # 每层的唯一值 (list of tuples/strings)
@@ -31,4 +27,5 @@ cdef class MultiIndex(IndexBase):
     cdef public list names           # 每层的名字
     cdef public dict _hash_cache     # 用于 O(1) Full-Key 查找 (bytes -> list[int])
     cdef public list _level_maps     # 反向映射字典列表用于 O(1) 编码查找
-    cpdef list values(self)
+    cdef void _build_level_maps(self)
+    cdef void _build_hash_cache(self)
