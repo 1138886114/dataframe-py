@@ -153,22 +153,60 @@ from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Ti
 
 class _RollingWrapper:
     """轻量级滚动窗口包装器，委托给列的 roll_xxx 方法"""
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def __init__(self, col, window):
         self._col = col
         self._window = window
         self.length = col.length
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mean(self): return self._col.roll_mean(self._window)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sum(self): return self._col.roll_sum(self._window)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def min(self): return self._col.roll_min(self._window)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def max(self): return self._col.roll_max(self._window)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def std(self, ddof=False): return self._col.roll_std(self._window, ddof)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def var(self, ddof=False): return self._col.roll_var(self._window, ddof)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def median(self): return self._col.roll_median(self._window)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def quantile(self, q=0.5): return self._col.roll_quantile(self._window, q)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def skew(self): return self._col.roll_skew(self._window)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def kurt(self): return self._col.roll_kurt(self._window)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def corr(self, other): return self._col.roll_corr(self._window, other._col if isinstance(other, _RollingWrapper) else other)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cov(self, other): return self._col.roll_cov(self._window, other._col if isinstance(other, _RollingWrapper) else other)
 
 

@@ -268,7 +268,7 @@ def test_rolling_double_view_mean():
 def test_rolling_double_view_std():
     arr = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float64)
     col = DoubleColumn.load_from_1d_array(arr)
-    result = col.roll_std(3)
+    result = col.roll_std(3, ddof=False)
     expected = math.sqrt(2.0 / 3.0)
     check('rolling view std w3', approx_eq(result[2], expected))
     check('rolling view std w3+1', approx_eq(result[3], expected))
