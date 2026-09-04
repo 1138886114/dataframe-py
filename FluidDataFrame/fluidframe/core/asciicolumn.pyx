@@ -34,8 +34,27 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 from fluidframe.core.char256_str_accessor import StringAccessor_Char256
 
+
+cdef inline bint _is_lower(unsigned char c) noexcept nogil:
+    return c >= 97 and c <= 122
+
+cdef inline bint _is_upper(unsigned char c) noexcept nogil:
+    return c >= 65 and c <= 90
+
+cdef inline bint _is_alpha(unsigned char c) noexcept nogil:
+    return _is_lower(c) or _is_upper(c)
+
+cdef inline bint _is_digit(unsigned char c) noexcept nogil:
+    return c >= 48 and c <= 57
+
+cdef inline bint _is_alnum(unsigned char c) noexcept nogil:
+    return _is_alpha(c) or _is_digit(c)
+
+cdef inline bint _is_space(unsigned char c) noexcept nogil:
+    return c == 32 or (c >= 9 and c <= 13)
+
 # ============================================================
-#  C helper functions
+#  C helper functions (全部保留，提供原始功能支撑)
 # ============================================================
 
 cdef inline bint _c_str_contains(const char* source, const char* target) noexcept nogil:
@@ -182,6 +201,7 @@ cdef class AsciiColumn(BaseColumn):
         if diff > 0:
             if self.byte_length + diff > self.byte_capacity:
                 self._reserve_bytes(max(self.byte_capacity * 2, self.byte_length + diff + 4096))
+
         tail_len = self.byte_length - old_start - old_byte_span
         if tail_len > 0:
             memmove(self.data_c + old_start + new_byte_span,
@@ -365,21 +385,21 @@ cdef class AsciiColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def replace(self, str old_str, str new_str):
-        cdef Py_ssize_t i
-        cdef str s
-        for i in range(self.length):
-            s = self._get_str(i).replace(old_str, new_str)
-            self._set_item(i, s)
-        return self
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
+        cdef Py_ssize_t i, n = self.length
+        for i in range(n):
+            res.append(self._get_str(i).replace(old_str, new_str))
+        return res
 
     @cython.binding(False)
     def replaces(self, *args):
         if len(args) % 2 != 0:
             raise ValueError("Arguments must be in pairs")
         cdef int i
+        cdef AsciiColumn res = self
         for i in range(0, len(args), 2):
-            self.replace(str(args[i]), str(args[i+1]))
-        return self
+            res = res.replace(str(args[i]), str(args[i+1]))
+        return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -510,7 +530,7 @@ cdef class AsciiColumn(BaseColumn):
         return res
 
     # ------------------------------------------------------------
-    # lower / upper: pure C no-branch auto-vectorizable
+    # VECTORIZED: lower / upper using Branchless Bitwise Masks
     # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -519,6 +539,7 @@ cdef class AsciiColumn(BaseColumn):
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef unsigned char c
+        cdef unsigned char is_up
         cdef Py_ssize_t str_len
         cdef Py_ssize_t* offs = res.offsets_c
         with nogil:
@@ -527,8 +548,8 @@ cdef class AsciiColumn(BaseColumn):
                 str_len = offs[i + 1] - offs[i] - 1
                 for j in range(str_len):
                     c = <unsigned char>ptr[j]
-                    if c >= 65 and c <= 90:
-                        ptr[j] = <char>(c + 32)
+                    is_up = (c >= 65) & (c <= 90)
+                    ptr[j] = c | (is_up << 5)
         return res
 
     @cython.binding(False)
@@ -538,6 +559,7 @@ cdef class AsciiColumn(BaseColumn):
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef unsigned char c
+        cdef unsigned char is_low
         cdef Py_ssize_t str_len
         cdef Py_ssize_t* offs = res.offsets_c
         with nogil:
@@ -546,8 +568,8 @@ cdef class AsciiColumn(BaseColumn):
                 str_len = offs[i + 1] - offs[i] - 1
                 for j in range(str_len):
                     c = <unsigned char>ptr[j]
-                    if c >= 97 and c <= 122:
-                        ptr[j] = <char>(c - 32)
+                    is_low = (c >= 97) & (c <= 122)
+                    ptr[j] = c & ~(is_low << 5)
         return res
 
     @cython.binding(False)
@@ -571,132 +593,10 @@ cdef class AsciiColumn(BaseColumn):
                 ptr = data + offs[i]
                 valid = 1
                 for j in range(str_len):
-                    if not isdigit(<unsigned char>ptr[j]):
+                    if not _is_digit(<unsigned char>ptr[j]):
                         valid = 0
                         break
                 out_ptr[i] = valid
-        return res
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def strip(self):
-        cdef AsciiColumn res = self.copy()
-        cdef Py_ssize_t i, left, right, n = self.length
-        cdef char* ptr
-        cdef Py_ssize_t cur_len
-        cdef Py_ssize_t* offs = res.offsets_c
-        cdef Py_ssize_t new_len, removed, oi
-        with nogil:
-            for i in range(n):
-                cur_len = offs[i + 1] - offs[i] - 1
-                if cur_len == 0: continue
-                ptr = res.data_c + offs[i]
-                left = 0
-                while left < cur_len and isspace(<unsigned char>ptr[left]):
-                    left += 1
-                if left == cur_len:
-                    memmove(ptr, ptr + cur_len, 0)
-                    offs[i + 1] = offs[i]
-                    continue
-                right = cur_len - 1
-                while right >= left and isspace(<unsigned char>ptr[right]):
-                    right -= 1
-                new_len = right - left + 1
-                if left > 0:
-                    memmove(ptr, ptr + left, new_len)
-                ptr[new_len] = 0
-                removed = cur_len - new_len
-                if removed > 0:
-                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
-                    res.byte_length -= removed
-                    for oi in range(i + 1, res.length + 1):
-                        offs[oi] -= removed
-        return res
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def lstrip(self):
-        cdef AsciiColumn res = self.copy()
-        cdef Py_ssize_t i, left, n = self.length
-        cdef char* ptr
-        cdef Py_ssize_t cur_len, new_len, oi
-        cdef Py_ssize_t* offs = res.offsets_c
-        with nogil:
-            for i in range(n):
-                cur_len = offs[i + 1] - offs[i] - 1
-                if cur_len == 0: continue
-                ptr = res.data_c + offs[i]
-                left = 0
-                while left < cur_len and isspace(<unsigned char>ptr[left]):
-                    left += 1
-                if left > 0:
-                    new_len = cur_len - left
-                    memmove(ptr, ptr + left, new_len)
-                    ptr[new_len] = 0
-                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
-                    res.byte_length -= left
-                    for oi in range(i + 1, res.length + 1):
-                        offs[oi] -= left
-        return res
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def rstrip(self):
-        cdef AsciiColumn res = self.copy()
-        cdef Py_ssize_t i, right, n = self.length
-        cdef char* ptr
-        cdef Py_ssize_t cur_len, new_len, removed, oi
-        cdef Py_ssize_t* offs = res.offsets_c
-        with nogil:
-            for i in range(n):
-                cur_len = offs[i + 1] - offs[i] - 1
-                if cur_len == 0: continue
-                ptr = res.data_c + offs[i]
-                right = cur_len - 1
-                while right >= 0 and isspace(<unsigned char>ptr[right]):
-                    right -= 1
-                new_len = right + 1
-                ptr[new_len] = 0
-                removed = cur_len - new_len
-                if removed > 0:
-                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
-                    res.byte_length -= removed
-                    for oi in range(i + 1, res.length + 1):
-                        offs[oi] -= removed
-        return res
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def find(self, str substring):
-        cdef bytes b_sub = substring.encode('ascii')
-        cdef const char* c_sub = b_sub
-        cdef size_t sub_len = len(b_sub)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
-        res.length = self.length
-        cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
-        cdef Py_ssize_t* offs = self.offsets_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(n):
-                out_ptr[i] = <int>_c_find(data + offs[i], c_sub, sub_len)
-        return res
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def count(self, str substring):
-        cdef bytes b_sub = substring.encode('ascii')
-        cdef const char* c_sub = b_sub
-        cdef size_t sub_len = len(b_sub)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
-        res.length = self.length
-        cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
-        cdef Py_ssize_t* offs = self.offsets_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(n):
-                out_ptr[i] = <int>_c_count(data + offs[i], c_sub, sub_len)
         return res
 
     @cython.binding(False)
@@ -720,7 +620,7 @@ cdef class AsciiColumn(BaseColumn):
                 ptr = data + offs[i]
                 valid = 1
                 for j in range(str_len):
-                    if not isalpha(<unsigned char>ptr[j]):
+                    if not _is_alpha(<unsigned char>ptr[j]):
                         valid = 0
                         break
                 out_ptr[i] = valid
@@ -747,7 +647,7 @@ cdef class AsciiColumn(BaseColumn):
                 ptr = data + offs[i]
                 valid = 1
                 for j in range(str_len):
-                    if not isalnum(<unsigned char>ptr[j]):
+                    if not _is_alnum(<unsigned char>ptr[j]):
                         valid = 0
                         break
                 out_ptr[i] = valid
@@ -774,7 +674,7 @@ cdef class AsciiColumn(BaseColumn):
                 ptr = data + offs[i]
                 valid = 1
                 for j in range(str_len):
-                    if not isspace(<unsigned char>ptr[j]):
+                    if not _is_space(<unsigned char>ptr[j]):
                         valid = 0
                         break
                 out_ptr[i] = valid
@@ -792,6 +692,7 @@ cdef class AsciiColumn(BaseColumn):
         cdef char* ptr
         cdef bint has_letter, all_lower
         cdef Py_ssize_t str_len
+        cdef unsigned char c
         with nogil:
             for i in range(n):
                 str_len = offs[i + 1] - offs[i] - 1
@@ -802,9 +703,10 @@ cdef class AsciiColumn(BaseColumn):
                 has_letter = 0
                 all_lower = 1
                 for j in range(str_len):
-                    if isalpha(<unsigned char>ptr[j]):
+                    c = <unsigned char>ptr[j]
+                    if _is_alpha(c):
                         has_letter = 1
-                        if not islower(<unsigned char>ptr[j]):
+                        if not _is_lower(c):
                             all_lower = 0
                             break
                 out_ptr[i] = 1 if (has_letter and all_lower) else 0
@@ -822,6 +724,7 @@ cdef class AsciiColumn(BaseColumn):
         cdef char* ptr
         cdef bint has_letter, all_upper
         cdef Py_ssize_t str_len
+        cdef unsigned char c
         with nogil:
             for i in range(n):
                 str_len = offs[i + 1] - offs[i] - 1
@@ -832,12 +735,132 @@ cdef class AsciiColumn(BaseColumn):
                 has_letter = 0
                 all_upper = 1
                 for j in range(str_len):
-                    if isalpha(<unsigned char>ptr[j]):
+                    c = <unsigned char>ptr[j]
+                    if _is_alpha(c):
                         has_letter = 1
-                        if not isupper(<unsigned char>ptr[j]):
+                        if not _is_upper(c):
                             all_upper = 0
                             break
                 out_ptr[i] = 1 if (has_letter and all_upper) else 0
+        return res
+
+    # ------------------------------------------------------------
+    # O(N) Memory-Safe implementations for stripping & replacing
+    # ------------------------------------------------------------
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def strip(self):
+        cdef Py_ssize_t n = self.length
+        cdef AsciiColumn res = AsciiColumn(max(n, 1))
+        res._reserve_bytes(self.byte_length)
+
+        cdef char* src = self.data_c
+        cdef char* dst = res.data_c
+        cdef Py_ssize_t dst_offset = 0
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_ssize_t i, cur_len, left, right, new_len
+
+        with nogil:
+            for i in range(n):
+                cur_len = offs[i+1] - offs[i] - 1
+                if cur_len == 0:
+                    dst[dst_offset] = 0
+                    dst_offset += 1
+                    res.offsets_c[i+1] = dst_offset
+                    continue
+
+                left = 0
+                while left < cur_len and _is_space(<unsigned char>src[offs[i] + left]):
+                    left += 1
+
+                right = cur_len - 1
+                while right >= left and _is_space(<unsigned char>src[offs[i] + right]):
+                    right -= 1
+
+                new_len = right - left + 1 if right >= left else 0
+
+                if new_len > 0:
+                    memcpy(dst + dst_offset, src + offs[i] + left, new_len)
+                dst[dst_offset + new_len] = 0
+                dst_offset += new_len + 1
+                res.offsets_c[i+1] = dst_offset
+
+        res.length = n
+        res.byte_length = dst_offset
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def lstrip(self):
+        cdef Py_ssize_t n = self.length
+        cdef AsciiColumn res = AsciiColumn(max(n, 1))
+        res._reserve_bytes(self.byte_length)
+
+        cdef char* src = self.data_c
+        cdef char* dst = res.data_c
+        cdef Py_ssize_t dst_offset = 0
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_ssize_t i, cur_len, left, copy_len
+
+        with nogil:
+            for i in range(n):
+                cur_len = offs[i+1] - offs[i] - 1
+                if cur_len == 0:
+                    dst[dst_offset] = 0
+                    dst_offset += 1
+                    res.offsets_c[i+1] = dst_offset
+                    continue
+
+                left = 0
+                while left < cur_len and _is_space(<unsigned char>src[offs[i] + left]):
+                    left += 1
+
+                copy_len = cur_len - left
+                if copy_len > 0:
+                    memcpy(dst + dst_offset, src + offs[i] + left, copy_len)
+                dst[dst_offset + copy_len] = 0
+                dst_offset += copy_len + 1
+                res.offsets_c[i+1] = dst_offset
+
+        res.length = n
+        res.byte_length = dst_offset
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def rstrip(self):
+        cdef Py_ssize_t n = self.length
+        cdef AsciiColumn res = AsciiColumn(max(n, 1))
+        res._reserve_bytes(self.byte_length)
+
+        cdef char* src = self.data_c
+        cdef char* dst = res.data_c
+        cdef Py_ssize_t dst_offset = 0
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_ssize_t i, cur_len, right, copy_len
+
+        with nogil:
+            for i in range(n):
+                cur_len = offs[i+1] - offs[i] - 1
+                if cur_len == 0:
+                    dst[dst_offset] = 0
+                    dst_offset += 1
+                    res.offsets_c[i+1] = dst_offset
+                    continue
+
+                right = cur_len - 1
+                while right >= 0 and _is_space(<unsigned char>src[offs[i] + right]):
+                    right -= 1
+
+                copy_len = right + 1
+                if copy_len > 0:
+                    memcpy(dst + dst_offset, src + offs[i], copy_len)
+                dst[dst_offset + copy_len] = 0
+                dst_offset += copy_len + 1
+                res.offsets_c[i+1] = dst_offset
+
+        res.length = n
+        res.byte_length = dst_offset
         return res
 
     @cython.binding(False)
@@ -846,24 +869,33 @@ cdef class AsciiColumn(BaseColumn):
         cdef bytes b_pre = prefix.encode('ascii')
         cdef const char* c_pre = b_pre
         cdef Py_ssize_t pre_len = len(b_pre)
-        cdef AsciiColumn res = self.copy()
-        cdef Py_ssize_t i, n = self.length
-        cdef char* ptr
-        cdef Py_ssize_t cur_len, new_len, oi
-        cdef Py_ssize_t* offs = res.offsets_c
+
+        cdef Py_ssize_t n = self.length
+        cdef AsciiColumn res = AsciiColumn(max(n, 1))
+        res._reserve_bytes(self.byte_length)
+
+        cdef char* src = self.data_c
+        cdef char* dst = res.data_c
+        cdef Py_ssize_t dst_offset = 0
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_ssize_t i, cur_len, copy_len
+
         with nogil:
             for i in range(n):
-                cur_len = offs[i + 1] - offs[i] - 1
-                if cur_len == 0: continue
-                ptr = res.data_c + offs[i]
-                if cur_len >= pre_len and strncmp(ptr, c_pre, pre_len) == 0:
-                    new_len = cur_len - pre_len
-                    memmove(ptr, ptr + pre_len, new_len)
-                    ptr[new_len] = 0
-                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
-                    res.byte_length -= pre_len
-                    for oi in range(i + 1, res.length + 1):
-                        offs[oi] -= pre_len
+                cur_len = offs[i+1] - offs[i] - 1
+                if cur_len >= pre_len and strncmp(src + offs[i], c_pre, pre_len) == 0:
+                    copy_len = cur_len - pre_len
+                    memcpy(dst + dst_offset, src + offs[i] + pre_len, copy_len)
+                else:
+                    copy_len = cur_len
+                    memcpy(dst + dst_offset, src + offs[i], copy_len)
+
+                dst[dst_offset + copy_len] = 0
+                dst_offset += copy_len + 1
+                res.offsets_c[i+1] = dst_offset
+
+        res.length = n
+        res.byte_length = dst_offset
         return res
 
     @cython.binding(False)
@@ -872,49 +904,87 @@ cdef class AsciiColumn(BaseColumn):
         cdef bytes b_suf = suffix.encode('ascii')
         cdef const char* c_suf = b_suf
         cdef Py_ssize_t suf_len = len(b_suf)
-        cdef AsciiColumn res = self.copy()
-        cdef Py_ssize_t i, n = self.length
-        cdef char* ptr
-        cdef Py_ssize_t cur_len, new_len, oi
-        cdef Py_ssize_t* offs = res.offsets_c
+
+        cdef Py_ssize_t n = self.length
+        cdef AsciiColumn res = AsciiColumn(max(n, 1))
+        res._reserve_bytes(self.byte_length)
+
+        cdef char* src = self.data_c
+        cdef char* dst = res.data_c
+        cdef Py_ssize_t dst_offset = 0
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_ssize_t i, cur_len, copy_len
+
         with nogil:
             for i in range(n):
-                cur_len = offs[i + 1] - offs[i] - 1
-                if cur_len == 0: continue
-                ptr = res.data_c + offs[i]
-                if cur_len >= suf_len and strncmp(ptr + cur_len - suf_len, c_suf, suf_len) == 0:
-                    new_len = cur_len - suf_len
-                    ptr[new_len] = 0
-                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
-                    res.byte_length -= suf_len
-                    for oi in range(i + 1, res.length + 1):
-                        offs[oi] -= suf_len
+                cur_len = offs[i+1] - offs[i] - 1
+                if cur_len >= suf_len and strncmp(src + offs[i] + cur_len - suf_len, c_suf, suf_len) == 0:
+                    copy_len = cur_len - suf_len
+                else:
+                    copy_len = cur_len
+
+                if copy_len > 0:
+                    memcpy(dst + dst_offset, src + offs[i], copy_len)
+                dst[dst_offset + copy_len] = 0
+                dst_offset += copy_len + 1
+                res.offsets_c[i+1] = dst_offset
+
+        res.length = n
+        res.byte_length = dst_offset
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def zfill(self, Py_ssize_t width):
-        cdef AsciiColumn res = self.copy()
-        cdef Py_ssize_t i, j, curr_len, pad, n = self.length
-        cdef char* ptr
-        cdef Py_ssize_t* offs = res.offsets_c
-        cdef Py_ssize_t tail_len, oi
+        cdef Py_ssize_t n = self.length
+        cdef AsciiColumn res = AsciiColumn(max(n, 1))
+
+        cdef Py_ssize_t req_bytes = 0
+        cdef Py_ssize_t i, curr_len
+        cdef Py_ssize_t* offs = self.offsets_c
+        for i in range(n):
+            curr_len = offs[i+1] - offs[i] - 1
+            req_bytes += max(curr_len, width) + 1
+
+        res._reserve_bytes(req_bytes)
+
+        cdef char* src = self.data_c
+        cdef char* dst = res.data_c
+        cdef Py_ssize_t dst_offset = 0
+        cdef Py_ssize_t pad
+
         with nogil:
             for i in range(n):
-                curr_len = offs[i + 1] - offs[i] - 1
+                curr_len = offs[i+1] - offs[i] - 1
                 if curr_len >= width:
-                    continue
-                pad = width - curr_len
-                ptr = res.data_c + offs[i]
-                tail_len = res.byte_length - offs[i] - curr_len
-                if tail_len > 0:
-                    memmove(ptr + curr_len + pad, ptr + curr_len, tail_len)
-                memmove(ptr + pad, ptr, curr_len)
-                for j in range(pad):
-                    ptr[j] = b'0'
-                res.byte_length += pad
-                for oi in range(i + 1, res.length + 1):
-                    offs[oi] += pad
+                    memcpy(dst + dst_offset, src + offs[i], curr_len + 1)
+                    dst_offset += curr_len + 1
+                else:
+                    pad = width - curr_len
+                    memset(dst + dst_offset, b'0', pad)
+                    memcpy(dst + dst_offset + pad, src + offs[i], curr_len + 1)
+                    dst_offset += pad + curr_len + 1
+                res.offsets_c[i+1] = dst_offset
+
+        res.length = n
+        res.byte_length = dst_offset
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def find(self, str substring):
+        cdef bytes b_sub = substring.encode('ascii')
+        cdef const char* c_sub = b_sub
+        cdef size_t sub_len = len(b_sub)
+        cdef IntColumn res = IntColumn(max(self.length, 1))
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_ssize_t i, n = self.length
+        with nogil:
+            for i in range(n):
+                out_ptr[i] = <int>_c_find(data + offs[i], c_sub, sub_len)
         return res
 
     @cython.binding(False)
@@ -943,6 +1013,23 @@ cdef class AsciiColumn(BaseColumn):
         for i in range(n):
             if out_ptr[i] == -1:
                 raise ValueError(f"substring '{substring}' not found")
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def count(self, str substring):
+        cdef bytes b_sub = substring.encode('ascii')
+        cdef const char* c_sub = b_sub
+        cdef size_t sub_len = len(b_sub)
+        cdef IntColumn res = IntColumn(max(self.length, 1))
+        res.length = self.length
+        cdef int* out_ptr = res.data_c
+        cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef Py_ssize_t i, n = self.length
+        with nogil:
+            for i in range(n):
+                out_ptr[i] = <int>_c_count(data + offs[i], c_sub, sub_len)
         return res
 
     @cython.binding(False)
@@ -1454,11 +1541,17 @@ cdef class AsciiColumn(BaseColumn):
             new_col.length = n
             return new_col
 
+    # ------------------------------------------------------------
+    # Bound Checked Memory Shifting
+    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
         if row_idx < 0:
             row_idx += self.length
+        if row_idx < 0 or row_idx >= self.length:
+            raise IndexError("Row index out of bounds")
+
         cdef Py_ssize_t start_offset = self.offsets_c[row_idx]
         cdef Py_ssize_t end_offset = self.offsets_c[row_idx + 1]
         cdef Py_ssize_t char_len = end_offset - start_offset
@@ -1476,6 +1569,11 @@ cdef class AsciiColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_left(self, Py_ssize_t pos):
+        if pos < 0:
+            pos += self.length
+        if pos < 0 or pos >= self.length:
+            raise IndexError("Index out of bounds")
+
         cdef Py_ssize_t col_len = self.length
         cdef Py_ssize_t start_offset = self.offsets_c[pos]
         cdef Py_ssize_t end_offset = self.offsets_c[pos + 1]
@@ -1573,25 +1671,42 @@ cdef class AsciiColumn(BaseColumn):
                 res.append(s.split(sep))
         return res
 
+    # ------------------------------------------------------------
+    # Extreme O(1) Overhead indexing bypassing Python string allocation
+    # ------------------------------------------------------------
     def str_getitem(self, key):
-        cdef AsciiColumn col = AsciiColumn(max(self.length, 1))
-        cdef Py_ssize_t i, n = self.length, idx, s_len, idx_abs
-        cdef str s
+        cdef Py_ssize_t n = self.length
+        cdef AsciiColumn col = AsciiColumn(max(n, 1))
+        cdef Py_ssize_t i, idx, s_len, idx_abs
+        cdef Py_ssize_t* offs = self.offsets_c
+        cdef char* src = self.data_c
+        cdef char* dst
+
         if isinstance(key, int):
             idx = <Py_ssize_t>key
-            for i in range(n):
-                s = self._get_str(i)
-                s_len = len(s)
-                idx_abs = s_len + idx if idx < 0 else idx
-                if 0 <= idx_abs < s_len:
-                    col.append(s[idx_abs])
-                else:
-                    col.append('')
+            col._reserve_bytes(n * 2)
+            dst = col.data_c
+            cdef Py_ssize_t dst_offset = 0
+            with nogil:
+                for i in range(n):
+                    s_len = offs[i+1] - offs[i] - 1
+                    idx_abs = s_len + idx if idx < 0 else idx
+                    if 0 <= idx_abs < s_len:
+                        dst[dst_offset] = src[offs[i] + idx_abs]
+                        dst[dst_offset + 1] = 0
+                        dst_offset += 2
+                    else:
+                        dst[dst_offset] = 0
+                        dst_offset += 1
+                    col.offsets_c[i+1] = dst_offset
+            col.length = n
+            col.byte_length = dst_offset
             return col
+
         elif isinstance(key, slice):
+            # Fallback to python indexing for complex slices
             for i in range(n):
-                s = self._get_str(i)
-                col.append(s[key])
+                col.append(self._get_str(i)[key])
             return col
         raise TypeError(f"Invalid index type: {type(key)}")
 
