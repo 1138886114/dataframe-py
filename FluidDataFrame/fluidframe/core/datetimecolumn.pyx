@@ -464,9 +464,10 @@ cdef class DateTimeColumn(BaseColumn):
         os_aligned_free(v_arr)
         return res
 
-    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+    cpdef void drop_row(self, Py_ssize_t row_idx):
         if row_idx < 0:
             row_idx += self.length
+        cdef Py_ssize_t rem_len = self.length - row_idx - 1
         if rem_len > 0:
             memmove(<int64_t*>self.data_c + row_idx,
                     <int64_t*>self.data_c + row_idx + 1,

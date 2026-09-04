@@ -356,25 +356,25 @@ cdef class FastDataFrame:
             return (<DoubleColumn>col).diff(periods)
         raise TypeError(f"diff not supported for column type {self._type_name(col)}")
 
-    cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx, Py_ssize_t rem_len):
+    cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx):
         if col.dtype == TYPE_INT:
             (<IntColumn>col).drop_row(row_idx)
         elif col.dtype == TYPE_DOUBLE:
-            (<DoubleColumn>col).drop_row(row_idx, rem_len)
+            (<DoubleColumn>col).drop_row(row_idx)
         elif col.dtype == TYPE_CHAR256:
-            (<Char256Column_SoA>col).drop_row(row_idx, rem_len)
+            (<Char256Column_SoA>col).drop_row(row_idx)
         elif col.dtype == TYPE_UCS2:
-            (<UCS2Column_SoA>col).drop_row(row_idx, rem_len)
+            (<UCS2Column_SoA>col).drop_row(row_idx)
         elif col.dtype == TYPE_DATE:
-            (<DateColumn>col).drop_row(row_idx, rem_len)
+            (<DateColumn>col).drop_row(row_idx)
         elif col.dtype == TYPE_BOOL:
-            (<BoolColumn>col).drop_row(row_idx, rem_len)
+            (<BoolColumn>col).drop_row(row_idx)
         elif col.dtype == TYPE_CATEGORY:
-            (<CategoryColumn>col).drop_row(row_idx, rem_len)
+            (<CategoryColumn>col).drop_row(row_idx)
         elif col.dtype == TYPE_DATETIME:
-            (<DateTimeColumn>col).drop_row(row_idx, rem_len)
+            (<DateTimeColumn>col).drop_row(row_idx)
         elif col.dtype == TYPE_TIME:
-            (<TimeColumn>col).drop_row(row_idx, rem_len)
+            (<TimeColumn>col).drop_row(row_idx)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -805,16 +805,18 @@ cdef class FastDataFrame:
     def concat(self, FastDataFrame other):
         if set(self.columns.keys()) != set(other.columns.keys()):
             raise ValueError("Schema mismatch during concat")
-
-        for col_name, col_obj in self.columns.items():
+        cdef FastDataFrame result = self.copy()
+        for col_name, col_obj in result.columns.items():
             col_obj.concat(other.columns[col_name])
-        self.df_length += other.df_length
+        result.df_length = self.df_length + other.df_length
+        return result
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop(self, str col_name):
-        if col_name in self.columns:
-            del self.columns[col_name]
+        if col_name not in self.columns:
+            raise KeyError(f"Column '{col_name}' not found")
+        del self.columns[col_name]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1031,13 +1033,12 @@ cdef class FastDataFrame:
 
         cdef str name
         cdef BaseColumn col
-        cdef Py_ssize_t rem_len = self.df_length - row_idx - 1
         cdef Py_ssize_t rem_len_idx, ii
         cdef IntColumn tmp_col, idx_col
         cdef RangeIndex ri
 
         for name, col in self.columns.items():
-            self._drop_row_column(col, row_idx, rem_len)
+            self._drop_row_column(col, row_idx)
 
         self.df_length -= 1
         if self.index is not None and self.index.length > 0:
@@ -1061,10 +1062,11 @@ cdef class FastDataFrame:
                     return
             elif self.index.index_type == INDEX_INT:
                 idx_col = (<IntIndex>self.index).data
-                if rem_len > 0:
+                rem_len_idx = self.index.length - row_idx - 1
+                if rem_len_idx > 0:
                     memmove(idx_col.data_c + row_idx,
                             idx_col.data_c + row_idx + 1,
-                            rem_len * sizeof(int))
+                            rem_len_idx * sizeof(int))
                 idx_col.length -= 1
             self.index.length -= 1
 
@@ -1442,6 +1444,8 @@ cdef class FastDataFrame:
         cdef IntColumn new_col
         cdef Py_ssize_t i, n = self.df_length
         cdef double* d_data
+        cdef char* c_data
+        cdef Py_ssize_t start, end, str_len
 
         for name, col in self.columns.items():
             new_col = IntColumn(max(n, 1))
@@ -1451,6 +1455,16 @@ cdef class FastDataFrame:
                 with nogil:
                     for i in range(n):
                         new_col.data_c[i] = isnan(d_data[i])
+            elif col.dtype == TYPE_CHAR256:
+                c_data = (<Char256Column_SoA>col).data_c
+                for i in range(n):
+                    str_len = (<Char256Column_SoA>col).offsets_c[i + 1] - (<Char256Column_SoA>col).offsets_c[i]
+                    new_col.data_c[i] = 1 if str_len == 0 else 0
+            elif col.dtype == TYPE_UCS2:
+                for i in range(n):
+                    start = (<UCS2Column_SoA>col).offsets_c[i]
+                    end = (<UCS2Column_SoA>col).offsets_c[i + 1]
+                    new_col.data_c[i] = 1 if end == start else 0
             else:
                 memset(new_col.data_c, 0, n * sizeof(int))
             result.columns[name] = new_col
@@ -1489,6 +1503,7 @@ cdef class FastDataFrame:
         cdef str name
         cdef BaseColumn col
         cdef Py_ssize_t* keep_idx = NULL
+        cdef Py_ssize_t start, end, str_len
 
         try:
             for name, col in self.columns.items():
@@ -1497,6 +1512,19 @@ cdef class FastDataFrame:
                     with nogil:
                         for i in range(n):
                             if keep_mask[i] and isnan(d_data[i]):
+                                keep_mask[i] = 0
+                elif col.dtype == TYPE_CHAR256:
+                    for i in range(n):
+                        if keep_mask[i]:
+                            str_len = (<Char256Column_SoA>col).offsets_c[i + 1] - (<Char256Column_SoA>col).offsets_c[i]
+                            if str_len == 0:
+                                keep_mask[i] = 0
+                elif col.dtype == TYPE_UCS2:
+                    for i in range(n):
+                        if keep_mask[i]:
+                            start = (<UCS2Column_SoA>col).offsets_c[i]
+                            end = (<UCS2Column_SoA>col).offsets_c[i + 1]
+                            if start == end:
                                 keep_mask[i] = 0
 
             for i in range(n):

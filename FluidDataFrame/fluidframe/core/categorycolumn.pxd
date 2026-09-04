@@ -14,4 +14,4 @@ cdef class CategoryColumn(BaseColumn):
     cdef int _get_or_add_code(self, str val)
     cdef str _resolve(self, Py_ssize_t i)
     cdef CategoryColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
-    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len)
+    cpdef void drop_row(self, Py_ssize_t row_idx)

@@ -30,7 +30,7 @@ cdef class FastDataFrame:
     cdef BaseColumn _reorder_column(self, BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace)
     cdef str _type_name(self, BaseColumn col)
     cdef BaseColumn _diff_column(self, BaseColumn col, int periods)
-    cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx, Py_ssize_t rem_len)
+    cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx)
     cdef FastDataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n)
     cdef BaseColumn _column_from_list(self, str name, list values)
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos)

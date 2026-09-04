@@ -307,9 +307,10 @@ cdef class CategoryColumn(BaseColumn):
             self.length = n
             return self
 
-    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+    cpdef void drop_row(self, Py_ssize_t row_idx):
         if row_idx < 0:
             row_idx += self.length
+        cdef Py_ssize_t rem_len = self.length - row_idx - 1
         if rem_len > 0:
             memmove(self.codes_c + row_idx,
                     self.codes_c + row_idx + 1,

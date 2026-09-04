@@ -1246,7 +1246,7 @@ cdef class UCS2Column_SoA(BaseColumn):
             new_col.length = n
             return new_col
 
-    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+    cpdef void drop_row(self, Py_ssize_t row_idx):
         cdef Py_ssize_t start_offset = self.offsets_c[row_idx]
         cdef Py_ssize_t end_offset = self.offsets_c[row_idx + 1]
         cdef Py_ssize_t char_len = end_offset - start_offset

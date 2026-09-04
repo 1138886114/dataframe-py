@@ -844,7 +844,7 @@ def test_mask():
 
 def test_drop_row():
     col = _make_1d([1.0, 2.0, 3.0, 4.0])
-    col.drop_row(1, 2)
+    col.drop_row(1)
     check('drop_row len', col.length == 3)
     check('drop_row [0]', col[0] == 1.0)
     check('drop_row [1]', col[1] == 3.0)
@@ -1198,7 +1198,7 @@ def test_2d_describe():
 # ============================================================
 def test_2d_drop_row():
     col = _make_2d(4, [[1, 2, 3, 4], [10, 20, 30, 40]])
-    col.drop_row(1, 2)
+    col.drop_row(1)
     check('2d drop_row len', col.length == 7)  # 8-1=7
     # flat 原: [1,2,3,4,10,20,30,40], drop index 1 -> [1,3,4,10,20,30,40]
     check('2d drop_row [0]', col[0] == 1.0)

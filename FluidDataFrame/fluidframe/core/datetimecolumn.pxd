@@ -14,5 +14,5 @@ cdef class DateTimeColumn(BaseColumn):
     cdef int64_t* data_c
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef DateTimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
-    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len)
+    cpdef void drop_row(self, Py_ssize_t row_idx)
     cdef inline int64_t _resolve_dt(self, val) except *

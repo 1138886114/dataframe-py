@@ -76,6 +76,23 @@ cdef class IntIndex(IndexBase):
         self.length = self.data.length
         return val
 
+    cdef IndexBase _concat(self, IndexBase other):
+        if not isinstance(other, IntIndex):
+            raise TypeError("Cannot concat IntIndex with non-IntIndex")
+        cdef IntIndex o = <IntIndex>other
+        cdef IntColumn new_col = IntColumn(self.length + o.length)
+        new_col.length = self.length + o.length
+        cdef Py_ssize_t i
+        cdef int* src1 = self.data.data_c
+        cdef int* src2 = o.data.data_c
+        cdef int* dst = new_col.data_c
+        with nogil:
+            for i in range(self.length):
+                dst[i] = src1[i]
+            for i in range(o.length):
+                dst[self.length + i] = src2[i]
+        return IntIndex(new_col)
+
 
 cdef class RangeIndex(IndexBase):
     def __cinit__(self, Py_ssize_t start, Py_ssize_t length, Py_ssize_t step=1):
@@ -113,6 +130,27 @@ cdef class RangeIndex(IndexBase):
         for i in range(self.length):
             result.append(self.start + i * self.step)
         return result
+
+    cdef IndexBase _concat(self, IndexBase other):
+        cdef RangeIndex o
+        cdef IntColumn new_col
+        cdef list v1, v2
+        cdef Py_ssize_t i
+        cdef int* dst
+        if isinstance(other, RangeIndex):
+            o = <RangeIndex>other
+            if self.step == o.step and self.start + self.length * self.step == o.start:
+                return RangeIndex(self.start, self.length + o.length, self.step)
+        new_col = IntColumn(self.length + other.length)
+        new_col.length = self.length + other.length
+        v1 = self.values()
+        v2 = other.values()
+        dst = new_col.data_c
+        for i in range(self.length):
+            dst[i] = <int>v1[i]
+        for i in range(other.length):
+            dst[self.length + i] = <int>v2[i]
+        return IntIndex(new_col)
 
 cdef class MultiIndex(IndexBase):
     def __cinit__(self, list levels, list codes, list names=None):
@@ -196,3 +234,34 @@ cdef class MultiIndex(IndexBase):
                 row.append(self.levels[j][col.data_c[i]])
             result.append(tuple(row))
         return result
+
+    cdef IndexBase _concat(self, IndexBase other):
+        cdef MultiIndex o
+        cdef Py_ssize_t total, i, j
+        cdef list new_codes
+        cdef IntColumn col, new_col, o_col
+        cdef int* src1
+        cdef int* src2
+        cdef int* dst
+        if not isinstance(other, MultiIndex):
+            raise TypeError("Cannot concat MultiIndex with non-MultiIndex")
+        o = <MultiIndex>other
+        if self.nlevels != o.nlevels:
+            raise ValueError("MultiIndex nlevels mismatch")
+        total = self.length + o.length
+        new_codes = []
+        for j in range(self.nlevels):
+            col = <IntColumn>self.codes[j]
+            o_col = <IntColumn>o.codes[j]
+            new_col = IntColumn(total)
+            new_col.length = total
+            src1 = col.data_c
+            src2 = o_col.data_c
+            dst = new_col.data_c
+            with nogil:
+                for i in range(self.length):
+                    dst[i] = src1[i]
+                for i in range(o.length):
+                    dst[self.length + i] = src2[i]
+            new_codes.append(new_col)
+        return MultiIndex(self.levels, new_codes, self.names)

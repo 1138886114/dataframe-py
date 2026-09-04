@@ -23,6 +23,7 @@ cdef class FastDataFrameGroupBy:
     cdef int _num_by_cols
 
     cdef void _build_groups(self)
+    cdef bint _rows_equal(self, Py_ssize_t row1, Py_ssize_t row2) noexcept nogil
     cdef void _extract_col_ptrs(self)
     cdef uint64_t _hash_row(self, Py_ssize_t row_idx) nogil
     cdef DoubleColumn _native_agg(self, str col_name, str func)

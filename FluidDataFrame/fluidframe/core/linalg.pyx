@@ -360,9 +360,86 @@ def inv(FastDataFrame df):
 
 
 def solve(FastDataFrame A, FastDataFrame b):
-    if A.df_length != b.df_length:
-        raise ValueError("Shape mismatch")
-    return dot(inv(A), b)
+    """Solve Ax=b via LU decomposition with partial pivoting."""
+    cdef Py_ssize_t n = A.df_length
+    cdef Py_ssize_t rows, cols, i, j, k, pivot_row
+    cdef double* a_data = NULL
+    cdef double* b_data = NULL
+    cdef double* lu = NULL
+    cdef double* x = NULL
+    cdef double pivot, temp, max_val, abs_val, sum_val
+    cdef int sign = 1
+    cdef list b_cols
+
+    if len(list(A.columns.keys())) != n:
+        raise ValueError("Matrix A must be square")
+    if n != b.df_length:
+        raise ValueError("Shape mismatch: A and b must have same number of rows")
+    b_cols = list(b.columns.keys())
+    if len(b_cols) != 1:
+        raise ValueError("b must have exactly one column")
+
+    try:
+        a_data = _to_contiguous(A, &rows, &cols)
+        b_data = _to_contiguous(b, &rows, &cols)
+        lu = <double*>aligned_malloc(max(n * n, 1) * sizeof(double))
+        x = <double*>aligned_malloc(max(n, 1) * sizeof(double))
+        if not lu or not x: raise MemoryError()
+
+        memcpy(lu, a_data, n * n * sizeof(double))
+
+        with nogil:
+            for i in range(n):
+                x[i] = b_data[i]
+
+            for i in range(n):
+                pivot_row = i
+                max_val = fabs(lu[i * n + i])
+                for k in range(i + 1, n):
+                    abs_val = fabs(lu[k * n + i])
+                    if abs_val > max_val:
+                        max_val = abs_val
+                        pivot_row = k
+
+                if max_val < 1e-15:
+                    raise ValueError("Matrix is singular")
+
+                if pivot_row != i:
+                    for j in range(i, n):
+                        temp = lu[i * n + j]
+                        lu[i * n + j] = lu[pivot_row * n + j]
+                        lu[pivot_row * n + j] = temp
+                    temp = x[i]
+                    x[i] = x[pivot_row]
+                    x[pivot_row] = temp
+
+                pivot = lu[i * n + i]
+                for k in range(i + 1, n):
+                    temp = lu[k * n + i] / pivot
+                    for j in range(i + 1, n):
+                        lu[k * n + j] -= temp * lu[i * n + j]
+                    x[k] -= temp * x[i]
+
+            for i in range(n - 1, -1, -1):
+                sum_val = x[i]
+                for j in range(i + 1, n):
+                    sum_val -= lu[i * n + j] * x[j]
+                x[i] = sum_val / lu[i * n + i]
+
+        result = FastDataFrame()
+        result.df_length = n
+        col = DoubleColumn(max(n, 1))
+        col.length = n
+        for i in range(n):
+            col.data_c[i] = x[i]
+        b_col_name = list(b.columns.keys())[0]
+        result.columns[b_col_name] = col
+        return result
+    finally:
+        if a_data != NULL: os_aligned_free(a_data)
+        if b_data != NULL: os_aligned_free(b_data)
+        if lu != NULL: os_aligned_free(lu)
+        if x != NULL: os_aligned_free(x)
 
 
 def matmul(FastDataFrame a, FastDataFrame b):

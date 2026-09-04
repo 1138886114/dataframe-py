@@ -161,25 +161,84 @@ cdef class FastDataFrameGroupBy:
 
         return h
 
+    cdef bint _rows_equal(self, Py_ssize_t row1, Py_ssize_t row2) noexcept nogil:
+        cdef int col_idx
+        cdef int* i_data
+        cdef double* d_data
+        cdef long long* t_data
+        cdef char* c_data
+        cdef unsigned char* b_data
+        cdef Py_ssize_t start1, end1, start2, end2, k
+
+        for col_idx in range(self._num_by_cols):
+            if self._by_col_types[col_idx] == TYPE_INT:
+                i_data = <int*>self._by_col_data[col_idx]
+                if i_data[row1] != i_data[row2]:
+                    return False
+            elif self._by_col_types[col_idx] == TYPE_DOUBLE:
+                d_data = <double*>self._by_col_data[col_idx]
+                if d_data[row1] != d_data[row2]:
+                    return False
+            elif self._by_col_types[col_idx] == TYPE_DATE:
+                t_data = <long long*>self._by_col_data[col_idx]
+                if t_data[row1] != t_data[row2]:
+                    return False
+            elif self._by_col_types[col_idx] == TYPE_CHAR256:
+                c_data = <char*>self._by_col_data[col_idx]
+                for k in range(256):
+                    if c_data[row1 * 256 + k] != c_data[row2 * 256 + k]:
+                        return False
+            elif self._by_col_types[col_idx] == TYPE_UCS2:
+                start1 = (<Py_ssize_t*>self._by_col_offsets[col_idx])[row1]
+                end1 = (<Py_ssize_t*>self._by_col_offsets[col_idx])[row1 + 1]
+                start2 = (<Py_ssize_t*>self._by_col_offsets[col_idx])[row2]
+                end2 = (<Py_ssize_t*>self._by_col_offsets[col_idx])[row2 + 1]
+                if (end1 - start1) != (end2 - start2):
+                    return False
+                i_data = <int*>self._by_col_data[col_idx]
+                for k in range(end1 - start1):
+                    if (<Py_UCS2*>i_data)[start1 + k] != (<Py_UCS2*>i_data)[start2 + k]:
+                        return False
+            elif self._by_col_types[col_idx] == TYPE_BOOL:
+                b_data = <unsigned char*>self._by_col_data[col_idx]
+                if b_data[row1] != b_data[row2]:
+                    return False
+            elif self._by_col_types[col_idx] == TYPE_CATEGORY:
+                i_data = <int*>self._by_col_data[col_idx]
+                if i_data[row1] != i_data[row2]:
+                    return False
+            elif self._by_col_types[col_idx] == TYPE_DATETIME:
+                t_data = <long long*>self._by_col_data[col_idx]
+                if t_data[row1] != t_data[row2]:
+                    return False
+            elif self._by_col_types[col_idx] == TYPE_TIME:
+                i_data = <int*>self._by_col_data[col_idx]
+                if i_data[row1] != i_data[row2]:
+                    return False
+        return True
+
     cdef void _build_groups(self):
         cdef Py_ssize_t i
         cdef uint64_t h
         cdef int g_id
         cdef Py_ssize_t n = self.df.df_length
+        cdef vector[uint64_t] group_hashes
 
         for i in range(n):
             h = self._hash_row(i)
 
-            if self.hash_to_group_id.find(h) == self.hash_to_group_id.end():
-                g_id = self.num_groups
-                self.hash_to_group_id[0][h] = g_id
-                self.first_seen_rows.push_back(i)
-                self.group_rows.push_back(vector[Py_ssize_t]())
-                self.num_groups += 1
-            else:
+            if self.hash_to_group_id.find(h) != self.hash_to_group_id.end():
                 g_id = self.hash_to_group_id[0][h]
+                if self._rows_equal(i, self.first_seen_rows[0][g_id]):
+                    self.group_rows[0][g_id].push_back(i)
+                    continue
 
+            g_id = self.num_groups
+            self.hash_to_group_id[0][h] = g_id
+            self.first_seen_rows.push_back(i)
+            self.group_rows.push_back(vector[Py_ssize_t]())
             self.group_rows[0][g_id].push_back(i)
+            self.num_groups += 1
 
     cdef DoubleColumn _native_agg(self, str col_name, str func):
         """Generic native aggregation dispatcher for numeric columns."""
@@ -438,7 +497,7 @@ cdef class FastDataFrameGroupBy:
 
         cdef FastDataFrame result = sub_dfs[0]
         for i in range(1, len(sub_dfs)):
-            result.concat(sub_dfs[i])
+            result = result.concat(sub_dfs[i])
         return result
 
     @cython.binding(False)

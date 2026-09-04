@@ -321,16 +321,16 @@ def test_solve():
     A = FastDataFrame.from_dict({'0': [1, 3], '1': [2, 4]}, schema={'0': int, '1': int})
     b = FastDataFrame.from_dict({'0': [5, 11]}, schema={'0': int})
     x = linalg.solve(A, b)
-    check('x[0]', near(x['A'][0], 1.0))
-    check('x[1]', near(x['A'][1], 2.0))
+    check('x[0]', near(x['0'][0], 1.0))
+    check('x[1]', near(x['0'][1], 2.0))
 
 def test_solve_diagonal():
     print('--- test_solve_diagonal ---')
     A = FastDataFrame.from_dict({'0': [2, 0], '1': [0, 3]}, schema={'0': int, '1': int})
     b = FastDataFrame.from_dict({'0': [4, 9]}, schema={'0': int})
     x = linalg.solve(A, b)
-    check('x[0]', near(x['A'][0], 2.0))
-    check('x[1]', near(x['A'][1], 3.0))
+    check('x[0]', near(x['0'][0], 2.0))
+    check('x[1]', near(x['0'][1], 3.0))
 
 # ============================================================
 #  linalg: matmul

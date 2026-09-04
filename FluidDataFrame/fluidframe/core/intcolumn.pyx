@@ -1371,7 +1371,6 @@ cdef class IntColumn(BaseColumn):
             row_idx += self.length
         if row_idx < 0 or row_idx >= self.length:
             raise IndexError("Row index out of bounds")
-
         cdef Py_ssize_t rem_len = self.length - row_idx - 1
         if rem_len > 0:
             memmove(self.data_c + row_idx,
