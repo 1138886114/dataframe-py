@@ -372,59 +372,18 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def strftime(self, str fmt):
-        cdef bytes b_fmt = fmt.encode('ascii', errors='ignore')
-        cdef const char* c_fmt = b_fmt
-        cdef Py_ssize_t fmt_len = len(b_fmt)
-
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
-        res.length = self.length
-
         cdef Py_ssize_t i, n = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int y, m, d
-        cdef char* dest
-        cdef int f_idx, d_idx
-        cdef char ch
+        cdef list parts = []
 
-        with nogil:
-            for i in range(n):
-                _days_to_ymd(ptr[i], &y, &m, &d)
-                dest = res.data_c + (i * 256)
-                f_idx = 0
-                d_idx = 0
+        for i in range(n):
+            _days_to_ymd(ptr[i], &y, &m, &d)
+            parts.append(fmt.replace('%Y', str(y)).replace('%m', f'{m:02d}').replace('%d', f'{d:02d}'))
 
-                while f_idx < fmt_len and d_idx < 255:
-                    ch = c_fmt[f_idx]
-                    if ch == b'%' and f_idx + 1 < fmt_len:
-                        f_idx += 1
-                        ch = c_fmt[f_idx]
-                        if ch == b'Y':
-                            if d_idx + 4 <= 255:
-                                dest[d_idx]   = <char>(48 + ((y / 1000) % 10))
-                                dest[d_idx+1] = <char>(48 + ((y / 100) % 10))
-                                dest[d_idx+2] = <char>(48 + ((y / 10) % 10))
-                                dest[d_idx+3] = <char>(48 + (y % 10))
-                                d_idx += 4
-                        elif ch == b'm':
-                            if d_idx + 2 <= 255:
-                                dest[d_idx]   = <char>(48 + (m / 10))
-                                dest[d_idx+1] = <char>(48 + (m % 10))
-                                d_idx += 2
-                        elif ch == b'd':
-                            if d_idx + 2 <= 255:
-                                dest[d_idx]   = <char>(48 + (d / 10))
-                                dest[d_idx+1] = <char>(48 + (d % 10))
-                                d_idx += 2
-                        else:
-                            if d_idx + 2 <= 255:
-                                dest[d_idx] = b'%'
-                                dest[d_idx+1] = ch
-                                d_idx += 2
-                    else:
-                        dest[d_idx] = ch
-                        d_idx += 1
-                    f_idx += 1
-                dest[d_idx] = 0
+        cdef Char256Column_SoA res = Char256Column_SoA(max(n, 1))
+        for s in parts:
+            res.append(s)
         return res
 
     # ------------------------------------------------------------
@@ -839,39 +798,32 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def day_name(self):
         cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
-        res.length = self.length
         cdef Py_ssize_t i, n = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int dow
-        cdef char* dest
 
-        with nogil:
-            for i in range(n):
-                dow = <int>(((ptr[i] + 3) % 7 + 7) % 7)
-                dest = res.data_c + (i * 256)
-                memcpy(dest, _DAY_NAMES[dow].name, _DAY_NAMES[dow].len)
-                dest[_DAY_NAMES[dow].len] = 0
+        DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        for i in range(n):
+            dow = <int>(((ptr[i] + 3) % 7 + 7) % 7)
+            res.append(DAY_NAMES[dow])
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def month_name(self):
         cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
-        res.length = self.length
         cdef Py_ssize_t i, n = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int y, m, d
-        cdef char* dest
 
-        with nogil:
-            for i in range(n):
-                _days_to_ymd(ptr[i], &y, &m, &d)
-                dest = res.data_c + (i * 256)
-                if m >= 1 and m <= 12:
-                    memcpy(dest, _MONTH_NAMES[m].name, _MONTH_NAMES[m].len)
-                    dest[_MONTH_NAMES[m].len] = 0
-                else:
-                    dest[0] = 0
+        MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                       'July', 'August', 'September', 'October', 'November', 'December']
+        for i in range(n):
+            _days_to_ymd(ptr[i], &y, &m, &d)
+            if 1 <= m <= 12:
+                res.append(MONTH_NAMES[m])
+            else:
+                res.append('')
         return res
 
     @cython.binding(False)

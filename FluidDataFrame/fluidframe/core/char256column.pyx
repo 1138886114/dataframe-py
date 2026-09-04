@@ -23,7 +23,6 @@ from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_CHAR256, TYPE_INT, TYPE_DOUBLE, TYPE_UCS2, TYPE_BOOL,
     TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target,
-    _c_shift_left
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -36,13 +35,14 @@ from fluidframe.core.timecolumn cimport TimeColumn
 from fluidframe.core.char256_str_accessor import StringAccessor_Char256
 
 # ============================================================
-#  底层纯 C 辅助函数 (无 GIL / 无分支 / 边界安全)
+#  C helper functions
 # ============================================================
 
 cdef inline bint _c_str_contains(const char* source, const char* target) noexcept nogil:
     return strstr(source, target) != NULL
 
-cdef inline void _c_str_replace_inplace(char* buffer, const char* old_sub, const char* new_sub, size_t old_len, size_t new_len) noexcept nogil:
+cdef inline void _c_str_replace_inplace(char* buffer, Py_ssize_t buf_cap,
+        const char* old_sub, const char* new_sub, size_t old_len, size_t new_len) noexcept nogil:
     if old_len == 0: return
     cdef char* match = strstr(buffer, old_sub)
     cdef size_t cur_len, rem
@@ -50,7 +50,7 @@ cdef inline void _c_str_replace_inplace(char* buffer, const char* old_sub, const
     while match != NULL:
         cur_len = strlen(buffer)
         rem = cur_len - (match - buffer) - old_len
-        if cur_len - old_len + new_len > 255:
+        if cur_len - old_len + new_len > <size_t>buf_cap:
             break
         if new_len != old_len:
             memmove(match + new_len, match + old_len, rem + 1)
@@ -100,7 +100,7 @@ cdef inline Py_ssize_t _c_count(const char *data, const char *pat, size_t pat_le
 
 
 # ============================================================
-#  Char256Column_SoA 类定义
+#  Char256Column_SoA class definition
 # ============================================================
 @cython.final
 @cython.boundscheck(False)
@@ -115,67 +115,117 @@ cdef class Char256Column_SoA(BaseColumn):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_CHAR256
-        self.data_c = <char*>aligned_malloc(self.capacity * 256)
-        if not self.data_c:
+
+        self.offsets_c = <Py_ssize_t*>aligned_malloc((self.capacity + 1) * sizeof(Py_ssize_t))
+        if not self.offsets_c:
             raise MemoryError()
-        memset(self.data_c, 0, self.capacity * 256)
+
+        self.byte_capacity = max(self.capacity * 64, 4096)
+        self.byte_length = 0
+        self.data_c = <char*>aligned_malloc(self.byte_capacity)
+        if not self.data_c:
+            os_aligned_free(self.offsets_c)
+            raise MemoryError()
+        self.offsets_c[0] = 0
 
     def __dealloc__(self):
+        if self.offsets_c != NULL:
+            os_aligned_free(self.offsets_c)
+            self.offsets_c = NULL
         if self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
 
     def get_size(self):
-        return self.capacity * 256
+        return (self.capacity + 1) * sizeof(Py_ssize_t) + self.byte_capacity
 
-    cdef void _reserve(self, Py_ssize_t new_cap):
+    cdef void _reserve_rows(self, Py_ssize_t new_cap) except *:
         if new_cap <= self.capacity:
             return
-        cdef char* new_data = <char*>aligned_realloc(self.data_c, self.capacity * 256, new_cap * 256)
-        if not new_data:
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_realloc(
+            self.offsets_c,
+            (self.capacity + 1) * sizeof(Py_ssize_t),
+            (new_cap + 1) * sizeof(Py_ssize_t))
+        if not new_offsets:
             raise MemoryError()
-        memset(new_data + (self.capacity * 256), 0, (new_cap - self.capacity) * 256)
-        self.data_c = new_data
+        self.offsets_c = new_offsets
         self.capacity = new_cap
 
+    cdef void _reserve_bytes(self, Py_ssize_t new_byte_cap) except *:
+        if new_byte_cap <= self.byte_capacity:
+            return
+        cdef char* new_data = <char*>aligned_realloc(
+            self.data_c, self.byte_capacity, new_byte_cap)
+        if not new_data:
+            raise MemoryError()
+        self.data_c = new_data
+        self.byte_capacity = new_byte_cap
+
     cdef inline str _get_str(self, Py_ssize_t idx):
-        cdef char* ptr = self.data_c + (idx * 256)
-        if ptr[0] == 0:
+        cdef Py_ssize_t start = self.offsets_c[idx]
+        cdef Py_ssize_t str_len = self.offsets_c[idx + 1] - start - 1
+        if str_len <= 0:
             return ""
-        return ptr.decode('ascii', errors='replace')
+        return self.data_c[start:start+str_len].decode('ascii', errors='replace')
 
     cdef void _set_item(self, Py_ssize_t idx, str val) except *:
-        """在固定 256 字节槽位上就地写入单字节字符串。"""
         cdef bytes b_val = val.encode('ascii', errors='ignore')
         cdef const char* src = b_val
-        cdef size_t slen = len(b_val)
-        if slen > 255: slen = 255
-        cdef char* dest = self.data_c + (idx * 256)
-        memcpy(dest, src, slen)
-        dest[slen] = 0
+        cdef Py_ssize_t new_len = len(b_val)
+        cdef Py_ssize_t old_start = self.offsets_c[idx]
+        cdef Py_ssize_t old_byte_span = self.offsets_c[idx + 1] - old_start
+        cdef Py_ssize_t new_byte_span = new_len + 1
+        cdef Py_ssize_t diff, oi
+        cdef Py_ssize_t tail_len
+
+        diff = new_byte_span - old_byte_span
+        if diff > 0:
+            if self.byte_length + diff > self.byte_capacity:
+                self._reserve_bytes(max(self.byte_capacity * 2, self.byte_length + diff + 4096))
+        tail_len = self.byte_length - old_start - old_byte_span
+        if tail_len > 0:
+            memmove(self.data_c + old_start + new_byte_span,
+                    self.data_c + old_start + old_byte_span,
+                    tail_len)
+
+        if new_len > 0:
+            memcpy(self.data_c + old_start, src, new_len)
+        self.data_c[old_start + new_len] = 0
+
+        self.byte_length += diff
+        for oi in range(idx + 1, self.length + 1):
+            self.offsets_c[oi] += diff
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, str val):
-        if self.length >= self.capacity:
-            self._reserve(max(16, self.capacity * 2))
         cdef bytes b_val = val.encode('ascii', errors='ignore') if val is not None else b''
-        cdef const char* src = b_val
-        cdef size_t slen = len(b_val)
-        if slen > 255: slen = 255
-        cdef char* dest = self.data_c + (self.length * 256)
-        memcpy(dest, src, slen)
-        dest[slen] = 0
+        cdef Py_ssize_t slen = len(b_val)
+        cdef Py_ssize_t need_bytes = slen + 1
+
+        if self.length >= self.capacity:
+            self._reserve_rows(max(16, self.capacity * 2))
+        if self.byte_length + need_bytes > self.byte_capacity:
+            self._reserve_bytes(max(self.byte_capacity * 2, self.byte_length + need_bytes + 4096))
+
+        if slen > 0:
+            memcpy(self.data_c + self.byte_length, <const char*>b_val, slen)
+        self.data_c[self.byte_length + slen] = 0
+        self.byte_length += need_bytes
         self.length += 1
+        self.offsets_c[self.length] = self.byte_length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
         cdef Py_ssize_t cap = max(self.length, 1)
         cdef Char256Column_SoA new_col = Char256Column_SoA(cap)
+        new_col._reserve_bytes(self.byte_capacity)
         new_col.length = self.length
-        if self.length > 0:
-            memcpy(new_col.data_c, self.data_c, self.length * 256)
+        new_col.byte_length = self.byte_length
+        memcpy(new_col.offsets_c, self.offsets_c, (self.length + 1) * sizeof(Py_ssize_t))
+        if self.byte_length > 0:
+            memcpy(new_col.data_c, self.data_c, self.byte_length)
         return new_col
 
     @cython.binding(False)
@@ -183,8 +233,10 @@ cdef class Char256Column_SoA(BaseColumn):
     def pop_back(self):
         if self.length == 0:
             raise IndexError("pop from empty column")
+        cdef str val = self._get_str(self.length - 1)
+        self.byte_length = self.offsets_c[self.length - 1]
         self.length -= 1
-        return self._get_str(self.length)
+        return val
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -192,8 +244,14 @@ cdef class Char256Column_SoA(BaseColumn):
         if self.length == 0:
             raise IndexError("pop from empty column")
         cdef str val = self._get_str(0)
-        if self.length > 1:
-            memmove(self.data_c, self.data_c + 256, (self.length - 1) * 256)
+        cdef Py_ssize_t str_len = self.offsets_c[1] - self.offsets_c[0]
+        cdef Py_ssize_t rem_bytes = self.byte_length - self.offsets_c[1]
+        if rem_bytes > 0:
+            memmove(self.data_c, self.data_c + self.offsets_c[1], rem_bytes)
+        self.byte_length -= str_len
+        cdef Py_ssize_t i
+        for i in range(self.length):
+            self.offsets_c[i] = self.offsets_c[i + 1] - str_len
         self.length -= 1
         return val
 
@@ -203,9 +261,22 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Py_ssize_t other_len = other.length
         if other_len == 0: return
         cdef Py_ssize_t new_len = self.length + other_len
-        self._reserve(new_len)
-        memcpy(self.data_c + (self.length * 256), other.data_c, other_len * 256)
+        self._reserve_rows(new_len)
+        self._reserve_bytes(self.byte_length + other.byte_length)
+
+        cdef Py_ssize_t base_offset = self.byte_length
+        cdef Py_ssize_t i
+        cdef Py_ssize_t* self_offs = self.offsets_c
+        cdef Py_ssize_t* other_offs = other.offsets_c
+
+        if other.byte_length > 0:
+            memcpy(self.data_c + self.byte_length, other.data_c, other.byte_length)
+
+        for i in range(other_len):
+            self_offs[self.length + 1 + i] = base_offset + other_offs[i + 1]
+
         self.length = new_len
+        self.byte_length += other.byte_length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -215,24 +286,49 @@ cdef class Char256Column_SoA(BaseColumn):
             raise ValueError("Length of indices must match column length")
         if n == 0: return
 
-        cdef char* new_data = <char*>aligned_malloc(n * 256)
-        if not new_data:
-            raise MemoryError()
-        cdef char* self_data = self.data_c
+        cdef Py_ssize_t req_bytes = 0
         cdef Py_ssize_t i, idx
+        for i in range(n):
+            idx = <Py_ssize_t>indices[i]
+            if idx < 0: idx += self.length
+            if idx < 0 or idx >= self.length:
+                raise IndexError("Index out of bounds")
+            req_bytes += self.offsets_c[idx + 1] - self.offsets_c[idx]
+
+        cdef Py_ssize_t req_byte_cap = max(req_bytes, 4096)
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
+        if not new_offsets: raise MemoryError()
+        cdef char* new_data = <char*>aligned_malloc(req_byte_cap)
+        if not new_data:
+            os_aligned_free(new_offsets)
+            raise MemoryError()
+
+        new_offsets[0] = 0
+        cdef Py_ssize_t current_byte_len = 0
+        cdef Py_ssize_t start, end, str_len
+
         try:
             for i in range(n):
                 idx = <Py_ssize_t>indices[i]
                 if idx < 0: idx += self.length
-                if idx < 0 or idx >= self.length:
-                    raise IndexError("Index out of bounds")
-                memcpy(new_data + (i * 256), self_data + (idx * 256), 256)
+                start = self.offsets_c[idx]
+                end = self.offsets_c[idx + 1]
+                str_len = end - start
+                if str_len > 0:
+                    memcpy(new_data + current_byte_len, self.data_c + start, str_len)
+                current_byte_len += str_len
+                new_offsets[i + 1] = current_byte_len
         except Exception:
+            os_aligned_free(new_offsets)
             os_aligned_free(new_data)
             raise
 
+        os_aligned_free(self.offsets_c)
         os_aligned_free(self.data_c)
+        self.offsets_c = new_offsets
         self.data_c = new_data
+        self.byte_length = current_byte_len
+        self.byte_capacity = req_byte_cap
         self.capacity = n
 
     @cython.binding(False)
@@ -253,12 +349,13 @@ cdef class Char256Column_SoA(BaseColumn):
         if not out_idx: raise MemoryError()
 
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef int count = 0
         cdef Py_ssize_t i
 
         with nogil:
             for i in range(n):
-                if _c_str_contains(data + (i * 256), c_sub):
+                if _c_str_contains(data + offs[i], c_sub):
                     out_idx[count] = <int>i
                     count += 1
         cdef list res = [out_idx[j] for j in range(count)]
@@ -268,18 +365,11 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def replace(self, str old_str, str new_str):
-        cdef bytes b_old = old_str.encode('ascii')
-        cdef bytes b_new = new_str.encode('ascii')
-        cdef const char* c_old = b_old
-        cdef const char* c_new = b_new
-        cdef size_t old_len = len(b_old)
-        cdef size_t new_len = len(b_new)
-        cdef char* data = self.data_c
-        cdef Py_ssize_t i, n = self.length
-
-        with nogil:
-            for i in range(n):
-                _c_str_replace_inplace(data + (i * 256), c_old, c_new, old_len, new_len)
+        cdef Py_ssize_t i
+        cdef str s
+        for i in range(self.length):
+            s = self._get_str(i).replace(old_str, new_str)
+            self._set_item(i, s)
         return self
 
     @cython.binding(False)
@@ -336,21 +426,21 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
         cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
-                out_ptr[i] = <int>strlen(data + (i * 256))
+                out_ptr[i] = <int>(offs[i + 1] - offs[i] - 1)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def len_list(self):
-        cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         cdef list res = []
         for i in range(n):
-            res.append(strlen(data + (i * 256)))
+            res.append(offs[i + 1] - offs[i] - 1)
         return res
 
     @cython.binding(False)
@@ -360,6 +450,7 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         cdef bytes pbytes
         cdef const char* c_pat
@@ -371,7 +462,7 @@ cdef class Char256Column_SoA(BaseColumn):
             plen = len(pbytes)
             with nogil:
                 for i in range(n):
-                    out_ptr[i] = 1 if _c_startswith(data + (i * 256), c_pat, plen) else 0
+                    out_ptr[i] = 1 if _c_startswith(data + offs[i], c_pat, plen) else 0
         elif isinstance(prefix, (list, tuple)):
             for i in range(n):
                 s = self._get_str(i)
@@ -382,7 +473,7 @@ cdef class Char256Column_SoA(BaseColumn):
             plen = len(pbytes)
             with nogil:
                 for i in range(n):
-                    out_ptr[i] = 1 if _c_startswith(data + (i * 256), c_pat, plen) else 0
+                    out_ptr[i] = 1 if _c_startswith(data + offs[i], c_pat, plen) else 0
         return res
 
     @cython.binding(False)
@@ -392,6 +483,7 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         cdef bytes sbytes
         cdef const char* c_pat
@@ -403,7 +495,7 @@ cdef class Char256Column_SoA(BaseColumn):
             slen = len(sbytes)
             with nogil:
                 for i in range(n):
-                    out_ptr[i] = 1 if _c_endswith(data + (i * 256), c_pat, slen) else 0
+                    out_ptr[i] = 1 if _c_endswith(data + offs[i], c_pat, slen) else 0
         elif isinstance(suffix, (list, tuple)):
             for i in range(n):
                 s = self._get_str(i)
@@ -414,11 +506,11 @@ cdef class Char256Column_SoA(BaseColumn):
             slen = len(sbytes)
             with nogil:
                 for i in range(n):
-                    out_ptr[i] = 1 if _c_endswith(data + (i * 256), c_pat, slen) else 0
+                    out_ptr[i] = 1 if _c_endswith(data + offs[i], c_pat, slen) else 0
         return res
 
     # ------------------------------------------------------------
-    # lower / upper: 纯 C 无分支 SIMD 自动向量化
+    # lower / upper: pure C no-branch auto-vectorizable
     # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -427,12 +519,14 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef unsigned char c
+        cdef Py_ssize_t str_len
+        cdef Py_ssize_t* offs = res.offsets_c
         with nogil:
             for i in range(n):
-                ptr = res.data_c + (i * 256)
-                for j in range(256):
+                ptr = res.data_c + offs[i]
+                str_len = offs[i + 1] - offs[i] - 1
+                for j in range(str_len):
                     c = <unsigned char>ptr[j]
-                    if c == 0: break
                     if c >= 65 and c <= 90:
                         ptr[j] = <char>(c + 32)
         return res
@@ -444,12 +538,14 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef unsigned char c
+        cdef Py_ssize_t str_len
+        cdef Py_ssize_t* offs = res.offsets_c
         with nogil:
             for i in range(n):
-                ptr = res.data_c + (i * 256)
-                for j in range(256):
+                ptr = res.data_c + offs[i]
+                str_len = offs[i + 1] - offs[i] - 1
+                for j in range(str_len):
                     c = <unsigned char>ptr[j]
-                    if c == 0: break
                     if c >= 97 and c <= 122:
                         ptr[j] = <char>(c - 32)
         return res
@@ -461,18 +557,20 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef bint valid
+        cdef Py_ssize_t str_len
         with nogil:
             for i in range(n):
-                ptr = data + (i * 256)
-                if ptr[0] == 0:
+                str_len = offs[i + 1] - offs[i] - 1
+                if str_len == 0:
                     out_ptr[i] = 0
                     continue
+                ptr = data + offs[i]
                 valid = 1
-                for j in range(256):
-                    if ptr[j] == 0: break
+                for j in range(str_len):
                     if not isdigit(<unsigned char>ptr[j]):
                         valid = 0
                         break
@@ -485,24 +583,34 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, left, right, n = self.length
         cdef char* ptr
-        cdef size_t cur_len
+        cdef Py_ssize_t cur_len
+        cdef Py_ssize_t* offs = res.offsets_c
+        cdef Py_ssize_t new_len, removed, oi
         with nogil:
             for i in range(n):
-                ptr = res.data_c + (i * 256)
-                if ptr[0] == 0: continue
-                cur_len = strlen(ptr)
+                cur_len = offs[i + 1] - offs[i] - 1
+                if cur_len == 0: continue
+                ptr = res.data_c + offs[i]
                 left = 0
-                while left < <Py_ssize_t>cur_len and isspace(<unsigned char>ptr[left]):
+                while left < cur_len and isspace(<unsigned char>ptr[left]):
                     left += 1
-                if left == <Py_ssize_t>cur_len:
-                    ptr[0] = 0
+                if left == cur_len:
+                    memmove(ptr, ptr + cur_len, 0)
+                    offs[i + 1] = offs[i]
                     continue
                 right = cur_len - 1
                 while right >= left and isspace(<unsigned char>ptr[right]):
                     right -= 1
+                new_len = right - left + 1
                 if left > 0:
-                    memmove(ptr, ptr + left, right - left + 1)
-                ptr[right - left + 1] = 0
+                    memmove(ptr, ptr + left, new_len)
+                ptr[new_len] = 0
+                removed = cur_len - new_len
+                if removed > 0:
+                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
+                    res.byte_length -= removed
+                    for oi in range(i + 1, res.length + 1):
+                        offs[oi] -= removed
         return res
 
     @cython.binding(False)
@@ -511,17 +619,24 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, left, n = self.length
         cdef char* ptr
-        cdef size_t cur_len
+        cdef Py_ssize_t cur_len, new_len, oi
+        cdef Py_ssize_t* offs = res.offsets_c
         with nogil:
             for i in range(n):
-                ptr = res.data_c + (i * 256)
-                if ptr[0] == 0: continue
-                cur_len = strlen(ptr)
+                cur_len = offs[i + 1] - offs[i] - 1
+                if cur_len == 0: continue
+                ptr = res.data_c + offs[i]
                 left = 0
-                while left < <Py_ssize_t>cur_len and isspace(<unsigned char>ptr[left]):
+                while left < cur_len and isspace(<unsigned char>ptr[left]):
                     left += 1
                 if left > 0:
-                    memmove(ptr, ptr + left, cur_len - left + 1)
+                    new_len = cur_len - left
+                    memmove(ptr, ptr + left, new_len)
+                    ptr[new_len] = 0
+                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
+                    res.byte_length -= left
+                    for oi in range(i + 1, res.length + 1):
+                        offs[oi] -= left
         return res
 
     @cython.binding(False)
@@ -530,14 +645,24 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, right, n = self.length
         cdef char* ptr
+        cdef Py_ssize_t cur_len, new_len, removed, oi
+        cdef Py_ssize_t* offs = res.offsets_c
         with nogil:
             for i in range(n):
-                ptr = res.data_c + (i * 256)
-                if ptr[0] == 0: continue
-                right = <Py_ssize_t>strlen(ptr) - 1
+                cur_len = offs[i + 1] - offs[i] - 1
+                if cur_len == 0: continue
+                ptr = res.data_c + offs[i]
+                right = cur_len - 1
                 while right >= 0 and isspace(<unsigned char>ptr[right]):
                     right -= 1
-                ptr[right + 1] = 0
+                new_len = right + 1
+                ptr[new_len] = 0
+                removed = cur_len - new_len
+                if removed > 0:
+                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
+                    res.byte_length -= removed
+                    for oi in range(i + 1, res.length + 1):
+                        offs[oi] -= removed
         return res
 
     @cython.binding(False)
@@ -550,10 +675,11 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
-                out_ptr[i] = <int>_c_find(data + (i * 256), c_sub, sub_len)
+                out_ptr[i] = <int>_c_find(data + offs[i], c_sub, sub_len)
         return res
 
     @cython.binding(False)
@@ -566,10 +692,11 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
-                out_ptr[i] = <int>_c_count(data + (i * 256), c_sub, sub_len)
+                out_ptr[i] = <int>_c_count(data + offs[i], c_sub, sub_len)
         return res
 
     @cython.binding(False)
@@ -579,18 +706,20 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef bint valid
+        cdef Py_ssize_t str_len
         with nogil:
             for i in range(n):
-                ptr = data + (i * 256)
-                if ptr[0] == 0:
+                str_len = offs[i + 1] - offs[i] - 1
+                if str_len == 0:
                     out_ptr[i] = 0
                     continue
+                ptr = data + offs[i]
                 valid = 1
-                for j in range(256):
-                    if ptr[j] == 0: break
+                for j in range(str_len):
                     if not isalpha(<unsigned char>ptr[j]):
                         valid = 0
                         break
@@ -604,18 +733,20 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef bint valid
+        cdef Py_ssize_t str_len
         with nogil:
             for i in range(n):
-                ptr = data + (i * 256)
-                if ptr[0] == 0:
+                str_len = offs[i + 1] - offs[i] - 1
+                if str_len == 0:
                     out_ptr[i] = 0
                     continue
+                ptr = data + offs[i]
                 valid = 1
-                for j in range(256):
-                    if ptr[j] == 0: break
+                for j in range(str_len):
                     if not isalnum(<unsigned char>ptr[j]):
                         valid = 0
                         break
@@ -629,18 +760,20 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef bint valid
+        cdef Py_ssize_t str_len
         with nogil:
             for i in range(n):
-                ptr = data + (i * 256)
-                if ptr[0] == 0:
+                str_len = offs[i + 1] - offs[i] - 1
+                if str_len == 0:
                     out_ptr[i] = 0
                     continue
+                ptr = data + offs[i]
                 valid = 1
-                for j in range(256):
-                    if ptr[j] == 0: break
+                for j in range(str_len):
                     if not isspace(<unsigned char>ptr[j]):
                         valid = 0
                         break
@@ -654,19 +787,21 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef bint has_letter, all_lower
+        cdef Py_ssize_t str_len
         with nogil:
             for i in range(n):
-                ptr = data + (i * 256)
-                if ptr[0] == 0:
+                str_len = offs[i + 1] - offs[i] - 1
+                if str_len == 0:
                     out_ptr[i] = 0
                     continue
+                ptr = data + offs[i]
                 has_letter = 0
                 all_lower = 1
-                for j in range(256):
-                    if ptr[j] == 0: break
+                for j in range(str_len):
                     if isalpha(<unsigned char>ptr[j]):
                         has_letter = 1
                         if not islower(<unsigned char>ptr[j]):
@@ -682,19 +817,21 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef bint has_letter, all_upper
+        cdef Py_ssize_t str_len
         with nogil:
             for i in range(n):
-                ptr = data + (i * 256)
-                if ptr[0] == 0:
+                str_len = offs[i + 1] - offs[i] - 1
+                if str_len == 0:
                     out_ptr[i] = 0
                     continue
+                ptr = data + offs[i]
                 has_letter = 0
                 all_upper = 1
-                for j in range(256):
-                    if ptr[j] == 0: break
+                for j in range(str_len):
                     if isalpha(<unsigned char>ptr[j]):
                         has_letter = 1
                         if not isupper(<unsigned char>ptr[j]):
@@ -712,13 +849,21 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, n = self.length
         cdef char* ptr
-        cdef size_t cur_len
+        cdef Py_ssize_t cur_len, new_len, oi
+        cdef Py_ssize_t* offs = res.offsets_c
         with nogil:
             for i in range(n):
-                ptr = res.data_c + (i * 256)
-                cur_len = strlen(ptr)
-                if cur_len >= <size_t>pre_len and strncmp(ptr, c_pre, pre_len) == 0:
-                    memmove(ptr, ptr + pre_len, cur_len - pre_len + 1)
+                cur_len = offs[i + 1] - offs[i] - 1
+                if cur_len == 0: continue
+                ptr = res.data_c + offs[i]
+                if cur_len >= pre_len and strncmp(ptr, c_pre, pre_len) == 0:
+                    new_len = cur_len - pre_len
+                    memmove(ptr, ptr + pre_len, new_len)
+                    ptr[new_len] = 0
+                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
+                    res.byte_length -= pre_len
+                    for oi in range(i + 1, res.length + 1):
+                        offs[oi] -= pre_len
         return res
 
     @cython.binding(False)
@@ -730,13 +875,20 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, n = self.length
         cdef char* ptr
-        cdef size_t cur_len
+        cdef Py_ssize_t cur_len, new_len, oi
+        cdef Py_ssize_t* offs = res.offsets_c
         with nogil:
             for i in range(n):
-                ptr = res.data_c + (i * 256)
-                cur_len = strlen(ptr)
-                if cur_len >= <size_t>suf_len and strncmp(ptr + cur_len - suf_len, c_suf, suf_len) == 0:
-                    ptr[cur_len - suf_len] = 0
+                cur_len = offs[i + 1] - offs[i] - 1
+                if cur_len == 0: continue
+                ptr = res.data_c + offs[i]
+                if cur_len >= suf_len and strncmp(ptr + cur_len - suf_len, c_suf, suf_len) == 0:
+                    new_len = cur_len - suf_len
+                    ptr[new_len] = 0
+                    memmove(ptr + new_len, ptr + cur_len, res.byte_length - offs[i] - cur_len)
+                    res.byte_length -= suf_len
+                    for oi in range(i + 1, res.length + 1):
+                        offs[oi] -= suf_len
         return res
 
     @cython.binding(False)
@@ -745,18 +897,24 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Char256Column_SoA res = self.copy()
         cdef Py_ssize_t i, j, curr_len, pad, n = self.length
         cdef char* ptr
+        cdef Py_ssize_t* offs = res.offsets_c
+        cdef Py_ssize_t tail_len, oi
         with nogil:
             for i in range(n):
-                ptr = res.data_c + (i * 256)
-                curr_len = <Py_ssize_t>strlen(ptr)
-                if curr_len >= width or curr_len >= 255:
+                curr_len = offs[i + 1] - offs[i] - 1
+                if curr_len >= width:
                     continue
                 pad = width - curr_len
-                if curr_len + pad > 255:
-                    pad = 255 - curr_len
-                memmove(ptr + pad, ptr, curr_len + 1)
+                ptr = res.data_c + offs[i]
+                tail_len = res.byte_length - offs[i] - curr_len
+                if tail_len > 0:
+                    memmove(ptr + curr_len + pad, ptr + curr_len, tail_len)
+                memmove(ptr + pad, ptr, curr_len)
                 for j in range(pad):
                     ptr[j] = b'0'
+                res.byte_length += pad
+                for oi in range(i + 1, res.length + 1):
+                    offs[oi] += pad
         return res
 
     @cython.binding(False)
@@ -769,10 +927,11 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
-                out_ptr[i] = <int>_c_rfind(data + (i * 256), c_sub, sub_len)
+                out_ptr[i] = <int>_c_rfind(data + offs[i], c_sub, sub_len)
         return res
 
     @cython.binding(False)
@@ -1073,9 +1232,6 @@ cdef class Char256Column_SoA(BaseColumn):
                 result.append(val)
         return result
 
-    # ------------------------------------------------------------
-    # 字符串字典序比较：修复 strncmp 比较到脏内存的漏洞，使用 strcmp
-    # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def _cmp_op(self, val, int op):
@@ -1084,9 +1240,11 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = n
         cdef int* out_ptr = res.data_c
         cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef bytes v_bytes
         cdef const char* v_ptr
         cdef char* o_data
+        cdef Py_ssize_t* o_offs
         cdef int cmp_res
         cdef Char256Column_SoA other
 
@@ -1095,9 +1253,10 @@ cdef class Char256Column_SoA(BaseColumn):
             if other.length != n:
                 raise ValueError(f"Length mismatch: {n} vs {other.length}")
             o_data = other.data_c
+            o_offs = other.offsets_c
             with nogil:
                 for i in range(n):
-                    cmp_res = strcmp(data + (i * 256), o_data + (i * 256))
+                    cmp_res = strcmp(data + offs[i], o_data + o_offs[i])
                     if op == 0:   out_ptr[i] = 1 if cmp_res < 0 else 0
                     elif op == 1: out_ptr[i] = 1 if cmp_res <= 0 else 0
                     elif op == 2: out_ptr[i] = 1 if cmp_res > 0 else 0
@@ -1109,7 +1268,7 @@ cdef class Char256Column_SoA(BaseColumn):
             v_ptr = v_bytes
             with nogil:
                 for i in range(n):
-                    cmp_res = strcmp(data + (i * 256), v_ptr)
+                    cmp_res = strcmp(data + offs[i], v_ptr)
                     if op == 0:   out_ptr[i] = 1 if cmp_res < 0 else 0
                     elif op == 1: out_ptr[i] = 1 if cmp_res <= 0 else 0
                     elif op == 2: out_ptr[i] = 1 if cmp_res > 0 else 0
@@ -1149,11 +1308,11 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef int* other_ptr = o.data_c
-        cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
-                out_ptr[i] = 1 if (data[i * 256] != 0 and other_ptr[i] != 0) else 0
+                out_ptr[i] = 1 if (offs[i + 1] - offs[i] - 1) > 0 and other_ptr[i] != 0 else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -1168,11 +1327,11 @@ cdef class Char256Column_SoA(BaseColumn):
         res.length = self.length
         cdef int* out_ptr = res.data_c
         cdef int* other_ptr = o.data_c
-        cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
-                out_ptr[i] = 1 if (data[i * 256] != 0 or other_ptr[i] != 0) else 0
+                out_ptr[i] = 1 if (offs[i + 1] - offs[i] - 1) > 0 or other_ptr[i] != 0 else 0
         return res
 
     @cython.always_allow_keywords(False)
@@ -1181,11 +1340,11 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
         cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
+        cdef Py_ssize_t* offs = self.offsets_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
-                out_ptr[i] = 0 if data[i * 256] != 0 else 1
+                out_ptr[i] = 0 if (offs[i + 1] - offs[i] - 1) > 0 else 1
         return res
 
     @cython.always_allow_keywords(False)
@@ -1205,28 +1364,17 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
+
         cdef Char256Column_SoA col = Char256Column_SoA(max(n, 1))
-        col.length = n
-        if n == 0: return col
-
+        cdef str fill_str = str(fill) if fill is not None else ""
         cdef int* mask_ptr = mask.data_c
-        cdef char* src = self.data_c
-        cdef char* dest = col.data_c
-
-        cdef bytes fill_bytes = str(fill).encode('ascii', errors='ignore') if fill is not None else b''
-        cdef char fill_buf[256]
-        memset(fill_buf, 0, 256)
-        cdef size_t flen = len(fill_bytes)
-        if flen > 255: flen = 255
-        memcpy(fill_buf, <const char*>fill_bytes, flen)
-
         cdef Py_ssize_t i
-        with nogil:
-            for i in range(n):
-                if mask_ptr[i] != 0:
-                    memcpy(dest + (i * 256), src + (i * 256), 256)
-                else:
-                    memcpy(dest + (i * 256), fill_buf, 256)
+
+        for i in range(n):
+            if mask_ptr[i] != 0:
+                col.append(self._get_str(i))
+            else:
+                col.append(fill_str)
         return col
 
     @property
@@ -1253,47 +1401,94 @@ cdef class Char256Column_SoA(BaseColumn):
         return self.length
 
     cdef Char256Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef Py_ssize_t i
-        cdef char* old_data = self.data_c
-        cdef char* new_data
+        cdef Py_ssize_t i, idx
+        cdef Py_ssize_t req_cap = max(n, 1)
         cdef Char256Column_SoA new_col
 
-        if not inplace:
-            new_col = Char256Column_SoA(max(n, 1))
-            new_col.length = n
-            with nogil:
-                for i in range(n):
-                    memcpy(new_col.data_c + (i * 256), old_data + (indices[i] * 256), 256)
-            return new_col
-        else:
-            new_data = <char*>aligned_malloc(max(n, 1) * 256)
-            if not new_data: raise MemoryError()
-            with nogil:
-                for i in range(n):
-                    memcpy(new_data + (i * 256), old_data + (indices[i] * 256), 256)
+        cdef Py_ssize_t req_bytes = 0
+        for i in range(n):
+            idx = indices[i]
+            req_bytes += self.offsets_c[idx + 1] - self.offsets_c[idx]
+
+        cdef Py_ssize_t req_byte_cap = max(req_bytes, 4096)
+        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((req_cap + 1) * sizeof(Py_ssize_t))
+        cdef char* new_data = <char*>aligned_malloc(req_byte_cap)
+
+        if not new_offsets or not new_data:
+            if new_offsets: os_aligned_free(new_offsets)
+            if new_data: os_aligned_free(new_data)
+            raise MemoryError()
+
+        new_offsets[0] = 0
+        cdef Py_ssize_t current_byte_len = 0
+        cdef Py_ssize_t start, end, str_len
+        with nogil:
+            for i in range(n):
+                idx = indices[i]
+                start = self.offsets_c[idx]
+                end = self.offsets_c[idx + 1]
+                str_len = end - start
+                if str_len > 0:
+                    memcpy(new_data + current_byte_len, self.data_c + start, str_len)
+                current_byte_len += str_len
+                new_offsets[i + 1] = current_byte_len
+
+        if inplace:
+            os_aligned_free(self.offsets_c)
             os_aligned_free(self.data_c)
+            self.offsets_c = new_offsets
             self.data_c = new_data
-            self.capacity = n
+            self.byte_capacity = req_byte_cap
+            self.byte_length = current_byte_len
+            self.capacity = req_cap
             self.length = n
             return self
+        else:
+            new_col = Char256Column_SoA(req_cap)
+            os_aligned_free(new_col.offsets_c)
+            os_aligned_free(new_col.data_c)
+            new_col.offsets_c = new_offsets
+            new_col.data_c = new_data
+            new_col.byte_capacity = req_byte_cap
+            new_col.byte_length = current_byte_len
+            new_col.length = n
+            return new_col
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
         if row_idx < 0:
             row_idx += self.length
-        cdef Py_ssize_t rem_len = self.length - row_idx - 1
-        if rem_len > 0:
-            memmove(self.data_c + (row_idx * 256),
-                    self.data_c + ((row_idx + 1) * 256),
-                    rem_len * 256)
+        cdef Py_ssize_t start_offset = self.offsets_c[row_idx]
+        cdef Py_ssize_t end_offset = self.offsets_c[row_idx + 1]
+        cdef Py_ssize_t char_len = end_offset - start_offset
+        cdef Py_ssize_t rem_bytes = self.byte_length - end_offset
+        if rem_bytes > 0:
+            memmove(self.data_c + start_offset,
+                    self.data_c + end_offset,
+                    rem_bytes)
+        self.byte_length -= char_len
+        cdef Py_ssize_t i
+        for i in range(row_idx, self.length):
+            self.offsets_c[i] = self.offsets_c[i + 1] - char_len
         self.length -= 1
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_left(self, Py_ssize_t pos):
         cdef Py_ssize_t col_len = self.length
-        _c_shift_left(self.data_c, pos, col_len, 256)
+        cdef Py_ssize_t start_offset = self.offsets_c[pos]
+        cdef Py_ssize_t end_offset = self.offsets_c[pos + 1]
+        cdef Py_ssize_t removed_len = end_offset - start_offset
+        cdef Py_ssize_t rem = self.byte_length - end_offset
+        cdef Py_ssize_t i
+        if rem > 0:
+            memmove(self.data_c + start_offset,
+                    self.data_c + end_offset,
+                    rem)
+        self.byte_length -= removed_len
+        for i in range(pos, col_len):
+            self.offsets_c[i] = self.offsets_c[i + 1] - removed_len
         self.length = col_len - 1
 
     @cython.always_allow_keywords(False)

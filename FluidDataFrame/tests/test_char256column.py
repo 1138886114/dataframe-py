@@ -39,7 +39,7 @@ def test_special_strings():
     check('append empty', col[0] == "")
 
     col = Char256Column_SoA(); col.append("x" * 300)
-    check('append long truncates', len(col[0]) == 255)
+    check('append long no truncation', len(col[0]) == 300)
 
     col = Char256Column_SoA(); col.append("abc123!@#")
     check('append ascii', col[0] == "abc123!@#")

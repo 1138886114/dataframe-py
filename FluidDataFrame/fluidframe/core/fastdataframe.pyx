@@ -216,23 +216,43 @@ class _RollingWrapper:
     def cov(self, other): return self._col.roll_cov(self._window, other._col if isinstance(other, _RollingWrapper) else other)
 
 
-cdef void _c_argsort_char256(char* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
+cdef inline int _cstrncmp(const char* a, Py_ssize_t a_len, const char* b, Py_ssize_t b_len) noexcept nogil:
+    cdef Py_ssize_t min_len = a_len if a_len < b_len else b_len
+    cdef int r = strncmp(a, b, min_len)
+    if r != 0:
+        return r
+    if a_len < b_len:
+        return -1
+    elif a_len > b_len:
+        return 1
+    return 0
+
+cdef void _c_argsort_char256(char* data, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return
     cdef Py_ssize_t i = left, j = right
     cdef Py_ssize_t pivot_idx = indices[(left + right) // 2]
-    cdef char* pivot_ptr = data + (pivot_idx * 256)
-    cdef Py_ssize_t temp
+    cdef char* pivot_ptr = data + offsets[pivot_idx]
+    cdef Py_ssize_t pivot_len = offsets[pivot_idx + 1] - offsets[pivot_idx] - 1
+    cdef Py_ssize_t temp, cur_len
 
     while i <= j:
-        while strncmp(data + (indices[i] * 256), pivot_ptr, 256) < 0: i += 1
-        while strncmp(data + (indices[j] * 256), pivot_ptr, 256) > 0: j -= 1
+        while i <= j:
+            cur_len = offsets[indices[i] + 1] - offsets[indices[i]] - 1
+            if _cstrncmp(data + offsets[indices[i]], cur_len, pivot_ptr, pivot_len) >= 0:
+                break
+            i += 1
+        while i <= j:
+            cur_len = offsets[indices[j] + 1] - offsets[indices[j]] - 1
+            if _cstrncmp(data + offsets[indices[j]], cur_len, pivot_ptr, pivot_len) <= 0:
+                break
+            j -= 1
         if i <= j:
             temp = indices[i]; indices[i] = indices[j]; indices[j] = temp
             i += 1
             j -= 1
 
-    if left < j: _c_argsort_char256(data, indices, left, j)
-    if i < right: _c_argsort_char256(data, indices, i, right)
+    if left < j: _c_argsort_char256(data, offsets, indices, left, j)
+    if i < right: _c_argsort_char256(data, offsets, indices, i, right)
 
 
 @cython.boundscheck(False)
@@ -855,7 +875,7 @@ cdef class FastDataFrame:
                     _c_argsort_numeric((<DoubleColumn>col).data_c, indices_c, 0, n - 1)
             elif col.dtype == TYPE_CHAR256:
                 with nogil:
-                    _c_argsort_char256((<Char256Column_SoA>col).data_c, indices_c, 0, n - 1)
+                    _c_argsort_char256((<Char256Column_SoA>col).data_c, (<Char256Column_SoA>col).offsets_c, indices_c, 0, n - 1)
             elif col.dtype == TYPE_UCS2:
                 with nogil:
                     _c_argsort_ucs2((<UCS2Column_SoA>col).chars_c, (<UCS2Column_SoA>col).offsets_c, indices_c, 0, n - 1)

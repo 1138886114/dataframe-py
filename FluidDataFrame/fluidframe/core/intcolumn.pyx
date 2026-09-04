@@ -1550,10 +1550,8 @@ cdef class IntColumn(BaseColumn):
 
         elif target_type == TYPE_CHAR256:
             cc = Char256Column_SoA(safe_cap)
-            cc.length = n
-            with nogil:
-                for i in range(n):
-                    sz = snprintf(cc.data_c + (i * 256), 256, "%d", s_ptr[i])
+            for i in range(n):
+                cc.append(str(s_ptr[i]))
             return cc
 
         elif target_type == TYPE_DATE:
