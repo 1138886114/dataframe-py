@@ -8,8 +8,8 @@ from fluidframe.core._base cimport aligned_malloc, os_aligned_free, BaseColumn, 
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
-from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.index cimport IndexBase
 
@@ -125,11 +125,11 @@ cdef class _LocIndexer:
                         (<DoubleColumn>col).data_c[idx] = <double>values[i]
                     elif col.dtype == TYPE_CHAR256:
                         fill_bytes = str(values[i]).encode('ascii', errors='ignore')
-                        dest = (<Char256Column_SoA>col).data_c + (idx * 256)
+                        dest = (<AsciiColumn>col).data_c + (idx * 256)
                         strncpy(dest, fill_bytes, 255)
                         dest[255] = 0
                     elif col.dtype == TYPE_UCS2:
-                        (<UCS2Column_SoA>col)._set_item(idx, str(values[i]))
+                        (<UCS2Column>col)._set_item(idx, str(values[i]))
                     elif col.dtype == TYPE_DATE:
                         (<DateColumn>col).data_c[idx] = <long long>values[i]
             elif isinstance(values, dict):
@@ -143,11 +143,11 @@ cdef class _LocIndexer:
                         (<DoubleColumn>col).data_c[idx] = <double>val
                     elif col.dtype == TYPE_CHAR256:
                         fill_bytes = str(val).encode('ascii', errors='ignore')
-                        dest = (<Char256Column_SoA>col).data_c + (idx * 256)
+                        dest = (<AsciiColumn>col).data_c + (idx * 256)
                         strncpy(dest, fill_bytes, 255)
                         dest[255] = 0
                     elif col.dtype == TYPE_UCS2:
-                        (<UCS2Column_SoA>col)._set_item(idx, str(val))
+                        (<UCS2Column>col)._set_item(idx, str(val))
                     elif col.dtype == TYPE_DATE:
                         (<DateColumn>col).data_c[idx] = <long long>val
             else:

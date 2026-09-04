@@ -139,8 +139,8 @@ from fluidframe.core._base cimport (
     _vec_pearson_corr, _vec_pearson_cov, _vec_euclidean_dist,
     _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist
 )
-from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn, _days_to_ymd
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
@@ -349,9 +349,9 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_DOUBLE:
             return (<DoubleColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_CHAR256:
-            return (<Char256Column_SoA>col).take_by_indices(indices, n, inplace)
+            return (<AsciiColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column_SoA>col).take_by_indices(indices, n, inplace)
+            return (<UCS2Column>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_DATE:
             return (<DateColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_BOOL:
@@ -392,9 +392,9 @@ cdef class FastDataFrame:
                 elif dtype == TYPE_DOUBLE:
                     self.columns[col_name] = DoubleColumn()
                 elif dtype == TYPE_CHAR256:
-                    self.columns[col_name] = Char256Column_SoA()
+                    self.columns[col_name] = AsciiColumn()
                 elif dtype == TYPE_UCS2:
-                    self.columns[col_name] = UCS2Column_SoA()
+                    self.columns[col_name] = UCS2Column()
                 elif dtype == TYPE_DATE:
                     self.columns[col_name] = DateColumn()
                 elif dtype == TYPE_BOOL:
@@ -875,10 +875,10 @@ cdef class FastDataFrame:
                     _c_argsort_numeric((<DoubleColumn>col).data_c, indices_c, 0, n - 1)
             elif col.dtype == TYPE_CHAR256:
                 with nogil:
-                    _c_argsort_char256((<Char256Column_SoA>col).data_c, (<Char256Column_SoA>col).offsets_c, indices_c, 0, n - 1)
+                    _c_argsort_char256((<AsciiColumn>col).data_c, (<AsciiColumn>col).offsets_c, indices_c, 0, n - 1)
             elif col.dtype == TYPE_UCS2:
                 with nogil:
-                    _c_argsort_ucs2((<UCS2Column_SoA>col).chars_c, (<UCS2Column_SoA>col).offsets_c, indices_c, 0, n - 1)
+                    _c_argsort_ucs2((<UCS2Column>col).chars_c, (<UCS2Column>col).offsets_c, indices_c, 0, n - 1)
             elif col.dtype == TYPE_DATE:
                 with nogil:
                     _c_argsort_numeric(<int*>(<DateColumn>col).data_c, indices_c, 0, n - 1)
@@ -1487,14 +1487,14 @@ cdef class FastDataFrame:
                     for i in range(n):
                         new_col.data_c[i] = isnan(d_data[i])
             elif col.dtype == TYPE_CHAR256:
-                c_data = (<Char256Column_SoA>col).data_c
+                c_data = (<AsciiColumn>col).data_c
                 for i in range(n):
-                    str_len = (<Char256Column_SoA>col).offsets_c[i + 1] - (<Char256Column_SoA>col).offsets_c[i]
+                    str_len = (<AsciiColumn>col).offsets_c[i + 1] - (<AsciiColumn>col).offsets_c[i]
                     new_col.data_c[i] = 1 if str_len == 0 else 0
             elif col.dtype == TYPE_UCS2:
                 for i in range(n):
-                    start = (<UCS2Column_SoA>col).offsets_c[i]
-                    end = (<UCS2Column_SoA>col).offsets_c[i + 1]
+                    start = (<UCS2Column>col).offsets_c[i]
+                    end = (<UCS2Column>col).offsets_c[i + 1]
                     new_col.data_c[i] = 1 if end == start else 0
             else:
                 memset(new_col.data_c, 0, n * sizeof(int))
@@ -1547,14 +1547,14 @@ cdef class FastDataFrame:
                 elif col.dtype == TYPE_CHAR256:
                     for i in range(n):
                         if keep_mask[i]:
-                            str_len = (<Char256Column_SoA>col).offsets_c[i + 1] - (<Char256Column_SoA>col).offsets_c[i]
+                            str_len = (<AsciiColumn>col).offsets_c[i + 1] - (<AsciiColumn>col).offsets_c[i]
                             if str_len == 0:
                                 keep_mask[i] = 0
                 elif col.dtype == TYPE_UCS2:
                     for i in range(n):
                         if keep_mask[i]:
-                            start = (<UCS2Column_SoA>col).offsets_c[i]
-                            end = (<UCS2Column_SoA>col).offsets_c[i + 1]
+                            start = (<UCS2Column>col).offsets_c[i]
+                            end = (<UCS2Column>col).offsets_c[i + 1]
                             if start == end:
                                 keep_mask[i] = 0
 
@@ -1595,8 +1595,8 @@ cdef class FastDataFrame:
     def _make_empty_column(int dtype):
         if dtype == TYPE_INT: return IntColumn()
         elif dtype == TYPE_DOUBLE: return DoubleColumn()
-        elif dtype == TYPE_CHAR256: return Char256Column_SoA()
-        elif dtype == TYPE_UCS2: return UCS2Column_SoA()
+        elif dtype == TYPE_CHAR256: return AsciiColumn()
+        elif dtype == TYPE_UCS2: return UCS2Column()
         elif dtype == TYPE_DATE: return DateColumn()
         elif dtype == TYPE_BOOL: return BoolColumn()
         elif dtype == TYPE_CATEGORY: return CategoryColumn()
@@ -1618,11 +1618,11 @@ cdef class FastDataFrame:
             for i in range(n): dbl_col.data_c[i] = <double>values[i]
             return dbl_col
         elif dtype == TYPE_CHAR256:
-            c256_col = Char256Column_SoA(n)
+            c256_col = AsciiColumn(n)
             for i in range(n): c256_col.append(<str>values[i])
             return c256_col
         elif dtype == TYPE_UCS2:
-            ucs2_col = UCS2Column_SoA(n)
+            ucs2_col = UCS2Column(n)
             for i in range(n): ucs2_col.append(<str>values[i])
             return ucs2_col
         elif dtype == TYPE_DATE:
@@ -1674,8 +1674,8 @@ cdef class FastDataFrame:
         cdef dict new_cols
         cdef IntColumn int_col
         cdef DoubleColumn dbl_col
-        cdef Char256Column_SoA c256_col
-        cdef UCS2Column_SoA ucs2_col
+        cdef AsciiColumn c256_col
+        cdef UCS2Column ucs2_col
         cdef DateColumn ts_col
         cdef BoolColumn bool_col
         cdef CategoryColumn cat_col
@@ -1908,8 +1908,8 @@ cdef class FastDataFrame:
         cdef Py_ssize_t i
         cdef IntColumn int_col
         cdef DoubleColumn dbl_col
-        cdef Char256Column_SoA c256_col
-        cdef UCS2Column_SoA ucs2_col
+        cdef AsciiColumn c256_col
+        cdef UCS2Column ucs2_col
         cdef BoolColumn bool_col
         if n == 0:
             return IntColumn(0)
@@ -1945,12 +1945,12 @@ cdef class FastDataFrame:
         elif isinstance(sample, str):
             try:
                 (<str>sample).encode('ascii')
-                c256_col = Char256Column_SoA(max(n, 1))
+                c256_col = AsciiColumn(max(n, 1))
                 for i in range(n):
                     c256_col.append(<str>(values[i] if values[i] is not None else ''))
                 return c256_col
             except UnicodeEncodeError:
-                ucs2_col = UCS2Column_SoA(max(n, 1))
+                ucs2_col = UCS2Column(max(n, 1))
                 for i in range(n):
                     ucs2_col.append(<str>(values[i] if values[i] is not None else ''))
                 return ucs2_col
@@ -2041,7 +2041,7 @@ cdef class FastDataFrame:
 
         cdef Py_ssize_t orig_len = self.df_length
         cdef Py_ssize_t ucs2_val_len, ucs2_start, _ci, _oi
-        cdef UCS2Column_SoA ucs2_obj
+        cdef UCS2Column ucs2_obj
         cdef str ucs2_val
         cdef list shifted_cols = []
         try:
@@ -2055,11 +2055,11 @@ cdef class FastDataFrame:
                     (<DoubleColumn>col_obj).data_c[pos] = <double>val
                 elif col_obj.dtype == TYPE_CHAR256:
                     bval = (<str>val).encode('utf-8')[:255] if isinstance(val, str) else str(val).encode('utf-8')[:255]
-                    memset((<Char256Column_SoA>col_obj).data_c + (pos * 256), 0, 256)
-                    memcpy((<Char256Column_SoA>col_obj).data_c + (pos * 256), <char*>bval, len(bval))
+                    memset((<AsciiColumn>col_obj).data_c + (pos * 256), 0, 256)
+                    memcpy((<AsciiColumn>col_obj).data_c + (pos * 256), <char*>bval, len(bval))
                 elif col_obj.dtype == TYPE_UCS2:
                     ucs2_val = <str>val if isinstance(val, str) else str(val)
-                    ucs2_obj = <UCS2Column_SoA>col_obj
+                    ucs2_obj = <UCS2Column>col_obj
                     ucs2_val_len = len(ucs2_val)
                     ucs2_start = ucs2_obj.offsets_c[pos]
                     if ucs2_val_len > 0:
@@ -2851,10 +2851,10 @@ cdef class FastDataFrame:
 
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos):
         cdef Py_ssize_t col_len
-        cdef UCS2Column_SoA ucs2_col
+        cdef UCS2Column ucs2_col
         cdef IntColumn ic
         cdef DoubleColumn dc
-        cdef Char256Column_SoA cc
+        cdef AsciiColumn cc
         cdef DateColumn tc
         cdef BoolColumn bool_col
         cdef CategoryColumn cat_col
@@ -2862,7 +2862,7 @@ cdef class FastDataFrame:
         cdef TimeColumn tmc_col
 
         if col.dtype == TYPE_UCS2:
-            ucs2_col = <UCS2Column_SoA>col
+            ucs2_col = <UCS2Column>col
             col_len = ucs2_col.length
             if col_len >= ucs2_col.capacity: ucs2_col._reserve(ucs2_col.capacity * 2)
             if pos < col_len:
@@ -2883,7 +2883,7 @@ cdef class FastDataFrame:
             _c_shift_right(dc.data_c, pos, col_len, sizeof(double))
             dc.length = col_len + 1
         elif col.dtype == TYPE_CHAR256:
-            cc = <Char256Column_SoA>col
+            cc = <AsciiColumn>col
             col_len = cc.length
             if col_len >= cc.capacity: cc._reserve(cc.capacity * 2)
             _c_shift_right(cc.data_c, pos, col_len, 256)

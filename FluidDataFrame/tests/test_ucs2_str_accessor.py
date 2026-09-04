@@ -1,6 +1,6 @@
 import sys
 sys.path.insert(0, '.')
-from fluidframe.core.ucs2column import UCS2Column_SoA
+from fluidframe.core.ucs2column import UCS2Column
 
 passed = 0
 failed = 0
@@ -14,7 +14,7 @@ def check(name, cond):
         print(f'  FAIL: {name}')
 
 def make(vals):
-    c = UCS2Column_SoA(max(len(vals), 1))
+    c = UCS2Column(max(len(vals), 1))
     for v in vals: c.append(v)
     return c
 

@@ -20,8 +20,8 @@ from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Ti
 
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
-from fluidframe.core.char256column import Char256Column_SoA
-from fluidframe.core.ucs2column import UCS2Column_SoA
+from fluidframe.core.char256column import AsciiColumn
+from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.boolcolumn import BoolColumn
 from fluidframe.core.categorycolumn import CategoryColumn
 from fluidframe.core.datetimecolumn import DateTimeColumn
@@ -77,11 +77,11 @@ def from_pickle(filename, bint allow_raw_pickle=False):
             for v in values:
                 col.append(v)
         elif typ == 'char256':
-            col = Char256Column_SoA()
+            col = AsciiColumn()
             for v in values:
                 col.append(v)
         elif typ == 'ucs2':
-            col = UCS2Column_SoA()
+            col = UCS2Column()
             for v in values:
                 col.append(v)
         elif typ == 'date':
@@ -133,7 +133,7 @@ def read_csv(filename, dict schema, sep=','):
             elif dtype == TYPE_DOUBLE:
                 df.columns[name] = DoubleColumn()
             elif dtype == TYPE_CHAR256:
-                df.columns[name] = Char256Column_SoA()
+                df.columns[name] = AsciiColumn()
             elif dtype == TYPE_DATE:
                 df.columns[name] = DateColumn()
             elif dtype == TYPE_BOOL:
@@ -145,7 +145,7 @@ def read_csv(filename, dict schema, sep=','):
             elif dtype == TYPE_TIME:
                 df.columns[name] = TimeColumn()
             else:
-                df.columns[name] = UCS2Column_SoA()
+                df.columns[name] = UCS2Column()
         return df
 
     for j, name in enumerate(headers):
@@ -161,7 +161,7 @@ def read_csv(filename, dict schema, sep=','):
                 val = rows[i][j].strip()
                 col.append(float(val) if val else NAN)
         elif py_type == TYPE_CHAR256:
-            col = Char256Column_SoA(n_rows)
+            col = AsciiColumn(n_rows)
             for i in range(n_rows):
                 col.append(rows[i][j])
         elif py_type == TYPE_DATE:
@@ -186,7 +186,7 @@ def read_csv(filename, dict schema, sep=','):
             for i in range(n_rows):
                 col.append(rows[i][j].strip())
         else:
-            col = UCS2Column_SoA(n_rows)
+            col = UCS2Column(n_rows)
             for i in range(n_rows):
                 col.append(rows[i][j])
         df.columns[name] = col
@@ -209,9 +209,9 @@ cdef object _default_val(BaseColumn col):
 cdef BaseColumn _empty_col(BaseColumn col):
     if isinstance(col, IntColumn): return IntColumn()
     if isinstance(col, DoubleColumn): return DoubleColumn()
-    if isinstance(col, Char256Column_SoA): return Char256Column_SoA()
+    if isinstance(col, AsciiColumn): return AsciiColumn()
     if isinstance(col, DateColumn): return DateColumn()
-    return UCS2Column_SoA()
+    return UCS2Column()
 
 
 def concat_outer(list dfs):
@@ -404,7 +404,7 @@ def where(IntColumn cond, object true_val, object false_val):
 
     # --- scalar / scalar ---
     if isinstance(true_val, str) and isinstance(false_val, str):
-        res_str = UCS2Column_SoA(max(n, 1))
+        res_str = UCS2Column(max(n, 1))
         res_str.length = n
         for i in range(n):
             if cond_ptr[i]:

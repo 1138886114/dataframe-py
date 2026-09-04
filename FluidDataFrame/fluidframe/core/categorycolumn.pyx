@@ -18,8 +18,8 @@ from fluidframe.core._base cimport (
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
-from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
@@ -395,8 +395,8 @@ cdef class CategoryColumn(BaseColumn):
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef BoolColumn bc
-        cdef UCS2Column_SoA uc
-        cdef Char256Column_SoA cc
+        cdef UCS2Column uc
+        cdef AsciiColumn cc
         cdef DateColumn tc
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
@@ -463,13 +463,13 @@ cdef class CategoryColumn(BaseColumn):
 
         # 字符串/复杂类型转换
         if target_type == TYPE_UCS2:
-            uc = UCS2Column_SoA(safe_cap)
+            uc = UCS2Column(safe_cap)
             uc.length = n
             for i in range(n):
                 uc._set_item(i, self._resolve(i))
             return uc
         elif target_type == TYPE_CHAR256:
-            cc = Char256Column_SoA(safe_cap)
+            cc = AsciiColumn(safe_cap)
             for i in range(n):
                 cc.append(self._resolve(i))
             return cc

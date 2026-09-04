@@ -27,7 +27,7 @@ from fluidframe.core._base cimport (
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
@@ -100,14 +100,14 @@ cdef inline Py_ssize_t _c_count(const char *data, const char *pat, size_t pat_le
 
 
 # ============================================================
-#  Char256Column_SoA class definition
+#  AsciiColumn class definition
 # ============================================================
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
 @cython.initializedcheck(False)
-cdef class Char256Column_SoA(BaseColumn):
+cdef class AsciiColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -219,7 +219,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.always_allow_keywords(False)
     def copy(self):
         cdef Py_ssize_t cap = max(self.length, 1)
-        cdef Char256Column_SoA new_col = Char256Column_SoA(cap)
+        cdef AsciiColumn new_col = AsciiColumn(cap)
         new_col._reserve_bytes(self.byte_capacity)
         new_col.length = self.length
         new_col.byte_length = self.byte_length
@@ -257,7 +257,7 @@ cdef class Char256Column_SoA(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def concat(self, Char256Column_SoA other):
+    def concat(self, AsciiColumn other):
         cdef Py_ssize_t other_len = other.length
         if other_len == 0: return
         cdef Py_ssize_t new_len = self.length + other_len
@@ -385,7 +385,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.always_allow_keywords(False)
     def extract(self, str pattern, int group=1):
         cdef object compiled = re.compile(pattern)
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         cdef str s, val
         for i in range(n):
@@ -405,8 +405,8 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.always_allow_keywords(False)
     def extract_twice(self, str pattern):
         cdef object compiled = re.compile(pattern)
-        cdef Char256Column_SoA res1 = Char256Column_SoA(max(self.length, 1))
-        cdef Char256Column_SoA res2 = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res1 = AsciiColumn(max(self.length, 1))
+        cdef AsciiColumn res2 = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         cdef str s
         for i in range(n):
@@ -515,7 +515,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def lower(self):
-        cdef Char256Column_SoA res = self.copy()
+        cdef AsciiColumn res = self.copy()
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef unsigned char c
@@ -534,7 +534,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def upper(self):
-        cdef Char256Column_SoA res = self.copy()
+        cdef AsciiColumn res = self.copy()
         cdef Py_ssize_t i, j, n = self.length
         cdef char* ptr
         cdef unsigned char c
@@ -580,7 +580,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def strip(self):
-        cdef Char256Column_SoA res = self.copy()
+        cdef AsciiColumn res = self.copy()
         cdef Py_ssize_t i, left, right, n = self.length
         cdef char* ptr
         cdef Py_ssize_t cur_len
@@ -616,7 +616,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def lstrip(self):
-        cdef Char256Column_SoA res = self.copy()
+        cdef AsciiColumn res = self.copy()
         cdef Py_ssize_t i, left, n = self.length
         cdef char* ptr
         cdef Py_ssize_t cur_len, new_len, oi
@@ -642,7 +642,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def rstrip(self):
-        cdef Char256Column_SoA res = self.copy()
+        cdef AsciiColumn res = self.copy()
         cdef Py_ssize_t i, right, n = self.length
         cdef char* ptr
         cdef Py_ssize_t cur_len, new_len, removed, oi
@@ -846,7 +846,7 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef bytes b_pre = prefix.encode('ascii')
         cdef const char* c_pre = b_pre
         cdef Py_ssize_t pre_len = len(b_pre)
-        cdef Char256Column_SoA res = self.copy()
+        cdef AsciiColumn res = self.copy()
         cdef Py_ssize_t i, n = self.length
         cdef char* ptr
         cdef Py_ssize_t cur_len, new_len, oi
@@ -872,7 +872,7 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef bytes b_suf = suffix.encode('ascii')
         cdef const char* c_suf = b_suf
         cdef Py_ssize_t suf_len = len(b_suf)
-        cdef Char256Column_SoA res = self.copy()
+        cdef AsciiColumn res = self.copy()
         cdef Py_ssize_t i, n = self.length
         cdef char* ptr
         cdef Py_ssize_t cur_len, new_len, oi
@@ -894,7 +894,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def zfill(self, Py_ssize_t width):
-        cdef Char256Column_SoA res = self.copy()
+        cdef AsciiColumn res = self.copy()
         cdef Py_ssize_t i, j, curr_len, pad, n = self.length
         cdef char* ptr
         cdef Py_ssize_t* offs = res.offsets_c
@@ -998,7 +998,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def title(self):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(self._get_str(i).title())
@@ -1007,7 +1007,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def capitalize(self):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(self._get_str(i).capitalize())
@@ -1016,7 +1016,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def swapcase(self):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(self._get_str(i).swapcase())
@@ -1025,7 +1025,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def casefold(self):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(self._get_str(i).casefold())
@@ -1034,7 +1034,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def center(self, int width, str fillchar=' '):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(self._get_str(i).center(width, fillchar))
@@ -1043,7 +1043,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def ljust(self, int width, str fillchar=' '):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(self._get_str(i).ljust(width, fillchar))
@@ -1052,7 +1052,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def rjust(self, int width, str fillchar=' '):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(self._get_str(i).rjust(width, fillchar))
@@ -1104,7 +1104,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def get(self, int index, str default=''):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         cdef str s
         for i in range(n):
@@ -1118,7 +1118,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def slice(self, int start=0, int stop=-1, int step=1):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         cdef str s
         for i in range(n):
@@ -1132,11 +1132,11 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cat(self, other, str sep=''):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
-        cdef Char256Column_SoA other_cc
-        if isinstance(other, Char256Column_SoA):
-            other_cc = <Char256Column_SoA>other
+        cdef AsciiColumn other_cc
+        if isinstance(other, AsciiColumn):
+            other_cc = <AsciiColumn>other
             if other_cc.length != n:
                 raise ValueError(f"Length mismatch: {n} vs {other_cc.length}")
             for i in range(n):
@@ -1163,7 +1163,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def prefix(self, str pre):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(pre + self._get_str(i))
@@ -1172,7 +1172,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def suffix(self, str suf):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(self._get_str(i) + suf)
@@ -1181,7 +1181,7 @@ cdef class Char256Column_SoA(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def repeat(self, int repeats):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             res.append(self._get_str(i) * repeats)
@@ -1246,10 +1246,10 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef char* o_data
         cdef Py_ssize_t* o_offs
         cdef int cmp_res
-        cdef Char256Column_SoA other
+        cdef AsciiColumn other
 
-        if isinstance(val, Char256Column_SoA):
-            other = <Char256Column_SoA>val
+        if isinstance(val, AsciiColumn):
+            other = <AsciiColumn>val
             if other.length != n:
                 raise ValueError(f"Length mismatch: {n} vs {other.length}")
             o_data = other.data_c
@@ -1365,7 +1365,7 @@ cdef class Char256Column_SoA(BaseColumn):
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
 
-        cdef Char256Column_SoA col = Char256Column_SoA(max(n, 1))
+        cdef AsciiColumn col = AsciiColumn(max(n, 1))
         cdef str fill_str = str(fill) if fill is not None else ""
         cdef int* mask_ptr = mask.data_c
         cdef Py_ssize_t i
@@ -1400,10 +1400,10 @@ cdef class Char256Column_SoA(BaseColumn):
     def __len__(self):
         return self.length
 
-    cdef Char256Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
+    cdef AsciiColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef Py_ssize_t i, idx
         cdef Py_ssize_t req_cap = max(n, 1)
-        cdef Char256Column_SoA new_col
+        cdef AsciiColumn new_col
 
         cdef Py_ssize_t req_bytes = 0
         for i in range(n):
@@ -1444,7 +1444,7 @@ cdef class Char256Column_SoA(BaseColumn):
             self.length = n
             return self
         else:
-            new_col = Char256Column_SoA(req_cap)
+            new_col = AsciiColumn(req_cap)
             os_aligned_free(new_col.offsets_c)
             os_aligned_free(new_col.data_c)
             new_col.offsets_c = new_offsets
@@ -1501,7 +1501,7 @@ cdef class Char256Column_SoA(BaseColumn):
         cdef IntColumn ic
         cdef DoubleColumn dc
         cdef BoolColumn bc
-        cdef UCS2Column_SoA uc
+        cdef UCS2Column uc
         cdef DateColumn tc
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
@@ -1529,7 +1529,7 @@ cdef class Char256Column_SoA(BaseColumn):
                 bc.data_c[i] = 1 if s in ('true', '1', 'yes') else 0
             return bc
         elif target_type == TYPE_UCS2:
-            uc = UCS2Column_SoA(safe_cap)
+            uc = UCS2Column(safe_cap)
             uc.length = n
             for i in range(n):
                 uc._set_item(i, self._get_str(i))
@@ -1574,7 +1574,7 @@ cdef class Char256Column_SoA(BaseColumn):
         return res
 
     def str_getitem(self, key):
-        cdef Char256Column_SoA col = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn col = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length, idx, s_len, idx_abs
         cdef str s
         if isinstance(key, int):

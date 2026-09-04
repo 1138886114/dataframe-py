@@ -19,8 +19,8 @@ from fluidframe.core._base cimport (
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
-from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
@@ -98,10 +98,10 @@ cdef class FastDataFrameGroupBy:
             elif col.dtype == TYPE_DOUBLE:
                 self._by_col_data[idx] = <void*>(<DoubleColumn>col).data_c
             elif col.dtype == TYPE_CHAR256:
-                self._by_col_data[idx] = <void*>(<Char256Column_SoA>col).data_c
+                self._by_col_data[idx] = <void*>(<AsciiColumn>col).data_c
             elif col.dtype == TYPE_UCS2:
-                self._by_col_data[idx] = <void*>(<UCS2Column_SoA>col).chars_c
-                self._by_col_offsets[idx] = <void*>(<UCS2Column_SoA>col).offsets_c
+                self._by_col_data[idx] = <void*>(<UCS2Column>col).chars_c
+                self._by_col_offsets[idx] = <void*>(<UCS2Column>col).offsets_c
             elif col.dtype == TYPE_DATE:
                 self._by_col_data[idx] = <void*>(<DateColumn>col).data_c
             elif col.dtype == TYPE_BOOL:

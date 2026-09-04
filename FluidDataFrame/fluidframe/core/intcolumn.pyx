@@ -24,8 +24,8 @@ from fluidframe.core._base cimport (
 )
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
-from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn, _ymd_to_days
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
@@ -1509,8 +1509,8 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t safe_cap = max(n, 1)
         cdef DoubleColumn dc
         cdef BoolColumn bc
-        cdef UCS2Column_SoA uc
-        cdef Char256Column_SoA cc
+        cdef UCS2Column uc
+        cdef AsciiColumn cc
         cdef DateColumn tc
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
@@ -1541,7 +1541,7 @@ cdef class IntColumn(BaseColumn):
             return bc
 
         elif target_type == TYPE_UCS2:
-            uc = UCS2Column_SoA(safe_cap)
+            uc = UCS2Column(safe_cap)
             uc.length = n
             for i in range(n):
                 sz = snprintf(buf, sizeof(buf), "%d", s_ptr[i])
@@ -1549,7 +1549,7 @@ cdef class IntColumn(BaseColumn):
             return uc
 
         elif target_type == TYPE_CHAR256:
-            cc = Char256Column_SoA(safe_cap)
+            cc = AsciiColumn(safe_cap)
             for i in range(n):
                 cc.append(str(s_ptr[i]))
             return cc

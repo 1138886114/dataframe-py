@@ -2,8 +2,8 @@ import sys
 sys.path.insert(0, '..')
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
-from fluidframe.core.char256column import Char256Column_SoA
-from fluidframe.core.ucs2column import UCS2Column_SoA
+from fluidframe.core.char256column import AsciiColumn
+from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.datecolumn import DateColumn
 from fluidframe.core.boolcolumn import BoolColumn
 from fluidframe.core.categorycolumn import CategoryColumn
@@ -71,7 +71,7 @@ def test_shift_left_double():
     check('shift_left_double [1]', col[1] == 3.5)
 
 def test_shift_left_char256():
-    col = Char256Column_SoA(4)
+    col = AsciiColumn(4)
     col.append('abc')
     col.append('def')
     col.append('ghi')
@@ -81,7 +81,7 @@ def test_shift_left_char256():
     check('shift_left_char256 [1]', col[1] == 'ghi')
 
 def test_shift_left_ucs2():
-    col = UCS2Column_SoA(4)
+    col = UCS2Column(4)
     col.append('hello')
     col.append('world')
     col.append('foo')
@@ -144,7 +144,7 @@ def test_shift_left_time():
 # ============================================================
 
 def test_drop_row_char256():
-    col = Char256Column_SoA(4)
+    col = AsciiColumn(4)
     col.append('aaa')
     col.append('bbb')
     col.append('ccc')
@@ -156,7 +156,7 @@ def test_drop_row_char256():
     check('drop_row_char256 [2]', col[2] == 'ddd')
 
 def test_drop_row_char256_first():
-    col = Char256Column_SoA(4)
+    col = AsciiColumn(4)
     col.append('aaa')
     col.append('bbb')
     col.append('ccc')
@@ -166,7 +166,7 @@ def test_drop_row_char256_first():
     check('drop_row_char256_first [1]', col[1] == 'ccc')
 
 def test_drop_row_char256_last():
-    col = Char256Column_SoA(4)
+    col = AsciiColumn(4)
     col.append('aaa')
     col.append('bbb')
     col.append('ccc')
@@ -176,7 +176,7 @@ def test_drop_row_char256_last():
     check('drop_row_char256_last [1]', col[1] == 'bbb')
 
 def test_drop_row_ucs2():
-    col = UCS2Column_SoA(4)
+    col = UCS2Column(4)
     col.append('aaa')
     col.append('bbb')
     col.append('ccc')
@@ -188,7 +188,7 @@ def test_drop_row_ucs2():
     check('drop_row_ucs2 [2]', col[2] == 'ddd')
 
 def test_drop_row_ucs2_first():
-    col = UCS2Column_SoA(4)
+    col = UCS2Column(4)
     col.append('aaa')
     col.append('bbb')
     col.append('ccc')
@@ -198,7 +198,7 @@ def test_drop_row_ucs2_first():
     check('drop_row_ucs2_first [1]', col[1] == 'ccc')
 
 def test_drop_row_ucs2_last():
-    col = UCS2Column_SoA(4)
+    col = UCS2Column(4)
     col.append('aaa')
     col.append('bbb')
     col.append('ccc')
@@ -208,7 +208,7 @@ def test_drop_row_ucs2_last():
     check('drop_row_ucs2_last [1]', col[1] == 'bbb')
 
 def test_drop_row_ucs2_varying_lengths():
-    col = UCS2Column_SoA(4)
+    col = UCS2Column(4)
     col.append('a')
     col.append('bb')
     col.append('ccc')
@@ -341,13 +341,13 @@ def test_drop_row_single_int():
     check('drop_row_single_int len', col.length == 0)
 
 def test_shift_left_single_ucs2():
-    col = UCS2Column_SoA(4)
+    col = UCS2Column(4)
     col.append('hello')
     col.shift_left(0)
     check('shift_left_single_ucs2 len', col.length == 0)
 
 def test_drop_row_single_ucs2():
-    col = UCS2Column_SoA(4)
+    col = UCS2Column(4)
     col.append('hello')
     col.drop_row(0)
     check('drop_row_single_ucs2 len', col.length == 0)

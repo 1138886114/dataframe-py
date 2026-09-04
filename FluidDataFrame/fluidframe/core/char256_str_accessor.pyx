@@ -3,17 +3,17 @@
 cimport cython
 
 from fluidframe.core.intcolumn cimport IntColumn
-from fluidframe.core.char256column cimport Char256Column_SoA
+from fluidframe.core.char256column cimport AsciiColumn
 
 
 cdef class StringAccessor_Char256:
-    """Pandas-style .str accessor for Char256Column_SoA.
-    All methods delegate to Char256Column_SoA.
+    """Pandas-style .str accessor for AsciiColumn.
+    All methods delegate to AsciiColumn.
     """
 
-    cdef Char256Column_SoA _col
+    cdef AsciiColumn _col
 
-    def __cinit__(self, Char256Column_SoA col):
+    def __cinit__(self, AsciiColumn col):
         self._col = col
 
     # ==================== Search / Match ====================

@@ -20,8 +20,8 @@ from fluidframe.core._base cimport (
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
-from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datecolumn cimport DateColumn, _ymd_to_days, _days_to_ymd
 from fluidframe.core.timecolumn cimport TimeColumn
@@ -615,8 +615,8 @@ cdef class DateTimeColumn(BaseColumn):
 
         cdef IntColumn ic
         cdef DoubleColumn dc
-        cdef UCS2Column_SoA uc
-        cdef Char256Column_SoA cc
+        cdef UCS2Column uc
+        cdef AsciiColumn cc
         cdef CategoryColumn catc
         cdef DateColumn tc
         cdef TimeColumn tmc
@@ -668,7 +668,7 @@ cdef class DateTimeColumn(BaseColumn):
             return tmc
 
         elif target_type == TYPE_CHAR256:
-            cc = Char256Column_SoA(safe_cap)
+            cc = AsciiColumn(safe_cap)
             cc.length = n
             with nogil:
                 for i in range(n):
@@ -676,7 +676,7 @@ cdef class DateTimeColumn(BaseColumn):
             return cc
 
         elif target_type == TYPE_UCS2:
-            uc = UCS2Column_SoA(safe_cap)
+            uc = UCS2Column(safe_cap)
             uc.length = n
             for i in range(n):
                 _format_datetime_c(ptr[i], str_buf)

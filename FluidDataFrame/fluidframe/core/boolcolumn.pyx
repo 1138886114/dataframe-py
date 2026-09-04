@@ -17,8 +17,8 @@ from fluidframe.core._base cimport (
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
-from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
@@ -420,8 +420,8 @@ cdef class BoolColumn(BaseColumn):
         cdef unsigned char* ptr = self.data_c
         cdef IntColumn ic
         cdef DoubleColumn dc
-        cdef UCS2Column_SoA uc
-        cdef Char256Column_SoA cc
+        cdef UCS2Column uc
+        cdef AsciiColumn cc
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
@@ -442,14 +442,14 @@ cdef class BoolColumn(BaseColumn):
                     dc.data_c[i] = <double>(ptr[i] != 0)
             return dc
         elif target_type == TYPE_UCS2:
-            uc = UCS2Column_SoA(safe_cap)
+            uc = UCS2Column(safe_cap)
             uc.length = n
             for i in range(n):
                 s_val = BOOL_STRS[1 if ptr[i] != 0 else 0]
                 uc._set_item(i, s_val)
             return uc
         elif target_type == TYPE_CHAR256:
-            cc = Char256Column_SoA(safe_cap)
+            cc = AsciiColumn(safe_cap)
             for i in range(n):
                 s_val = BOOL_STRS[1 if ptr[i] != 0 else 0]
                 cc.append(s_val)

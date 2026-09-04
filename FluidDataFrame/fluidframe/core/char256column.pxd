@@ -10,7 +10,7 @@ cdef void _c_str_replace_inplace(char* buffer, Py_ssize_t buf_cap, const char* o
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef class Char256Column_SoA(BaseColumn):
+cdef class AsciiColumn(BaseColumn):
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef char* data_c                # 变长字符缓冲区
@@ -21,5 +21,5 @@ cdef class Char256Column_SoA(BaseColumn):
     cdef void _reserve_bytes(self, Py_ssize_t new_byte_cap)
     cdef inline str _get_str(self, Py_ssize_t idx)
     cdef void _set_item(self, Py_ssize_t idx, str val) except *
-    cdef Char256Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
+    cdef AsciiColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
 

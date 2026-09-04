@@ -1,6 +1,6 @@
 import sys
 sys.path.insert(0, '.')
-from fluidframe.core.char256column import Char256Column_SoA
+from fluidframe.core.char256column import AsciiColumn
 
 passed = 0
 failed = 0
@@ -14,7 +14,7 @@ def check(name, cond):
         print(f'  FAIL: {name}')
 
 def make(vals):
-    c = Char256Column_SoA(max(len(vals), 1))
+    c = AsciiColumn(max(len(vals), 1))
     for v in vals: c.append(v)
     return c
 

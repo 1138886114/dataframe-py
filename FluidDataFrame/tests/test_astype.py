@@ -3,8 +3,8 @@ sys.path.insert(0, '.')
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.boolcolumn import BoolColumn
-from fluidframe.core.char256column import Char256Column_SoA
-from fluidframe.core.ucs2column import UCS2Column_SoA
+from fluidframe.core.char256column import AsciiColumn
+from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.datecolumn import DateColumn as DateColumn
 from fluidframe.core.categorycolumn import CategoryColumn
 from fluidframe.core.fastdataframe import FastDataFrame
@@ -97,7 +97,7 @@ check(uc3[1] == 'False', "bool->ucs2 [1]")
 
 # ==================== Char256Column.astype ====================
 print("=== Char256Column.astype ===")
-cc2 = Char256Column_SoA(4)
+cc2 = AsciiColumn(4)
 cc2.append('123'); cc2.append('45.67'); cc2.append('-7'); cc2.append('20240101')
 
 # char256 -> int
@@ -119,7 +119,7 @@ check(tc2[3] == 20240101, "char256->timestamp [3]")
 
 # ==================== UCS2Column.astype ====================
 print("=== UCS2Column.astype ===")
-uc5 = UCS2Column_SoA(4)
+uc5 = UCS2Column(4)
 uc5.append('100'); uc5.append('3.14'); uc5.append('-5'); uc5.append('20231225')
 
 # ucs2 -> int
@@ -191,7 +191,7 @@ check(df2['C'].dtype == 6, "df astype C unchanged")
 
 # ==================== to_numeric ====================
 print("=== to_numeric ===")
-s = UCS2Column_SoA(4)
+s = UCS2Column(4)
 s.append('123'); s.append('45.67'); s.append('not_a_number'); s.append('-7.5')
 
 res = to_numeric(s, errors='coerce')
@@ -212,7 +212,7 @@ except ValueError:
 
 # ==================== to_datetime ====================
 print("=== to_datetime ===")
-s2 = UCS2Column_SoA(4)
+s2 = UCS2Column(4)
 s2.append('2024-01-01'); s2.append('20230615'); s2.append('invalid'); s2.append('2020-02-29')
 
 res2 = to_datetime(s2, errors='coerce')

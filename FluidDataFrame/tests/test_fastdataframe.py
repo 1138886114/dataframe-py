@@ -8,8 +8,8 @@ sys.path.insert(0, '..')
 from fluidframe.core.fastdataframe import FastDataFrame
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
-from fluidframe.core.char256column import Char256Column_SoA
-from fluidframe.core.ucs2column import UCS2Column_SoA
+from fluidframe.core.char256column import AsciiColumn
+from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.datecolumn import DateColumn as DateColumn
 from fluidframe._schema_types import Char256, Date
 
@@ -79,10 +79,10 @@ def test_init():
     check('schema float', isinstance(df.columns['a'], DoubleColumn))
 
     df = FastDataFrame({'a': str})
-    check('schema str', isinstance(df.columns['a'], UCS2Column_SoA))
+    check('schema str', isinstance(df.columns['a'], UCS2Column))
 
     df = FastDataFrame({'a': Char256})
-    check('schema char256', isinstance(df.columns['a'], Char256Column_SoA))
+    check('schema char256', isinstance(df.columns['a'], AsciiColumn))
 
     df = FastDataFrame({'a': Date})
     check('schema timestamp', isinstance(df.columns['a'], DateColumn))

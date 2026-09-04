@@ -153,29 +153,29 @@ class TestMerge:
 class TestToNumericDatetimeTimedelta:
     def test_to_numeric(self):
         from fluidframe.core.fluidframe import to_numeric
-        from fluidframe.core.ucs2column import UCS2Column_SoA
-        col = UCS2Column_SoA(3); col.append('1'); col.append('2.5'); col.append('abc')
+        from fluidframe.core.ucs2column import UCS2Column
+        col = UCS2Column(3); col.append('1'); col.append('2.5'); col.append('abc')
         r = to_numeric(col, errors='coerce')
         check('coerce', r[0] == 1 and r[1] == 2.5)
 
     def test_to_datetime(self):
         from fluidframe.core.fluidframe import to_datetime
-        from fluidframe.core.ucs2column import UCS2Column_SoA
-        col = UCS2Column_SoA(2); col.append('2023-01-15'); col.append('2023/06/20')
+        from fluidframe.core.ucs2column import UCS2Column
+        col = UCS2Column(2); col.append('2023-01-15'); col.append('2023/06/20')
         r = to_datetime(col)
         check('to_datetime', r.length == 2)
 
     def test_to_date(self):
         from fluidframe.core.fluidframe import to_date
-        from fluidframe.core.ucs2column import UCS2Column_SoA
-        col = UCS2Column_SoA(2); col.append('2023-01-15'); col.append('20230620')
+        from fluidframe.core.ucs2column import UCS2Column
+        col = UCS2Column(2); col.append('2023-01-15'); col.append('20230620')
         r = to_date(col)
         check('to_date', r.length == 2)
 
     def test_to_time(self):
         from fluidframe.core.fluidframe import to_time
-        from fluidframe.core.ucs2column import UCS2Column_SoA
-        col = UCS2Column_SoA(2); col.append('10:30:45'); col.append('14:00')
+        from fluidframe.core.ucs2column import UCS2Column
+        col = UCS2Column(2); col.append('10:30:45'); col.append('14:00')
         r = to_time(col)
         check('to_time', r.length == 2)
 

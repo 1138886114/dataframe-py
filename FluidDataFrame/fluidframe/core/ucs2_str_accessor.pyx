@@ -3,17 +3,17 @@
 cimport cython
 
 from fluidframe.core.intcolumn cimport IntColumn
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.ucs2column cimport UCS2Column
 
 
 cdef class StringAccessor_UCS2:
-    """Pandas-style .str accessor for UCS2Column_SoA.
-    All methods delegate to UCS2Column_SoA.
+    """Pandas-style .str accessor for UCS2Column.
+    All methods delegate to UCS2Column.
     """
 
-    cdef UCS2Column_SoA _col
+    cdef UCS2Column _col
 
-    def __cinit__(self, UCS2Column_SoA col):
+    def __cinit__(self, UCS2Column col):
         self._col = col
 
     # ==================== Search / Match ====================

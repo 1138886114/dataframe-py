@@ -19,8 +19,8 @@ from fluidframe.core._base cimport (
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
-from fluidframe.core.char256column cimport Char256Column_SoA
-from fluidframe.core.ucs2column cimport UCS2Column_SoA
+from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
@@ -381,7 +381,7 @@ cdef class DateColumn(BaseColumn):
             _days_to_ymd(ptr[i], &y, &m, &d)
             parts.append(fmt.replace('%Y', str(y)).replace('%m', f'{m:02d}').replace('%d', f'{d:02d}'))
 
-        cdef Char256Column_SoA res = Char256Column_SoA(max(n, 1))
+        cdef AsciiColumn res = AsciiColumn(max(n, 1))
         for s in parts:
             res.append(s)
         return res
@@ -797,7 +797,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def day_name(self):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int dow
@@ -811,7 +811,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def month_name(self):
-        cdef Char256Column_SoA res = Char256Column_SoA(max(self.length, 1))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int y, m, d
@@ -1069,8 +1069,8 @@ cdef class DateColumn(BaseColumn):
 
         cdef IntColumn ic
         cdef DoubleColumn dc
-        cdef UCS2Column_SoA uc
-        cdef Char256Column_SoA cc
+        cdef UCS2Column uc
+        cdef AsciiColumn cc
         cdef CategoryColumn catc
         cdef DateTimeColumn dtc
         cdef TimeColumn tmc
@@ -1093,7 +1093,7 @@ cdef class DateColumn(BaseColumn):
                     dc.data_c[i] = <double>(y * 10000 + m * 100 + d)
             return dc
         elif target_type == TYPE_CHAR256:
-            cc = Char256Column_SoA(safe_cap)
+            cc = AsciiColumn(safe_cap)
             cc.length = n
             with nogil:
                 for i in range(n):
@@ -1111,7 +1111,7 @@ cdef class DateColumn(BaseColumn):
                     cc.data_c[i * 256 + 10] = 0
             return cc
         elif target_type == TYPE_UCS2:
-            uc = UCS2Column_SoA(safe_cap)
+            uc = UCS2Column(safe_cap)
             uc.length = n
             for i in range(n):
                 _days_to_ymd(s_ptr[i], &y, &m, &d)

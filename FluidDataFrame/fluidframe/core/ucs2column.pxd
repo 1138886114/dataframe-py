@@ -16,7 +16,7 @@ cdef Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle, int n_
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef class UCS2Column_SoA(BaseColumn):
+cdef class UCS2Column(BaseColumn):
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef Py_UCS2* chars_c
@@ -25,7 +25,7 @@ cdef class UCS2Column_SoA(BaseColumn):
     cdef public Py_ssize_t char_length
     cdef void _reserve_rows(self, Py_ssize_t new_cap) except *
     cdef void _reserve_chars(self, Py_ssize_t new_char_cap) except *
-    cdef UCS2Column_SoA take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
+    cdef UCS2Column take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
     cdef inline void _set_item(self, Py_ssize_t idx, str val)
     cdef inline str _get_str(self, Py_ssize_t idx)
 
