@@ -25,8 +25,6 @@ cdef class BaseColumn:
     cdef public Py_ssize_t length
     cdef public Py_ssize_t capacity
     cdef public int dtype
-    cpdef void drop_row(self, Py_ssize_t row_idx)
-    cpdef void shift_left(self, Py_ssize_t pos)
 
 
 cdef inline void _c_shift_right(void* buf, Py_ssize_t pos, Py_ssize_t col_len, Py_ssize_t elem_size) noexcept nogil:

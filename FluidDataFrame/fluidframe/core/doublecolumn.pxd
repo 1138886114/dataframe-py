@@ -28,8 +28,7 @@ cdef class DoubleColumn(BaseColumn):
     cpdef DoubleColumn clip(self, double lower, double upper, bint inplace=*)
     cpdef DoubleColumn where(self, IntColumn cond, double other, bint inplace=*)
     cpdef DoubleColumn mask(self, IntColumn cond, double other, bint inplace=*)
-    cpdef void drop_row(self, Py_ssize_t row_idx)
-    cpdef void shift_left(self, Py_ssize_t pos)
+
     cdef void to_double_buffer(self, double* out, Py_ssize_t n)
     cdef double corr_with(self, double* other, Py_ssize_t n)
     cdef double cov_with(self, double* other, Py_ssize_t n)

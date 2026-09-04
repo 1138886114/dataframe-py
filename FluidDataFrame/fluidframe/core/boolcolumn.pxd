@@ -10,5 +10,4 @@ cdef class BoolColumn(BaseColumn):
     cdef unsigned char* data_c
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef BoolColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
-    cpdef void drop_row(self, Py_ssize_t row_idx)
-    cpdef void shift_left(self, Py_ssize_t pos)
+

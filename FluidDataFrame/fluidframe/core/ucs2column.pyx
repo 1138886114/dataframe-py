@@ -1246,7 +1246,9 @@ cdef class UCS2Column_SoA(BaseColumn):
             new_col.length = n
             return new_col
 
-    cpdef void drop_row(self, Py_ssize_t row_idx):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def drop_row(self, Py_ssize_t row_idx):
         cdef Py_ssize_t start_offset = self.offsets_c[row_idx]
         cdef Py_ssize_t end_offset = self.offsets_c[row_idx + 1]
         cdef Py_ssize_t char_len = end_offset - start_offset
@@ -1261,7 +1263,9 @@ cdef class UCS2Column_SoA(BaseColumn):
             self.offsets_c[i] = self.offsets_c[i + 1] - char_len
         self.length -= 1
 
-    cpdef void shift_left(self, Py_ssize_t pos):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def shift_left(self, Py_ssize_t pos):
         cdef Py_ssize_t col_len = self.length
         cdef Py_ssize_t start_offset = self.offsets_c[pos]
         cdef Py_ssize_t end_offset = self.offsets_c[pos + 1]

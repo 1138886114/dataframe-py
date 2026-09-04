@@ -372,7 +372,9 @@ cdef class BoolColumn(BaseColumn):
             self.length = n
             return self
 
-    cpdef void drop_row(self, Py_ssize_t row_idx):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def drop_row(self, Py_ssize_t row_idx):
         if row_idx < 0:
             row_idx += self.length
         cdef Py_ssize_t rem_len = self.length - row_idx - 1
@@ -382,7 +384,9 @@ cdef class BoolColumn(BaseColumn):
                     rem_len * sizeof(unsigned char))
         self.length -= 1
 
-    cpdef void shift_left(self, Py_ssize_t pos):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def shift_left(self, Py_ssize_t pos):
         cdef Py_ssize_t col_len = self.length
         _c_shift_left(self.data_c, pos, col_len, sizeof(unsigned char))
         self.length = col_len - 1

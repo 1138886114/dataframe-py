@@ -71,10 +71,14 @@ cdef class BaseColumn:
     def get_size(self):
         return 0
 
-    cpdef void drop_row(self, Py_ssize_t row_idx):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def drop_row(self, Py_ssize_t row_idx):
         raise NotImplementedError
 
-    cpdef void shift_left(self, Py_ssize_t pos):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def shift_left(self, Py_ssize_t pos):
         raise NotImplementedError
 
 

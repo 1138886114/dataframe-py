@@ -1433,7 +1433,9 @@ cdef class DoubleColumn(BaseColumn):
                 col_ptr[i] = other if cond_ptr[i] != 0 else self_ptr[i]
         return col
 
-    cpdef void drop_row(self, Py_ssize_t row_idx):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def drop_row(self, Py_ssize_t row_idx):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
         if row_idx < 0:
@@ -1447,7 +1449,9 @@ cdef class DoubleColumn(BaseColumn):
                     rem_len * sizeof(double))
         self.length -= 1
 
-    cpdef void shift_left(self, Py_ssize_t pos):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def shift_left(self, Py_ssize_t pos):
         cdef Py_ssize_t col_len = self.length
         _c_shift_left(self.data_c, pos, col_len, sizeof(double))
         self.length = col_len - 1

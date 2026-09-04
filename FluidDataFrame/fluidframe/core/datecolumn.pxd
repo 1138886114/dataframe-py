@@ -24,5 +24,4 @@ cdef class DateColumn(BaseColumn):
     cdef inline int32_t _to_ymd_int(self, int32_t epoch_days) noexcept nogil
     cdef inline int _iso_week_of_year(self, int32_t days, int* iso_y) noexcept nogil
     cdef DateColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
-    cpdef void drop_row(self, Py_ssize_t row_idx)
-    cpdef void shift_left(self, Py_ssize_t pos)
+
