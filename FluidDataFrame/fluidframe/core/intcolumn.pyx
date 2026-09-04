@@ -39,17 +39,6 @@ cdef int _cmp_int(const void* a, const void* b) noexcept nogil:
     if va > vb: return 1
     return 0
 
-cdef void _insertion_sort(int* arr, Py_ssize_t n) noexcept nogil:
-    cdef Py_ssize_t i, j
-    cdef int key
-    for i in range(1, n):
-        key = arr[i]
-        j = i - 1
-        while j >= 0 and arr[j] > key:
-            arr[j + 1] = arr[j]
-            j -= 1
-        arr[j + 1] = key
-
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -130,20 +119,17 @@ cdef class IntColumn(BaseColumn):
 
     @staticmethod
     cdef IntColumn create_view(int* ptr, Py_ssize_t length, object base_obj):
-        """零拷贝 1D 视图"""
         cdef IntColumn col = IntColumn.__new__(IntColumn)
         col.dtype = TYPE_INT
         col.capacity = length
         col.length = length
         col.data_c = ptr
         col._base_obj = base_obj
-        # 1 列, owns_data=False, is_2d=False
         col.set_meta_c(1, False, False)
         return col
 
     @staticmethod
     cdef IntColumn create_view_2d(int* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj):
-        """零拷贝 2D 矩阵块视图"""
         cdef IntColumn col = IntColumn.__new__(IntColumn)
         cdef Py_ssize_t total = rows * cols
         col.dtype = TYPE_INT
@@ -151,12 +137,10 @@ cdef class IntColumn(BaseColumn):
         col.length = total
         col.data_c = ptr
         col._base_obj = base_obj
-        # cols 列, owns_data=False, is_2d=True
         col.set_meta_c(<int>cols, False, True)
         return col
 
     cdef inline DoubleColumn _make_like_nan_dbl(self):
-        """生成与自身形状一致的纯 NaN DoubleColumn 结果列"""
         cdef Py_ssize_t c = self.cols
         cdef Py_ssize_t total = self.length
         cdef DoubleColumn res = DoubleColumn(max(total, 1), cols=c)
@@ -170,7 +154,6 @@ cdef class IntColumn(BaseColumn):
 
     @staticmethod
     def load_from_1d_array(object arr):
-        """零拷贝加载 1D 连续数组 (支持任意遵循 Buffer 协议的对象)"""
         cdef int[::1] view
         try:
             view = arr
@@ -191,7 +174,6 @@ cdef class IntColumn(BaseColumn):
 
     @staticmethod
     def load_from_2d_array(object arr, list col_names):
-        """零拷贝加载 2D 列优先数组 (Fortran-contiguous)"""
         cdef int[::1, :] view
         try:
             view = arr
@@ -403,9 +385,6 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def argmin(self): return self.idxmin()
 
-    # ------------------------------------------------------------
-    # 工业级三路划分快速选择 (防死循环、防退化)
-    # ------------------------------------------------------------
     cdef double _quickselect(self, int* a, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
         cdef Py_ssize_t l = 0, r = n - 1
         cdef Py_ssize_t i, lt, gt
@@ -773,9 +752,6 @@ cdef class IntColumn(BaseColumn):
     cdef double _std_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
         return sqrt(self._var_rows(indices, n))
 
-    # ------------------------------------------------------------
-    # 标量算术 (完全向量化)
-    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def add_val(self, int val):
@@ -1086,9 +1062,6 @@ cdef class IntColumn(BaseColumn):
                 result.append(val)
         return result
 
-    # ------------------------------------------------------------
-    # 纯 C 向量化比较算子
-    # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _cmp_op(self, object val, int op):
@@ -1318,22 +1291,17 @@ cdef class IntColumn(BaseColumn):
             self._base_obj = None
             return self
 
-    # ------------------------------------------------------------
-    # 无分支 clip 优化 (编译器生成 vpmaxsd/vpminsd 指令)
-    # ------------------------------------------------------------
     cpdef IntColumn clip(self, double lower, double upper, bint inplace=False):
         cdef IntColumn col = self if inplace else self.copy()
         cdef int* ptr = col.data_c
         cdef Py_ssize_t i, n = col.length
-        cdef int lo = <int>lower
-        cdef int hi = <int>upper
-        cdef int v
+        cdef double v
         with nogil:
             for i in range(n):
-                v = ptr[i]
-                v = lo if v < lo else v
-                v = hi if v > hi else v
-                ptr[i] = v
+                v = <double>ptr[i]
+                v = lower if v < lower else v
+                v = upper if v > upper else v
+                ptr[i] = <int>v
         return col
 
     cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=False):
@@ -1395,16 +1363,16 @@ cdef class IntColumn(BaseColumn):
                 col_ptr[i] = other if cond_ptr[i] != 0 else self_ptr[i]
         return col
 
-    cpdef void drop_row(self, Py_ssize_t row_idx, Py_ssize_t rem_len):
+    cpdef void drop_row(self, Py_ssize_t row_idx):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
         if row_idx < 0:
             row_idx += self.length
         if row_idx < 0 or row_idx >= self.length:
             raise IndexError("Row index out of bounds")
+
+        cdef Py_ssize_t rem_len = self.length - row_idx - 1
         if rem_len > 0:
-            if row_idx + 1 + rem_len > self.length:
-                rem_len = self.length - row_idx - 1
             memmove(self.data_c + row_idx,
                     self.data_c + row_idx + 1,
                     rem_len * sizeof(int))
@@ -1671,9 +1639,6 @@ cdef class IntColumn(BaseColumn):
                     out[j] = i
                     j += 1
 
-    # ------------------------------------------------------------
-    # astype: 纯 C 级别零拷贝/无冗余转换
-    # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def astype(self, object target):
@@ -1749,9 +1714,6 @@ cdef class IntColumn(BaseColumn):
                 catc.append(buf[:sz].decode('ascii'))
             return catc
 
-        # ------------------------------------------------------------
-        # Int -> DateTime: 彻底消除字符串解析，直接走纯算术微秒换算
-        # ------------------------------------------------------------
         elif target_type == TYPE_DATETIME:
             dtc = DateTimeColumn(safe_cap)
             dtc.length = n
@@ -1783,10 +1745,6 @@ cdef class IntColumn(BaseColumn):
         cdef char err_buf[128]
         snprintf(err_buf, sizeof(err_buf), "Failed to cast INT column to internal type id: %d", target_type)
         raise TypeError(err_buf.decode('ascii'))
-
-    # =================================================================
-    #  Roll 系列函数：IntColumn 版本
-    # =================================================================
 
     def roll_mean(self, Py_ssize_t window):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
@@ -1891,7 +1849,7 @@ cdef class IntColumn(BaseColumn):
         cdef int* src = self.data_c
         cdef double w = <double>window
         cdef Py_ssize_t col_idx, offset, i
-        cdef double s, s2, val, val_old, mean
+        cdef double s, s2, val, val_old, var_val
         with nogil:
             for col_idx in range(c):
                 offset = col_idx * r
@@ -1899,21 +1857,28 @@ cdef class IntColumn(BaseColumn):
                 for i in range(window):
                     val = <double>src[offset + i]
                     s += val; s2 += val * val
-                mean = s / w
+
+                var_val = s2 - (s * s) / w
+                if var_val < 0.0: var_val = 0.0
+
                 if ddof:
-                    dst[offset + window - 1] = (s2 - s * mean) / (w - 1.0)
+                    dst[offset + window - 1] = var_val / (w - 1.0)
                 else:
-                    dst[offset + window - 1] = (s2 - s * mean) / w
+                    dst[offset + window - 1] = var_val / w
+
                 for i in range(window, r):
                     val = <double>src[offset + i]
                     val_old = <double>src[offset + i - window]
                     s += val - val_old
                     s2 += val * val - val_old * val_old
-                    mean = s / w
+
+                    var_val = s2 - (s * s) / w
+                    if var_val < 0.0: var_val = 0.0
+
                     if ddof:
-                        dst[offset + i] = (s2 - s * mean) / (w - 1.0)
+                        dst[offset + i] = var_val / (w - 1.0)
                     else:
-                        dst[offset + i] = (s2 - s * mean) / w
+                        dst[offset + i] = var_val / w
         return res
 
     def roll_std(self, Py_ssize_t window, bint ddof=True):
@@ -1925,7 +1890,7 @@ cdef class IntColumn(BaseColumn):
             for col_idx in range(c):
                 offset = col_idx * r
                 for i in range(window - 1, r):
-                    if v[offset + i] == v[offset + i]:
+                    if v[offset + i] == v[offset + i]:  # Not NaN check
                         v[offset + i] = sqrt(v[offset + i])
         return var_col
 
@@ -1946,7 +1911,8 @@ cdef class IntColumn(BaseColumn):
                     for i in range(window - 1, r):
                         for j in range(window):
                             buf[j] = src[offset + i - window + 1 + j]
-                        _insertion_sort(buf, window)
+                        qsort(buf, window, sizeof(int), _cmp_int)
+
                         if window & 1:
                             med = <double>buf[window // 2]
                         else:
@@ -1976,7 +1942,8 @@ cdef class IntColumn(BaseColumn):
                     for i in range(window - 1, r):
                         for j in range(window):
                             buf[j] = src[offset + i - window + 1 + j]
-                        _insertion_sort(buf, window)
+                        qsort(buf, window, sizeof(int), _cmp_int)
+
                         if i_low >= window - 1:
                             dst[offset + i] = <double>buf[window - 1]
                         else:
@@ -1989,16 +1956,22 @@ cdef class IntColumn(BaseColumn):
 
     def roll_apply_weights(self, Py_ssize_t window, list weights):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t wlen = len(weights)
+        if wlen != window:
+            raise ValueError(f"Length of weights ({wlen}) must match window size ({window})")
+
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r < window: return res
         cdef double* dst = res.data_c
         cdef int* src = self.data_c
-        cdef Py_ssize_t wlen = len(weights)
         cdef Py_ssize_t col_idx, offset, i, j
         cdef double s
         cdef double* wbuf = <double*>aligned_malloc(wlen * sizeof(double))
         if not wbuf: raise MemoryError()
-        for i in range(wlen): wbuf[i] = <double>weights[i]
+
+        for i in range(wlen):
+            wbuf[i] = <double>weights[i]
+
         try:
             with nogil:
                 for col_idx in range(c):
@@ -2091,13 +2064,25 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r < window: return res
+
+        cdef bint other_is_double = isinstance(other, DoubleColumn)
+        cdef bint other_is_int = isinstance(other, IntColumn)
+        if not (other_is_double or other_is_int):
+            raise TypeError("other must be DoubleColumn or IntColumn")
+
+        cdef double* other_d_ptr = NULL
+        cdef int* other_i_ptr = NULL
+        if other_is_double:
+            other_d_ptr = (<DoubleColumn>other).data_c
+        else:
+            other_i_ptr = (<IntColumn>other).data_c
+
         cdef double* dst = res.data_c
         cdef int* src_x = self.data_c
-        cdef double* src_y
         cdef double n_f = <double>window, inv_w = 1.0 / n_f
         cdef Py_ssize_t col_idx, offset, i
         cdef double sum_x, sum_y, sum_xx, sum_yy, sum_xy, x, y, old_x, old_y, vx, vy, denom, cov_xy
-        cdef bint other_is_double = (<object>other).dtype == TYPE_DOUBLE
+
         with nogil:
             for col_idx in range(c):
                 offset = col_idx * r
@@ -2105,28 +2090,33 @@ cdef class IntColumn(BaseColumn):
                 for i in range(window):
                     x = <double>src_x[offset + i]
                     if other_is_double:
-                        y = (<DoubleColumn>other).data_c[offset + i]
+                        y = other_d_ptr[offset + i]
                     else:
-                        y = <double>((<IntColumn>other).data_c[offset + i])
+                        y = <double>(other_i_ptr[offset + i])
+
                     sum_x += x; sum_y += y; sum_xx += x * x; sum_yy += y * y; sum_xy += x * y
+
                 vx = sum_xx - sum_x * sum_x * inv_w
                 vy = sum_yy - sum_y * sum_y * inv_w
                 denom = sqrt(vx * vy)
                 cov_xy = sum_xy - sum_x * sum_y * inv_w
                 dst[offset + window - 1] = cov_xy / denom if (denom > 0.0) else 0.0
+
                 for i in range(window, r):
                     x = <double>src_x[offset + i]
+                    old_x = <double>src_x[offset + i - window]
+
                     if other_is_double:
-                        y = (<DoubleColumn>other).data_c[offset + i]
-                        old_x = <double>src_x[offset + i - window]
-                        old_y = (<DoubleColumn>other).data_c[offset + i - window]
+                        y = other_d_ptr[offset + i]
+                        old_y = other_d_ptr[offset + i - window]
                     else:
-                        y = <double>((<IntColumn>other).data_c[offset + i])
-                        old_x = <double>src_x[offset + i - window]
-                        old_y = <double>((<IntColumn>other).data_c[offset + i - window])
+                        y = <double>(other_i_ptr[offset + i])
+                        old_y = <double>(other_i_ptr[offset + i - window])
+
                     sum_x += x - old_x; sum_y += y - old_y
                     sum_xx += x * x - old_x * old_x; sum_yy += y * y - old_y * old_y
                     sum_xy += x * y - old_x * old_y
+
                     vx = sum_xx - sum_x * sum_x * inv_w
                     vy = sum_yy - sum_y * sum_y * inv_w
                     denom = sqrt(vx * vy)
@@ -2138,12 +2128,25 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r < window: return res
+
+        cdef bint other_is_double = isinstance(other, DoubleColumn)
+        cdef bint other_is_int = isinstance(other, IntColumn)
+        if not (other_is_double or other_is_int):
+            raise TypeError("other must be DoubleColumn or IntColumn")
+
+        cdef double* other_d_ptr = NULL
+        cdef int* other_i_ptr = NULL
+        if other_is_double:
+            other_d_ptr = (<DoubleColumn>other).data_c
+        else:
+            other_i_ptr = (<IntColumn>other).data_c
+
         cdef double* dst = res.data_c
         cdef int* src_x = self.data_c
         cdef double n_f = <double>window, inv_w = 1.0 / n_f
         cdef Py_ssize_t col_idx, offset, i
         cdef double sum_x, sum_y, sum_xy, x, y, old_x, old_y
-        cdef bint other_is_double = (<object>other).dtype == TYPE_DOUBLE
+
         with nogil:
             for col_idx in range(c):
                 offset = col_idx * r
@@ -2151,21 +2154,24 @@ cdef class IntColumn(BaseColumn):
                 for i in range(window):
                     x = <double>src_x[offset + i]
                     if other_is_double:
-                        y = (<DoubleColumn>other).data_c[offset + i]
+                        y = other_d_ptr[offset + i]
                     else:
-                        y = <double>((<IntColumn>other).data_c[offset + i])
+                        y = <double>(other_i_ptr[offset + i])
+
                     sum_x += x; sum_y += y; sum_xy += x * y
                 dst[offset + window - 1] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
+
                 for i in range(window, r):
                     x = <double>src_x[offset + i]
+                    old_x = <double>src_x[offset + i - window]
+
                     if other_is_double:
-                        y = (<DoubleColumn>other).data_c[offset + i]
-                        old_x = <double>src_x[offset + i - window]
-                        old_y = (<DoubleColumn>other).data_c[offset + i - window]
+                        y = other_d_ptr[offset + i]
+                        old_y = other_d_ptr[offset + i - window]
                     else:
-                        y = <double>((<IntColumn>other).data_c[offset + i])
-                        old_x = <double>src_x[offset + i - window]
-                        old_y = <double>((<IntColumn>other).data_c[offset + i - window])
+                        y = <double>(other_i_ptr[offset + i])
+                        old_y = <double>(other_i_ptr[offset + i - window])
+
                     sum_x += x - old_x; sum_y += y - old_y
                     sum_xy += x * y - old_x * old_y
                     dst[offset + i] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
