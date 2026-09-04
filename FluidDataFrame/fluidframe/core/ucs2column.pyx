@@ -13,7 +13,7 @@ from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, 
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
-from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.asciicolumn cimport AsciiColumn
 from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn

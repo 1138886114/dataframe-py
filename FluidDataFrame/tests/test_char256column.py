@@ -1,6 +1,6 @@
 import sys
 sys.path.insert(0, '..')
-from fluidframe.core.char256column import AsciiColumn
+from fluidframe.core.asciicolumn import AsciiColumn
 
 passed = 0
 failed = 0

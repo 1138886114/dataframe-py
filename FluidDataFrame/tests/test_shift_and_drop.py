@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, '..')
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
-from fluidframe.core.char256column import AsciiColumn
+from fluidframe.core.asciicolumn import AsciiColumn
 from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.datecolumn import DateColumn
 from fluidframe.core.boolcolumn import BoolColumn

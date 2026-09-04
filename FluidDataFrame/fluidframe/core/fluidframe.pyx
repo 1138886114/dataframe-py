@@ -20,7 +20,7 @@ from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Ti
 
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
-from fluidframe.core.char256column import AsciiColumn
+from fluidframe.core.asciicolumn import AsciiColumn
 from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.boolcolumn import BoolColumn
 from fluidframe.core.categorycolumn import CategoryColumn

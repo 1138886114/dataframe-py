@@ -8,7 +8,7 @@ from fluidframe.core._base cimport aligned_malloc, os_aligned_free, BaseColumn, 
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
-from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.asciicolumn cimport AsciiColumn
 from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.index cimport IndexBase

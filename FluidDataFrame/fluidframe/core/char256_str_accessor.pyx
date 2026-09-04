@@ -3,7 +3,7 @@
 cimport cython
 
 from fluidframe.core.intcolumn cimport IntColumn
-from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.asciicolumn cimport AsciiColumn
 
 
 cdef class StringAccessor_Char256:

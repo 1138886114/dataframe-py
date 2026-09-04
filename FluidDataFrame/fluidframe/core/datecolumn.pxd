@@ -5,7 +5,7 @@ from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove
 from fluidframe.core._base cimport BaseColumn
 from fluidframe.core.intcolumn cimport IntColumn
-from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.asciicolumn cimport AsciiColumn
 
 cdef bint _is_leap_year(int y) noexcept nogil
 cdef int _days_in_month(int y, int m) noexcept nogil

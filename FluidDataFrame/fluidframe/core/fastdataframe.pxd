@@ -7,7 +7,7 @@ from cpython.unicode cimport Py_UCS2
 from fluidframe.core._base cimport BaseColumn, NumericType, DataType
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
-from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.asciicolumn cimport AsciiColumn
 from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn
 from fluidframe.core.boolcolumn cimport BoolColumn

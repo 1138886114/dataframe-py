@@ -139,7 +139,7 @@ from fluidframe.core._base cimport (
     _vec_pearson_corr, _vec_pearson_cov, _vec_euclidean_dist,
     _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist
 )
-from fluidframe.core.char256column cimport AsciiColumn
+from fluidframe.core.asciicolumn cimport AsciiColumn
 from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn, _days_to_ymd
 from fluidframe.core.boolcolumn cimport BoolColumn

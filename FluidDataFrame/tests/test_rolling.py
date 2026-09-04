@@ -167,7 +167,7 @@ class TestRollingCorrCov:
 class TestRollingErrors:
     def test_non_numeric(self):
         df_str = FastDataFrame()
-        from fluidframe.core.char256column import AsciiColumn
+        from fluidframe.core.asciicolumn import AsciiColumn
         cc = AsciiColumn()
         for v in ["a", "b", "c"]: cc.append(v)
         df_str['S'] = cc
