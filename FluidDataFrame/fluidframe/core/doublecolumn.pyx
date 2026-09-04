@@ -1894,7 +1894,7 @@ cdef class DoubleColumn(BaseColumn):
         if r < window: return res
 
         # 分配单列复用的队列缓冲 (最大长度为 r)
-        cdef Py_ssize_t* q = <Py_ssize_t*>malloc(r * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
         if not q: raise MemoryError()
 
         cdef double* src = self.data_c
@@ -1919,7 +1919,7 @@ cdef class DoubleColumn(BaseColumn):
                         if i >= window - 1:
                             dst[offset + i] = src[offset + q[head]]
         finally:
-            free(q)
+            os_aligned_free(q)
         return res
 
     @cython.binding(False)
@@ -1932,7 +1932,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols
         if r < window: return res
 
-        cdef Py_ssize_t* q = <Py_ssize_t*>malloc(r * sizeof(Py_ssize_t))
+        cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
         if not q: raise MemoryError()
 
         cdef double* src = self.data_c
@@ -1955,7 +1955,7 @@ cdef class DoubleColumn(BaseColumn):
                         if i >= window - 1:
                             dst[offset + i] = src[offset + q[head]]
         finally:
-            free(q)
+            os_aligned_free(q)
         return res
 
     # ============================================================
@@ -2026,7 +2026,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols
         if r < window: return res
 
-        cdef double* buf = <double*>malloc(window * sizeof(double))
+        cdef double* buf = <double*>aligned_malloc(window * sizeof(double))
         if not buf: raise MemoryError()
 
         cdef double pos = q * <double>(window - 1)
@@ -2049,7 +2049,7 @@ cdef class DoubleColumn(BaseColumn):
                         else:
                             dst[offset + i] = buf[i_low] + frac * (buf[i_low + 1] - buf[i_low])
         finally:
-            free(buf)
+            os_aligned_free(buf)
         return res
 
     @cython.binding(False)

@@ -1937,7 +1937,7 @@ cdef class IntColumn(BaseColumn):
         cdef int* src = self.data_c
         cdef double med
         cdef Py_ssize_t col_idx, offset, i, j
-        cdef int* buf = <int*>malloc(window * sizeof(int))
+        cdef int* buf = <int*>aligned_malloc(window * sizeof(int))
         if not buf: raise MemoryError()
         try:
             with nogil:
@@ -1953,7 +1953,7 @@ cdef class IntColumn(BaseColumn):
                             med = (<double>buf[window // 2 - 1] + <double>buf[window // 2]) / 2.0
                         dst[offset + i] = med
         finally:
-            free(buf)
+            os_aligned_free(buf)
         return res
 
     def roll_quantile(self, Py_ssize_t window, double quantile):
@@ -1967,7 +1967,7 @@ cdef class IntColumn(BaseColumn):
         cdef double frac, val_low, val_high
         i_low = <Py_ssize_t>pos
         frac = pos - <double>i_low
-        cdef int* buf = <int*>malloc(window * sizeof(int))
+        cdef int* buf = <int*>aligned_malloc(window * sizeof(int))
         if not buf: raise MemoryError()
         try:
             with nogil:
@@ -1984,7 +1984,7 @@ cdef class IntColumn(BaseColumn):
                             val_high = <double>buf[i_low + 1]
                             dst[offset + i] = val_low + frac * (val_high - val_low)
         finally:
-            free(buf)
+            os_aligned_free(buf)
         return res
 
     def roll_apply_weights(self, Py_ssize_t window, list weights):
@@ -1996,7 +1996,7 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t wlen = len(weights)
         cdef Py_ssize_t col_idx, offset, i, j
         cdef double s
-        cdef double* wbuf = <double*>malloc(wlen * sizeof(double))
+        cdef double* wbuf = <double*>aligned_malloc(wlen * sizeof(double))
         if not wbuf: raise MemoryError()
         for i in range(wlen): wbuf[i] = <double>weights[i]
         try:
@@ -2009,7 +2009,7 @@ cdef class IntColumn(BaseColumn):
                             s += <double>src[offset + i - window + 1 + j] * wbuf[j]
                         dst[offset + i] = s
         finally:
-            free(wbuf)
+            os_aligned_free(wbuf)
         return res
 
     def roll_custom(self, Py_ssize_t window, object func):
