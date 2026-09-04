@@ -17,7 +17,11 @@ from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     _resolve_astype_target
 )
-from fluidframe.core.doublecolumn cimport DoubleColumn
+from fluidframe.core.doublecolumn cimport (
+    DoubleColumn, _c_corr, _c_cov, _c_euclidean_dist,
+    _c_manhattan_dist, _c_cosine_similarity, _c_cosine_dist,
+    _c_jaccard_sim, _c_hamming_dist
+)
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.char256column cimport Char256Column_SoA
 from fluidframe.core.ucs2column cimport UCS2Column_SoA
@@ -1412,6 +1416,236 @@ cdef class IntColumn(BaseColumn):
         with nogil:
             for i in range(n):
                 out[i] = <double>ptr[i]
+
+    cdef double corr_with(self, double* other, Py_ssize_t n):
+        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
+        if not buf: raise MemoryError()
+        try:
+            self.to_double_buffer(buf, n)
+            return _c_corr(buf, other, n)
+        finally:
+            os_aligned_free(buf)
+
+    cdef double cov_with(self, double* other, Py_ssize_t n):
+        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
+        if not buf: raise MemoryError()
+        try:
+            self.to_double_buffer(buf, n)
+            return _c_cov(buf, other, n)
+        finally:
+            os_aligned_free(buf)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pearson_corr_with(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n < 2: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        cdef IntColumn other_int
+        cdef DoubleColumn other_dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            other_int = <IntColumn>other
+            other_int.to_double_buffer(temp.data_c, n)
+        elif isinstance(other, DoubleColumn):
+            other_dbl = <DoubleColumn>other
+            with nogil:
+                for i in range(n):
+                    temp.data_c[i] = other_dbl.data_c[i]
+        else:
+            raise TypeError(f"Unsupported type: {type(other)}")
+        return self.corr_with(temp.data_c, n)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pearson_cov_with(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n < 2: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        cdef IntColumn other_int
+        cdef DoubleColumn other_dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            other_int = <IntColumn>other
+            other_int.to_double_buffer(temp.data_c, n)
+        elif isinstance(other, DoubleColumn):
+            other_dbl = <DoubleColumn>other
+            with nogil:
+                for i in range(n):
+                    temp.data_c[i] = other_dbl.data_c[i]
+        else:
+            raise TypeError(f"Unsupported type: {type(other)}")
+        return self.cov_with(temp.data_c, n)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def euclidean_dist(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n == 0: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        cdef IntColumn other_int
+        cdef DoubleColumn other_dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            other_int = <IntColumn>other
+            other_int.to_double_buffer(temp.data_c, n)
+        elif isinstance(other, DoubleColumn):
+            other_dbl = <DoubleColumn>other
+            with nogil:
+                for i in range(n):
+                    temp.data_c[i] = other_dbl.data_c[i]
+        else:
+            raise TypeError(f"Unsupported type: {type(other)}")
+        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
+        if not buf: raise MemoryError()
+        try:
+            self.to_double_buffer(buf, n)
+            return _c_euclidean_dist(buf, temp.data_c, n)
+        finally:
+            os_aligned_free(buf)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def manhattan_dist(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n == 0: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        cdef IntColumn other_int
+        cdef DoubleColumn other_dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            other_int = <IntColumn>other
+            other_int.to_double_buffer(temp.data_c, n)
+        elif isinstance(other, DoubleColumn):
+            other_dbl = <DoubleColumn>other
+            with nogil:
+                for i in range(n):
+                    temp.data_c[i] = other_dbl.data_c[i]
+        else:
+            raise TypeError(f"Unsupported type: {type(other)}")
+        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
+        if not buf: raise MemoryError()
+        try:
+            self.to_double_buffer(buf, n)
+            return _c_manhattan_dist(buf, temp.data_c, n)
+        finally:
+            os_aligned_free(buf)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cosine_dist(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n == 0: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        cdef IntColumn other_int
+        cdef DoubleColumn other_dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            other_int = <IntColumn>other
+            other_int.to_double_buffer(temp.data_c, n)
+        elif isinstance(other, DoubleColumn):
+            other_dbl = <DoubleColumn>other
+            with nogil:
+                for i in range(n):
+                    temp.data_c[i] = other_dbl.data_c[i]
+        else:
+            raise TypeError(f"Unsupported type: {type(other)}")
+        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
+        if not buf: raise MemoryError()
+        try:
+            self.to_double_buffer(buf, n)
+            return _c_cosine_dist(buf, temp.data_c, n)
+        finally:
+            os_aligned_free(buf)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cosine_similarity(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n == 0: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        cdef IntColumn other_int
+        cdef DoubleColumn other_dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            other_int = <IntColumn>other
+            other_int.to_double_buffer(temp.data_c, n)
+        elif isinstance(other, DoubleColumn):
+            other_dbl = <DoubleColumn>other
+            with nogil:
+                for i in range(n):
+                    temp.data_c[i] = other_dbl.data_c[i]
+        else:
+            raise TypeError(f"Unsupported type: {type(other)}")
+        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
+        if not buf: raise MemoryError()
+        try:
+            self.to_double_buffer(buf, n)
+            return _c_cosine_similarity(buf, temp.data_c, n)
+        finally:
+            os_aligned_free(buf)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def jaccard_sim(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n == 0: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        cdef IntColumn other_int
+        cdef DoubleColumn other_dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            other_int = <IntColumn>other
+            other_int.to_double_buffer(temp.data_c, n)
+        elif isinstance(other, DoubleColumn):
+            other_dbl = <DoubleColumn>other
+            with nogil:
+                for i in range(n):
+                    temp.data_c[i] = other_dbl.data_c[i]
+        else:
+            raise TypeError(f"Unsupported type: {type(other)}")
+        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
+        if not buf: raise MemoryError()
+        try:
+            self.to_double_buffer(buf, n)
+            return _c_jaccard_sim(buf, temp.data_c, n)
+        finally:
+            os_aligned_free(buf)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def hamming_dist(self, other):
+        cdef Py_ssize_t n = min(self.length, other.length)
+        if n == 0: return NAN
+        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
+        temp.length = n
+        cdef IntColumn other_int
+        cdef DoubleColumn other_dbl
+        cdef Py_ssize_t i
+        if isinstance(other, IntColumn):
+            other_int = <IntColumn>other
+            other_int.to_double_buffer(temp.data_c, n)
+        elif isinstance(other, DoubleColumn):
+            other_dbl = <DoubleColumn>other
+            with nogil:
+                for i in range(n):
+                    temp.data_c[i] = other_dbl.data_c[i]
+        else:
+            raise TypeError(f"Unsupported type: {type(other)}")
+        cdef double* buf = <double*>aligned_malloc(n * sizeof(double))
+        if not buf: raise MemoryError()
+        try:
+            self.to_double_buffer(buf, n)
+            return _c_hamming_dist(buf, temp.data_c, n)
+        finally:
+            os_aligned_free(buf)
 
     cdef IntColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, int sentinel):
         cdef IntColumn new_col = IntColumn(max(n, 1))

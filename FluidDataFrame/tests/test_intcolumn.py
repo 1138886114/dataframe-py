@@ -988,6 +988,56 @@ def test_quantile():
     q = col.quantile(0.5)
     check('quantile 0.5', abs(q - 5.5) < 1e-9)
 
+def test_distances_int_int():
+    a = IntColumn(3)
+    for v in [1, 2, 3]:
+        a.append(v)
+    b = IntColumn(3)
+    for v in [4, 5, 6]:
+        b.append(v)
+    check('pearson_corr int-int', _approx(a.pearson_corr_with(b), 1.0))
+    check('pearson_cov int-int', a.pearson_cov_with(b) > 0)
+    check('euclidean int-int', _approx(a.euclidean_dist(b), math.sqrt(27.0)))
+    check('manhattan int-int', _approx(a.manhattan_dist(b), 9.0))
+    cd = a.cosine_dist(b)
+    check('cosine_dist int-int', 0.0 <= cd <= 2.0)
+    cs = a.cosine_similarity(b)
+    check('cosine_sim int-int', -1.0 <= cs <= 1.0)
+
+def test_distances_int_double():
+    a = IntColumn(3)
+    for v in [1, 2, 3]:
+        a.append(v)
+    b = DoubleColumn(3)
+    for v in [4.0, 5.0, 6.0]:
+        b.append(v)
+    check('pearson_corr int-dbl', _approx(a.pearson_corr_with(b), 1.0))
+    check('pearson_cov int-dbl', a.pearson_cov_with(b) > 0)
+    check('euclidean int-dbl', _approx(a.euclidean_dist(b), math.sqrt(27.0)))
+    check('manhattan int-dbl', _approx(a.manhattan_dist(b), 9.0))
+    cd = a.cosine_dist(b)
+    check('cosine_dist int-dbl', 0.0 <= cd <= 2.0)
+    cs = a.cosine_similarity(b)
+    check('cosine_sim int-dbl', -1.0 <= cs <= 1.0)
+
+def test_jaccard_sim_int():
+    a = IntColumn(4)
+    for v in [1, 0, 1, 0]:
+        a.append(v)
+    b = IntColumn(4)
+    for v in [1, 1, 0, 0]:
+        b.append(v)
+    check('jaccard_sim int', _approx(a.jaccard_sim(b), 1.0/3.0))
+
+def test_hamming_dist_int():
+    a = IntColumn(4)
+    for v in [1, 2, 3, 4]:
+        a.append(v)
+    b = IntColumn(4)
+    for v in [1, 2, 5, 4]:
+        b.append(v)
+    check('hamming_dist int', _approx(a.hamming_dist(b), 0.25))
+
 def run_all():
     print('=== IntColumn Tests ===')
     test_empty()
@@ -1102,6 +1152,10 @@ def run_all():
     test_astype()
     test_get_size()
     test_quantile()
+    test_distances_int_int()
+    test_distances_int_double()
+    test_jaccard_sim_int()
+    test_hamming_dist_int()
     test_reorder()
     print(f'\nResults: {passed} passed, {failed} failed')
     if failed: sys.exit(1)
