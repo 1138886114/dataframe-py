@@ -393,14 +393,13 @@ def test_concat():
     check('concat two has index col', 'index' in r.columns)
 
 def test_merge():
-    from fluidframe.core.fluidframe import merge_inner, merge_left, merge_outer
     df1 = FastDataFrame({'id': int, 'val1': float})
     df1.append_row(id=1, val1=10.0); df1.append_row(id=2, val1=20.0)
     df2 = FastDataFrame({'id': int, 'val2': float})
     df2.append_row(id=2, val2=200.0); df2.append_row(id=3, val2=300.0)
-    check('merge inner', merge_inner([df1, df2], 'id', 'id').shape == (1, 3))
-    check('merge left', merge_left([df1, df2], 'id', 'id').shape == (2, 3))
-    check('merge outer', merge_outer([df1, df2], 'id', 'id').shape == (3, 3))
+    check('merge inner', df1.merge(df2, on='id', how='inner').shape == (1, 3))
+    check('merge left', df1.merge(df2, on='id', how='left').shape == (2, 3))
+    check('merge outer', df1.merge(df2, on='id', how='outer').shape == (3, 3))
 
 
 # =====================================================================

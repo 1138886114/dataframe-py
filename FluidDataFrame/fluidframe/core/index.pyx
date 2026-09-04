@@ -216,16 +216,35 @@ cdef class MultiIndex(IndexBase):
             except ValueError:
                 raise KeyError(target[level_idx])
 
-        # Build hash key
+        # Partial key: linear scan matching first target_len levels
+        cdef IntColumn col
+        cdef list matches = []
+        cdef Py_ssize_t i, j
+        cdef bint match
+        if target_len < self.nlevels:
+            for i in range(self.length):
+                match = True
+                for j in range(target_len):
+                    col = <IntColumn>self.codes[j]
+                    if col.data_c[i] != target_codes[j]:
+                        match = False
+                        break
+                if match:
+                    matches.append(i)
+            if not matches:
+                raise KeyError(key)
+            if len(matches) == 1:
+                return matches[0]
+            return matches
+
+        # Full key: use hash cache for O(1) lookup
         cdef long long hash_val = 0
         for level_idx in range(target_len):
             hash_val = hash_val * 1000000 + target_codes[level_idx]
 
-        # Build cache if not exists
         if self._hash_cache is None:
             self._build_hash_cache()
 
-        # Lookup in hash cache
         if hash_val in self._hash_cache:
             matches = self._hash_cache[hash_val]
             if not matches:

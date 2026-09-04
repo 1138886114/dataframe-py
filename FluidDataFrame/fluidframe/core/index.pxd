@@ -29,4 +29,6 @@ cdef class MultiIndex(IndexBase):
     cdef public list codes           # [IntColumn, IntColumn...] 重用 IntColumn
     cdef public int nlevels
     cdef public list names           # 每层的名字
+    cdef public dict _hash_cache     # 哈希缓存用于 O(1) 查找
+    cdef void _build_hash_cache(self)
     cpdef list values(self)

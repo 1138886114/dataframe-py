@@ -155,12 +155,13 @@ class _RollingWrapper:
     """轻量级滚动窗口包装器，委托给列的 roll_xxx 方法"""
 
     _SUPPORTED_TYPES = {TYPE_INT, TYPE_DOUBLE}
+    _TYPE_LABELS = {0: 'int', 2: 'float', 3: 'char256', 4: 'ucs2', 5: 'date', 6: 'bool', 7: 'category', 8: 'datetime', 9: 'time'}
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __init__(self, col, window):
         if col.dtype not in self._SUPPORTED_TYPES:
-            type_name = _fast_type_name(col.dtype)
+            type_name = self._TYPE_LABELS.get(col.dtype, 'unknown')
             raise TypeError(f"Rolling window operations are not supported for {type_name} columns")
         self._col = col
         self._window = window
@@ -2907,4 +2908,4 @@ cdef class FastDataFrame:
         elif col.dtype == TYPE_DOUBLE:
             (<DoubleColumn>col).to_double_buffer(out, n)
         else:
-            raise TypeError(f"Cannot convert column of type {_fast_type_name(col.dtype)} to double buffer")
+            raise TypeError(f"Cannot convert column of type {self._fast_type_name(col.dtype)} to double buffer")
