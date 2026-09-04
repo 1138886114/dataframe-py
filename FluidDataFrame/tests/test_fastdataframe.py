@@ -712,6 +712,636 @@ def test_stress_multi_type_filter():
 
 
 # =====================================================================
+#  Construction: from_dict, from_list, from_arrays
+# =====================================================================
+def test_from_dict():
+    df = FastDataFrame.from_dict({'a': [1, 2, 3], 'b': [4.0, 5.0, 6.0]}, schema={'a': int, 'b': float})
+    check('from_dict shape', df.shape == (3, 2))
+    check('from_dict a[1]', df['a'][1] == 2)
+    check('from_dict b[2]', df['b'][2] == 6.0)
+
+    df2 = FastDataFrame.from_dict({'x': [10]}, schema={'x': int}, columns=['val'])
+    check('from_dict rename', 'val' in df2.columns)
+
+    check('from_dict empty', FastDataFrame.from_dict({}, schema={}).shape == (0, 0))
+    check('from_dict mismatch', expect_exception(ValueError, FastDataFrame.from_dict,
+          {'a': [1, 2], 'b': [3]}, schema={'a': int, 'b': int}))
+
+def test_from_list():
+    df = FastDataFrame.from_list([[1, 'a'], [2, 'b'], [3, 'c']], schema={'id': int, 'ch': str})
+    check('from_list shape', df.shape == (3, 2))
+    check('from_list id[0]', df['id'][0] == 1)
+    check('from_list ch[2]', df['ch'][2] == 'c')
+
+    df2 = FastDataFrame.from_list([[10, 20]], schema={'x': int, 'y': int}, columns=['a', 'b'])
+    check('from_list rename', set(df2.columns.keys()) == {'a', 'b'})
+
+def test_from_arrays():
+    df = FastDataFrame.from_arrays([[1, 2, 3], [10.0, 20.0, 30.0]], schema={'id': int, 'val': float})
+    check('from_arrays shape', df.shape == (3, 2))
+    check('from_arrays id[2]', df['id'][2] == 3)
+    check('from_arrays val[0]', df['val'][0] == 10.0)
+
+    df2 = FastDataFrame.from_arrays([[1]], schema={'x': int}, columns=['col'])
+    check('from_arrays rename', 'col' in df2.columns)
+
+def test_factory_methods():
+    df = FastDataFrame.arange(7)
+    check('arange shape', df.shape == (7, 1))
+    check('arange vals', [df['0'][i] for i in range(7)] == [0, 1, 2, 3, 4, 5, 6])
+
+    df = FastDataFrame.zeros(3, 2)
+    check('zeros', all(df.columns[c][i] == 0.0 for c in df.columns for i in range(3)))
+
+    df = FastDataFrame.ones(2, 3)
+    check('ones', all(df.columns[c][i] == 1.0 for c in df.columns for i in range(2)))
+
+    df = FastDataFrame.randn(100, 2)
+    check('randn shape', df.shape == (100, 2))
+
+    df = FastDataFrame.rand(50, 2)
+    check('rand shape', df.shape == (50, 2))
+    check('rand range', all(0 <= df.columns[c][i] < 1 for c in df.columns for i in range(50)))
+
+
+# =====================================================================
+#  Column mutations: rename, insert_column, duplicate_column, assign, __setitem__
+# =====================================================================
+def test_rename():
+    df = make_complex_df().head(3)
+    df2 = df.rename({'id': 'ID', 'name': 'NAME'})
+    check('rename cols', set(df2.columns.keys()) == {'ID', 'score', 'NAME', 'tag', 'dt'})
+    check('rename val', df2['ID'][0] == 1)
+    check('rename original unchanged', 'id' in df.columns)
+
+def test_insert_column():
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1); df.append_row(a=2)
+    df.insert_column('b', [10, 20], pos=0)
+    check('insert pos 0', list(df.columns.keys()) == ['b', 'a'])
+    check('insert val', df['b'][1] == 20)
+
+    df.insert_column('c', [100], pos=1)
+    check('insert pos 1', list(df.columns.keys()) == ['b', 'c', 'a'])
+
+def test_duplicate_column():
+    df = make_complex_df().head(3)
+    df.duplicate_column('id', 'id_copy')
+    check('dup cols', 'id_copy' in df.columns)
+    check('dup val', df['id_copy'][0] == 1)
+    check('dup len', df.shape == (3, 6))
+
+    df.duplicate_column('name')
+    check('dup default name', 'name_dup' in df.columns)
+
+def test_assign():
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=2); df.append_row(a=3, b=4)
+    df2 = df.assign(c=[10, 20])
+    check('assign new col', 'c' in df2.columns)
+    check('assign val', df2['c'][0] == 10)
+    check('assign original unchanged', 'c' not in df.columns)
+
+    df3 = df.assign(a=[100, 200])
+    check('assign replace', df3['a'][0] == 100)
+
+def test_setitem():
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1)
+    df['b'] = [10]
+    check('setitem list', df['b'][0] == 10)
+    check('setitem cols', set(df.columns.keys()) == {'a', 'b'})
+
+    df['a'] = [99]
+    check('setitem replace', df['a'][0] == 99)
+
+
+# =====================================================================
+#  Slicing: sample, nsmallest, nlargest, duplicated, drop_duplicates, select_dtypes, reindex
+# =====================================================================
+def test_sample():
+    df = make_complex_df()
+    s = df.sample(3, seed=42)
+    check('sample shape', s.shape == (3, 5))
+
+    s2 = df.sample(frac=0.5, seed=42)
+    check('sample frac', s2.shape[0] == 5)
+
+    s3 = df.sample(5, replace=True, seed=42)
+    check('sample replace', s3.shape == (5, 5))
+
+def test_nsmallest_nlargest():
+    df = make_complex_df()
+    n = df.nsmallest(3, 'score')
+    check('nsmallest shape', n.shape == (3, 5))
+    check('nsmallest order', n['score'][0] <= n['score'][1] <= n['score'][2])
+    check('nsmallest val', n['score'][0] == 55.0)
+
+    l = df.nlargest(3, 'score')
+    check('nlargest shape', l.shape == (3, 5))
+    check('nlargest order', l['score'][0] >= l['score'][1] >= l['score'][2])
+    check('nlargest val', l['score'][0] == 99.9)
+
+def test_duplicated():
+    df = FastDataFrame({'a': int, 'b': str})
+    df.append_row(a=1, b='x'); df.append_row(a=2, b='y'); df.append_row(a=1, b='x')
+    dup = df.duplicated()
+    check('dup mask', [dup[i] for i in range(3)] == [0, 0, 1])
+
+    dup2 = df.duplicated(keep='last')
+    check('dup last', [dup2[i] for i in range(3)] == [1, 0, 0])
+
+    dup3 = df.duplicated(subset=['a'])
+    check('dup subset', [dup3[i] for i in range(3)] == [0, 0, 1])
+
+def test_drop_duplicates():
+    df = FastDataFrame({'a': int, 'b': str})
+    df.append_row(a=1, b='x'); df.append_row(a=2, b='y'); df.append_row(a=1, b='x'); df.append_row(a=3, b='z')
+    r = df.drop_duplicates()
+    check('drop_dup shape', r.shape == (3, 2))
+    check('drop_dup vals', [r['a'][i] for i in range(3)] == [1, 2, 3])
+
+    df2 = FastDataFrame({'a': int, 'b': str})
+    df2.append_row(a=1, b='x'); df2.append_row(a=1, b='y'); df2.append_row(a=1, b='z')
+    r2 = df2.drop_duplicates(subset=['a'], keep='last')
+    check('drop_dup keep last', r2.shape == (1, 2))
+    check('drop_dup last val', r2['b'][0] == 'z')
+
+def test_select_dtypes():
+    df = make_complex_df()
+    int_only = df.select_dtypes(include_types=['int'])
+    check('select int', set(int_only.columns.keys()) == {'id'})
+    float_only = df.select_dtypes(include_types=['float'])
+    check('select float', set(float_only.columns.keys()) == {'score'})
+    no_int = df.select_dtypes(exclude_types=['int'])
+    check('exclude int', 'id' not in no_int.columns)
+
+def test_reindex():
+    df = FastDataFrame({'a': int, 'b': str})
+    df.append_row(a=1, b='x'); df.append_row(a=2, b='y')
+    r = df.reindex([0, 1, 2, 3])
+    check('reindex shape', r.shape == (4, 2))
+    check('reindex val', r['a'][2] == 0)
+    check('reindex val2', r['b'][3] == '')
+
+
+# =====================================================================
+#  Aggregation: mean, median, std, var, max, min, sum, count, quantile, skew, kurt
+# =====================================================================
+def test_aggregation():
+    df = FastDataFrame({'a': int, 'b': float})
+    for i in range(10):
+        df.append_row(a=i, b=i * 1.5)
+
+    m = df.mean()
+    check('mean a', m['a'] == 4.5)
+    check('mean b', m['b'] == 6.75)
+
+    med = df.median()
+    check('median a', med['a'] == 4.5)
+
+    s = df.sum()
+    check('sum a', s['a'] == 45)
+    check('sum b', s['b'] == 67.5)
+
+    mx = df.max()
+    check('max a', mx['a'] == 9)
+    check('max b', mx['b'] == 13.5)
+
+    mn = df.min()
+    check('min a', mn['a'] == 0)
+    check('min b', mn['b'] == 0.0)
+
+    cnt = df.count()
+    check('count a', cnt['a'] == 10)
+
+    sd = df.std()
+    check('std a', sd['a'] > 0)
+
+    v = df.var()
+    check('var a', v['a'] > 0)
+
+    q = df.quantile(0.5)
+    check('quantile 0.5', q['a'] == 4.5)
+
+    sk = df.skew()
+    check('skew a', isinstance(sk['a'], float))
+
+    ku = df.kurt()
+    check('kurt a', isinstance(ku['a'], float))
+
+def test_aggregation_complex():
+    df = make_complex_df()
+    m = df.mean()
+    check('complex mean id', m['id'] == 5.5)
+    mx = df.max()
+    check('complex max score', mx['score'] == 99.9)
+    mn = df.min()
+    check('complex min id', mn['id'] == 1)
+
+
+# =====================================================================
+#  Cumulative: cumsum, cumprod, cummax, cummin
+# =====================================================================
+def test_cumulative():
+    df = FastDataFrame({'a': int, 'b': float})
+    for i in range(1, 6):
+        df.append_row(a=i, b=float(i))
+
+    cs = df.cumsum()
+    check('cumsum a[0]', cs['a'][0] == 1)
+    check('cumsum a[4]', cs['a'][4] == 15)
+
+    cp = df.cumprod()
+    check('cumprod a[0]', cp['a'][0] == 1)
+    check('cumprod a[4]', cp['a'][4] == 120)
+
+    cmx = df.cummax()
+    check('cummax a[2]', cmx['a'][2] == 3)
+    df2 = FastDataFrame({'x': int})
+    for v in [3, 1, 4, 1, 5]: df2.append_row(x=v)
+    cmx2 = df2.cummax()
+    check('cummax varying', [cmx2['x'][i] for i in range(5)] == [3, 3, 4, 4, 5])
+
+    cmn = df.cummin()
+    check('cummin a[3]', cmn['a'][3] == 1)
+
+
+# =====================================================================
+#  Column arithmetic: add, sub, mul, div
+# =====================================================================
+def test_col_arithmetic():
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=10, b=3); df.append_row(a=20, b=4)
+
+    r = df.add(('a', 'b'))
+    check('add', [r[i] for i in range(2)] == [13, 24])
+
+    r = df.sub(('a', 'b'))
+    check('sub', [r[i] for i in range(2)] == [7, 16])
+
+    r = df.mul(('a', 'b'))
+    check('mul', [r[i] for i in range(2)] == [30, 80])
+
+    r = df.div(('a', 'b'))
+    check('div', [r[i] for i in range(2)] == [10/3, 5.0])
+
+
+# =====================================================================
+#  Statistics: corr, cov, corrcoef, dist functions
+# =====================================================================
+def test_corr_cov():
+    df = FastDataFrame({'a': float, 'b': float})
+    for i in range(10):
+        df.append_row(a=float(i), b=float(i) * 2)
+
+    c = df.corr()
+    check('corr shape', c.shape == (2, 2))
+    check('corr self', c['a'][0] == 1.0)
+    check('corr perfect', abs(c['a'][1] - 1.0) < 1e-9)
+
+    cv = df.cov()
+    check('cov shape', cv.shape == (2, 2))
+    check('cov self', cv['a'][0] > 0)
+
+    r = df.corrcoef(df['a'], df['b'])
+    check('corrcoef', abs(r - 1.0) < 1e-9)
+
+    cv2 = df.cov_withcols(df['a'], df['b'])
+    check('cov_withcols', cv2 > 0)
+
+    r2 = df.corrwith(df['a'])
+    check('corrwith', r2['a'] == 1.0)
+
+    ps = df.pearson_sim()
+    check('pearson_sim', ps['a'][0] == 1.0)
+
+def test_distance_functions():
+    df = FastDataFrame({'a': float, 'b': float})
+    for i in range(5):
+        df.append_row(a=float(i), b=float(i) + 1.0)
+
+    ed = df.euclidean_dist_withcols(df['a'], df['b'])
+    check('euclidean', abs(ed - math.sqrt(5)) < 1e-9)
+
+    md = df.manhattan_dist_withcols(df['a'], df['b'])
+    check('manhattan', md == 5.0)
+
+    cs = df.cosine_dist_withcols(df['a'], df['b'])
+    check('cosine_dist', 0 <= cs <= 2)
+
+    csim = df.cosine_similarity_withcols(df['a'], df['b'])
+    check('cosine_sim', 0.9 < csim <= 1.0)
+
+    js = df.jaccard_sim_withcols(df['a'], df['b'])
+    check('jaccard_sim', 0 <= js <= 1)
+
+    hm = df.hamming_dist_withcols(df['a'], df['b'])
+    check('hamming', hm >= 0)
+
+
+# =====================================================================
+#  Column ops: value_counts, clip_column, where_column, mask_column, where_row
+# =====================================================================
+def test_value_counts():
+    df = FastDataFrame({'tag': str})
+    for t in ['a', 'b', 'a', 'c', 'a', 'b']: df.append_row(tag=t)
+    vc = df.value_counts('tag')
+    check('value_counts shape', vc.shape[0] == 3)
+    check('value_counts top', vc['tag'][0] == 'a')
+    check('value_counts count', vc['count'][0] == 3)
+
+def test_clip_column():
+    df = FastDataFrame({'a': float})
+    for v in [1.0, 5.0, 10.0, 15.0, 20.0]: df.append_row(a=v)
+    df.clip_column('a', 5.0, 15.0)
+    check('clip min', df['a'][0] == 5.0)
+    check('clip mid', df['a'][1] == 5.0)
+    check('clip max', df['a'][4] == 15.0)
+
+def test_where_column():
+    df = FastDataFrame({'val': int, 'cond': int})
+    df.append_row(val=10, cond=1); df.append_row(val=20, cond=0); df.append_row(val=30, cond=1)
+    r = df.where_column('val', 'cond', 999)
+    check('where', [r[i] for i in range(3)] == [10, 999, 30])
+
+def test_mask_column():
+    df = FastDataFrame({'val': int, 'cond': int})
+    df.append_row(val=10, cond=1); df.append_row(val=20, cond=0); df.append_row(val=30, cond=1)
+    r = df.mask_column('val', 'cond', 999)
+    check('mask', [r[i] for i in range(3)] == [999, 20, 999])
+
+def test_where_row():
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=10); df.append_row(a=2, b=20); df.append_row(a=3, b=30)
+    mask = IntColumn()
+    mask.append(1); mask.append(0); mask.append(1)
+    r = df.where_row(mask, fill=-1)
+    check('where_row a', [r['a'][i] for i in range(3)] == [1, -1, 3])
+    check('where_row b', [r['b'][i] for i in range(3)] == [10, -1, 30])
+
+
+# =====================================================================
+#  Groupby
+# =====================================================================
+def test_groupby():
+    df = FastDataFrame({'dept': str, 'age': int, 'salary': float})
+    rows = [
+        ('eng', 25, 80000.0), ('eng', 30, 100000.0), ('eng', 35, 120000.0),
+        ('sales', 28, 70000.0), ('sales', 32, 85000.0),
+        ('hr', 40, 90000.0), ('hr', 29, 65000.0),
+    ]
+    for r in rows:
+        df.append_row(dept=r[0], age=r[1], salary=r[2])
+
+    g = df.groupby('dept')
+    r = g.sum()
+    check('groupby sum cols', 'age' in r.columns and 'salary' in r.columns)
+    check('groupby sum rows', r.shape[0] == 3)
+
+    r = g.mean()
+    check('groupby mean', r.shape[0] == 3)
+
+    r = g.max()
+    check('groupby max', r.shape[0] == 3)
+
+    r = g.min()
+    check('groupby min', r.shape[0] == 3)
+
+    r = g.count()
+    check('groupby count', r.shape[0] == 3)
+
+    r = g.std()
+    check('groupby std', r.shape[0] == 3)
+
+def test_groupby_multi_col():
+    df = FastDataFrame({'a': str, 'b': str, 'val': int})
+    df.append_row(a='x', b='p', val=1)
+    df.append_row(a='x', b='p', val=2)
+    df.append_row(a='x', b='q', val=3)
+    df.append_row(a='y', b='p', val=4)
+    r = df.groupby(['a', 'b']).sum()
+    check('multi groupby rows', r.shape[0] == 3)
+
+
+# =====================================================================
+#  Merge: inner, left, right, outer
+# =====================================================================
+def test_merge_inner():
+    df1 = FastDataFrame({'id': int, 'v1': float})
+    df1.append_row(id=1, v1=10.0); df1.append_row(id=2, v1=20.0); df1.append_row(id=3, v1=30.0)
+    df2 = FastDataFrame({'id': int, 'v2': float})
+    df2.append_row(id=2, v2=200.0); df2.append_row(id=3, v2=300.0); df2.append_row(id=4, v2=400.0)
+    r = df1.merge(df2, on='id', how='inner')
+    check('inner shape', r.shape == (2, 3))
+    check('inner ids', sorted([r['id'][i] for i in range(2)]) == [2, 3])
+
+def test_merge_left():
+    df1 = FastDataFrame({'id': int, 'v1': float})
+    df1.append_row(id=1, v1=10.0); df1.append_row(id=2, v1=20.0)
+    df2 = FastDataFrame({'id': int, 'v2': float})
+    df2.append_row(id=2, v2=200.0); df2.append_row(id=3, v2=300.0)
+    r = df1.merge(df2, on='id', how='left')
+    check('left shape', r.shape == (2, 3))
+    check('left id=1', r['v1'][0] == 10.0)
+
+def test_merge_right():
+    df1 = FastDataFrame({'id': int, 'v1': float})
+    df1.append_row(id=1, v1=10.0); df1.append_row(id=2, v1=20.0)
+    df2 = FastDataFrame({'id': int, 'v2': float})
+    df2.append_row(id=2, v2=200.0); df2.append_row(id=3, v2=300.0)
+    r = df1.merge(df2, on='id', how='right')
+    check('right shape', r.shape == (2, 3))
+    check('right has all ids', r.shape[0] == 2)
+
+def test_merge_outer():
+    df1 = FastDataFrame({'id': int, 'v1': float})
+    df1.append_row(id=1, v1=10.0); df1.append_row(id=2, v1=20.0)
+    df2 = FastDataFrame({'id': int, 'v2': float})
+    df2.append_row(id=2, v2=200.0); df2.append_row(id=3, v2=300.0)
+    r = df1.merge(df2, on='id', how='outer')
+    check('outer shape', r.shape == (3, 3))
+
+
+# =====================================================================
+#  Concat: multi-DF, inner, outer
+# =====================================================================
+def test_concat_multi():
+    from fluidframe.core.fluidframe import concat, concat_inner
+    df1 = FastDataFrame({'a': int, 'b': int})
+    df1.append_row(a=1, b=10); df1.append_row(a=2, b=20)
+    df2 = FastDataFrame({'a': int, 'b': int})
+    df2.append_row(a=3, b=30)
+    df3 = FastDataFrame({'a': int, 'b': int})
+    df3.append_row(a=4, b=40); df3.append_row(a=5, b=50)
+    r = concat([df1, df2, df3])
+    check('concat 3', r.shape[0] == 5)
+    check('concat vals', [r['a'][i] for i in range(5)] == [1, 2, 3, 4, 5])
+
+    r2 = concat([df1, df2, df3], ignore_index=True)
+    check('concat ignore_index', r2.shape[0] == 5)
+
+def test_concat_inner():
+    from fluidframe.core.fluidframe import concat_inner
+    df1 = FastDataFrame({'a': int, 'b': int})
+    df1.append_row(a=1, b=10)
+    df2 = FastDataFrame({'a': int, 'c': float})
+    df2.append_row(a=2, c=20.0)
+    r = concat_inner([df1, df2])
+    check('concat_inner has a', 'a' in r.columns)
+    check('concat_inner rows', r.shape[0] == 2)
+
+def test_concat_outer():
+    from fluidframe.core.fluidframe import concat_outer
+    df1 = FastDataFrame({'a': int})
+    df1.append_row(a=1)
+    df2 = FastDataFrame({'b': float})
+    df2.append_row(b=2.0)
+    r = concat_outer([df1, df2])
+    check('outer has a and b', 'a' in r.columns and 'b' in r.columns)
+    check('outer rows', r.shape[0] == 2)
+
+
+# =====================================================================
+#  eval / query
+# =====================================================================
+def test_eval():
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=10, b=3); df.append_row(a=20, b=4)
+    r = df.eval('a + b')
+    check('eval add', [r[i] for i in range(2)] == [13, 24])
+
+    r = df.eval('a * 2')
+    check('eval scalar', [r[i] for i in range(2)] == [20, 40])
+
+    df.eval('c = a + b', inplace=True)
+    check('eval assign', 'c' in df.columns)
+    check('eval assign val', df['c'][0] == 13)
+
+def test_query():
+    df = make_complex_df()
+    r = df.query('id > 5')
+    check('query shape', r.shape == (5, 5))
+    check('query ids', [r['id'][i] for i in range(5)] == [6, 7, 8, 9, 10])
+
+
+# =====================================================================
+#  apply / pipe
+# =====================================================================
+def test_apply():
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1); df.append_row(a=2); df.append_row(a=3)
+    r = df.apply(lambda x: x * 2)
+    check('apply', [r['a'][i] for i in range(3)] == [2, 4, 6])
+
+def test_pipe():
+    df = make_complex_df()
+    def add_col(dataframe, col_name, val):
+        dataframe = dataframe.copy()
+        dataframe[col_name] = [val] * dataframe.df_length
+        return dataframe
+    r = df.pipe(add_col, 'new_col', 99)
+    check('pipe cols', 'new_col' in r.columns)
+    check('pipe val', r['new_col'][0] == 99)
+
+
+# =====================================================================
+#  duplicate_rows / reshape / T / memory_usage / __len__
+# =====================================================================
+def test_duplicate_rows():
+    df = make_complex_df()
+    r = df.duplicate_rows([0, 2, 4])
+    check('dup_rows shape', r.shape == (3, 5))
+    check('dup_rows ids', [r['id'][i] for i in range(3)] == [1, 3, 5])
+
+    r2 = df.duplicate_rows()
+    check('dup_rows all', r2.shape == (10, 5))
+
+def test_reshape():
+    df = FastDataFrame.arange(12)
+    r = df.reshape(3, 4)
+    check('reshape shape', r.shape == (3, 4))
+    check('reshape A[0]', r['A'][0] == 0.0)
+    check('reshape D[2]', r['D'][2] == 11.0)
+
+def test_transpose():
+    df = FastDataFrame({'a': int, 'b': int})
+    df.append_row(a=1, b=10); df.append_row(a=2, b=20)
+    t = df.T
+    check('T shape', t.shape == (2, 2))
+    check('T cols', set(t.columns.keys()) == {'a', 'b'})
+    check('T a[0]', t['a'][0] == 1.0)
+    check('T a[1]', t['a'][1] == 10.0)
+
+def test_memory_usage():
+    df = FastDataFrame({'a': int, 'b': float})
+    for i in range(100): df.append_row(a=i, b=float(i))
+    mu = df.memory_usage()
+    check('memory_usage positive', mu > 0)
+
+def test_len():
+    df = make_complex_df()
+    check('len', len(df) == 10)
+    df2 = FastDataFrame({'x': int})
+    check('len empty', len(df2) == 0)
+
+
+# =====================================================================
+#  Insert row / drop_index / sort_index / argsort_by / nunique
+# =====================================================================
+def test_insert_row():
+    df = FastDataFrame({'a': int, 'b': str})
+    df.append_row(a=1, b='x'); df.append_row(a=3, b='z')
+    df.insert_row(1, a=2, b='y')
+    check('insert_row shape', df.shape == (3, 2))
+    check('insert_row val', [df['a'][i] for i in range(3)] == [1, 2, 3])
+
+def test_drop_index():
+    df = FastDataFrame({'a': int})
+    for i in range(5): df.append_row(a=i)
+    df.reset_index()
+    r = df.drop_index([0, 2])
+    check('drop_index shape', r.shape[0] == 3)
+    check('drop_index vals', [r['a'][i] for i in range(3)] == [1, 3, 4])
+
+def test_sort_index():
+    df = FastDataFrame({'a': int})
+    for v in [50, 10, 30, 20, 40]: df.append_row(a=v)
+    df.reset_index()
+    df.sort_index(inplace=True)
+    check('sort_index', [df['a'][i] for i in range(5)] == [50, 10, 30, 20, 40])
+
+def test_argsort_by():
+    df = FastDataFrame({'a': int})
+    for v in [30, 10, 20]: df.append_row(a=v)
+    idx = df.argsort_by('a')
+    check('argsort_by', idx == [1, 2, 0])
+    idx_desc = df.argsort_by('a', reverse=True)
+    check('argsort_by desc', idx_desc == [0, 2, 1])
+
+def test_nunique():
+    df = FastDataFrame({'a': str})
+    for v in ['x', 'y', 'x', 'z', 'y', 'x']: df.append_row(a=v)
+    check('nunique', df.nunique('a') == 3)
+
+
+# =====================================================================
+#  Display: to_string, info, __str__
+# =====================================================================
+def test_display():
+    df = make_complex_df().head(3)
+    s = df.to_string()
+    check('to_string has id', 'id' in s)
+    check('to_string has Alice', 'Alice' in s)
+
+    s2 = str(df)
+    check('str', 'id' in s2)
+
+    info = df.info()
+    check('info returns', isinstance(info, str))
+
+
+# =====================================================================
 #  Run all
 # =====================================================================
 def run_all():
@@ -720,6 +1350,10 @@ def run_all():
     # Construction
     test_init()
     test_init_complex()
+    test_from_dict()
+    test_from_list()
+    test_from_arrays()
+    test_factory_methods()
 
     # Append & access
     test_append()
@@ -798,6 +1432,82 @@ def run_all():
 
     # loc — index preservation
     test_loc_mask_preserves_index()
+
+    # Column mutations
+    test_rename()
+    test_insert_column()
+    test_duplicate_column()
+    test_assign()
+    test_setitem()
+
+    # Slicing
+    test_sample()
+    test_nsmallest_nlargest()
+    test_duplicated()
+    test_drop_duplicates()
+    test_select_dtypes()
+    test_reindex()
+
+    # Aggregation
+    test_aggregation()
+    test_aggregation_complex()
+
+    # Cumulative
+    test_cumulative()
+
+    # Column arithmetic
+    test_col_arithmetic()
+
+    # Statistics
+    test_corr_cov()
+    test_distance_functions()
+
+    # Column ops
+    test_value_counts()
+    test_clip_column()
+    test_where_column()
+    test_mask_column()
+    test_where_row()
+
+    # Groupby
+    test_groupby()
+    test_groupby_multi_col()
+
+    # Merge detailed
+    test_merge_inner()
+    test_merge_left()
+    test_merge_right()
+    test_merge_outer()
+
+    # Concat detailed
+    test_concat_multi()
+    test_concat_inner()
+    test_concat_outer()
+
+    # eval / query
+    test_eval()
+    test_query()
+
+    # apply / pipe
+    test_apply()
+    test_pipe()
+
+    # duplicate_rows / reshape / T / memory / len
+    test_duplicate_rows()
+    test_reshape()
+    test_transpose()
+    test_memory_usage()
+    test_len()
+
+    # Insert row / drop_index / sort_index / argsort / nunique
+    test_insert_row()
+    test_drop_index()
+    test_sort_index()
+    test_argsort_by()
+    test_nunique()
+
+    # Display
+    test_display()
 
     # Stress tests
     print('\n--- stress tests ---')
