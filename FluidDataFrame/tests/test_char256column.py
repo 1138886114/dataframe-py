@@ -96,12 +96,12 @@ def test_contains():
 
 def test_replace():
     col = AsciiColumn(); col.append("hello world")
-    col.replace("world", "python")
-    check('replace', col[0] == "hello python")
+    res = col.replace("world", "python")
+    check('replace', res[0] == "hello python")
 
     col = AsciiColumn(); col.append("a b c")
-    col.replaces("a", "x", "b", "y")
-    check('replaces', col[0] == "x y c")
+    res = col.replaces("a", "x", "b", "y")
+    check('replaces', res[0] == "x y c")
 
 def test_case():
     col = AsciiColumn(); col.append("HELLO")

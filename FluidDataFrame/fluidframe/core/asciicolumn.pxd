@@ -6,7 +6,6 @@ from fluidframe.core._base cimport BaseColumn
 from fluidframe.core.intcolumn cimport IntColumn
 
 cdef bint _c_str_contains(const char* source, const char* target) noexcept nogil
-cdef void _c_str_replace_inplace(char* buffer, Py_ssize_t buf_cap, const char* old_sub, const char* new_sub, size_t old_len, size_t new_len) noexcept nogil
 
 @cython.boundscheck(False)
 @cython.wraparound(False)

@@ -60,23 +60,6 @@ cdef inline bint _is_space(unsigned char c) noexcept nogil:
 cdef inline bint _c_str_contains(const char* source, const char* target) noexcept nogil:
     return strstr(source, target) != NULL
 
-cdef inline void _c_str_replace_inplace(char* buffer, Py_ssize_t buf_cap,
-        const char* old_sub, const char* new_sub, size_t old_len, size_t new_len) noexcept nogil:
-    if old_len == 0: return
-    cdef char* match = strstr(buffer, old_sub)
-    cdef size_t cur_len, rem
-
-    while match != NULL:
-        cur_len = strlen(buffer)
-        rem = cur_len - (match - buffer) - old_len
-        if cur_len - old_len + new_len > <size_t>buf_cap:
-            break
-        if new_len != old_len:
-            memmove(match + new_len, match + old_len, rem + 1)
-        if new_len > 0:
-            memcpy(match, new_sub, new_len)
-        match = strstr(match + new_len, old_sub)
-
 cdef inline bint _c_startswith(const char* data, const char* pat, size_t pat_len) noexcept nogil:
     if strlen(data) < pat_len:
         return 0
@@ -1681,12 +1664,12 @@ cdef class AsciiColumn(BaseColumn):
         cdef Py_ssize_t* offs = self.offsets_c
         cdef char* src = self.data_c
         cdef char* dst
+        cdef Py_ssize_t dst_offset = 0
 
         if isinstance(key, int):
             idx = <Py_ssize_t>key
             col._reserve_bytes(n * 2)
             dst = col.data_c
-            cdef Py_ssize_t dst_offset = 0
             with nogil:
                 for i in range(n):
                     s_len = offs[i+1] - offs[i] - 1
