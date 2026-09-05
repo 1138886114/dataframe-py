@@ -382,6 +382,7 @@ cdef class FastDataFrame:
         self.columns = {}
         self.df_length = 0
         self.index = RangeIndex(0, 0)
+        self._metric_cache = None
 
         if schema:
             parsed = _parse_schema(schema)
@@ -975,6 +976,15 @@ cdef class FastDataFrame:
         return _T_impl(self)
 
     # Metrics
+    @property
+    def metric(self):
+        # 快路径：缓存命中时零实例化开销（C 级字段读取 + None 判断）
+        if self._metric_cache is not None:
+            return self._metric_cache
+        # 慢路径：仅首次访问时创建一次，此后均摊为 0
+        self._metric_cache = _make_metric_accessor(self)
+        return self._metric_cache
+
     def euclidean_dist_withcols(self, col1, col2):
         return _euclidean_dist_withcols_impl(self, col1, col2)
 
@@ -1065,3 +1075,88 @@ include "../api/_fastdataframe_merge.pxi"
 include "../api/_fastdataframe_metric.pxi"
 include "../api/_fastdataframe_factory.pxi"
 include "../api/_fastdataframe_rolling.pxi"
+
+
+# _DataFrameMetricAccessor — 懒加载缓存的 metric 访问器
+# ============================================================
+# 用法: df.metric.euclidean('a', 'b') / df.metric.corr() 等。
+# 实例由 FastDataFrame.metric property 首次访问时创建并缓存，
+# 实例化开销均摊为 0（参见 _make_metric_accessor）。
+cdef class _DataFrameMetricAccessor:
+    """Metric accessor with lazy caching on the parent FastDataFrame."""
+
+    def __cinit__(self):
+        # 无参 __cinit__：允许工厂函数直接 __new__ 绕过参数打包
+        pass
+
+    # ==================== Distance ====================
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def euclidean(self, col1, col2):
+        return _euclidean_dist_withcols_impl(self._df, col1, col2)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def manhattan(self, col1, col2):
+        return _manhattan_dist_withcols_impl(self._df, col1, col2)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def cosine_dist(self, col1, col2):
+        return _cosine_dist_withcols_impl(self._df, col1, col2)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def cosine_similarity(self, col1, col2):
+        return _cosine_similarity_withcols_impl(self._df, col1, col2)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def jaccard(self, col1, col2):
+        return _jaccard_sim_withcols_impl(self._df, col1, col2)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def hamming(self, col1, col2):
+        return _hamming_dist_withcols_impl(self._df, col1, col2)
+
+    # ==================== Correlation / Covariance ====================
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def corr(self):
+        return _corr_impl(self._df)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def cov(self):
+        return _cov_impl(self._df)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def corrwith(self, other):
+        return _corrwith_impl(self._df, other)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def corrcoef(self, col_a, col_b):
+        return _corrcoef_impl(self._df, col_a, col_b)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def cov_withcols(self, col_a, col_b):
+        return _cov_withcols_impl(self._df, col_a, col_b)
+
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
+    def pearson(self):
+        return _pearson_sim_impl(self._df)
+
+
+cdef inline _DataFrameMetricAccessor _make_metric_accessor(FastDataFrame df):
+    # C 级工厂：__new__ 无参调用直接命中 tp_new，彻底绕过 Python 参数打包/解包
+    cdef _DataFrameMetricAccessor acc = <_DataFrameMetricAccessor>_DataFrameMetricAccessor.__new__(_DataFrameMetricAccessor)
+    # 直接写底层 C 结构体字段（Cython 自动处理 Py_INCREF）
+    acc._df = df
+    return acc

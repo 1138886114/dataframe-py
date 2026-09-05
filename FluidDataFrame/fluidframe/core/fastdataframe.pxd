@@ -21,12 +21,21 @@ cdef void _c_argsort_numeric(NumericType* data, Py_ssize_t* indices, Py_ssize_t 
 cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil
 
 @cython.final
+@cython.freelist(16)
+cdef class _DataFrameMetricAccessor:
+    # 懒加载缓存的 metric 访问器：df.metric.euclidean(...) 等。
+    # 注意：不使用 no_gc —— df._metric_cache <-> acc._df 构成循环引用，
+    # 需要 GC 追踪才能被回收（no_gc 会导致 DataFrame 永久泄漏）。
+    cdef FastDataFrame _df
+
+@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class FastDataFrame:
     cdef public dict columns
     cdef public Py_ssize_t df_length
     cdef public IndexBase index
+    cdef _DataFrameMetricAccessor _metric_cache
     cdef BaseColumn _reorder_column(self, BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace)
     cdef str _type_name(self, BaseColumn col)
     cdef BaseColumn _diff_column(self, BaseColumn col, int periods)

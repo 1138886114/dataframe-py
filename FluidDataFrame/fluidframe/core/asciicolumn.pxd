@@ -21,4 +21,13 @@ cdef class AsciiColumn(BaseColumn):
     cdef inline str _get_str(self, Py_ssize_t idx)
     cdef void _set_item(self, Py_ssize_t idx, str val) except *
     cdef AsciiColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
+    cdef AsciiStringAccessor _str_cache
+
+@cython.final
+@cython.freelist(16)
+cdef class AsciiStringAccessor:
+    # 懒加载缓存的 .str 访问器（见 AsciiColumn.str property）。
+    # 不使用 no_gc：col._str_cache <-> acc._col 构成循环引用，
+    # 需要 GC 追踪才能回收。
+    cdef AsciiColumn _col
 

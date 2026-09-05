@@ -117,6 +117,7 @@ cdef class AsciiColumn(BaseColumn):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_CHAR256
+        self._str_cache = None
 
         self.offsets_c = <Py_ssize_t*>aligned_malloc((self.capacity + 1) * sizeof(Py_ssize_t))
         if not self.offsets_c:
@@ -1449,7 +1450,12 @@ cdef class AsciiColumn(BaseColumn):
 
     @property
     def str(self):
-        return AsciiStringAccessor(self)
+        # 快路径：缓存命中直接返回（均摊实例化开销为 0）
+        if self._str_cache is not None:
+            return self._str_cache
+        # 慢路径：仅首次访问时创建一次（C 级工厂，绕过参数打包）
+        self._str_cache = _make_ascii_str_accessor(self)
+        return self._str_cache
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -1717,12 +1723,12 @@ cdef class AsciiColumn(BaseColumn):
 cdef class AsciiStringAccessor:
     """Pandas-style .str accessor for AsciiColumn.
     All methods delegate to AsciiColumn.
+    实例由 AsciiColumn.str property 懒加载缓存（字段声明见 asciicolumn.pxd）。
     """
 
-    cdef AsciiColumn _col
-
-    def __cinit__(self, AsciiColumn col):
-        self._col = col
+    def __cinit__(self):
+        # 无参 __cinit__：允许工厂函数直接 __new__ 绕过参数打包
+        pass
 
     # ==================== Search / Match ====================
 
@@ -1910,3 +1916,12 @@ cdef class AsciiStringAccessor:
 
     def repeat(self, int repeats):
         return self._col.repeat(repeats)
+
+
+cdef inline AsciiStringAccessor _make_ascii_str_accessor(AsciiColumn col):
+    # C 级工厂：__new__ 无参调用直接命中 tp_new，彻底绕过 Python 参数打包/解包
+    # （与 fastdataframe.pyx 的 _make_metric_accessor 同一模式）
+    cdef AsciiStringAccessor acc = <AsciiStringAccessor>AsciiStringAccessor.__new__(AsciiStringAccessor)
+    # 直接写底层 C 结构体字段（Cython 自动处理 Py_INCREF）
+    acc._col = col
+    return acc

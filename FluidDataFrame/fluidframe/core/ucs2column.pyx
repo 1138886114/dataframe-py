@@ -118,6 +118,7 @@ cdef class UCS2Column(BaseColumn):
         self.dtype = TYPE_UCS2
         self.char_capacity = max(self.capacity * 16, 1024)
         self.char_length = 0
+        self._str_cache = None
 
         self.offsets_c = <Py_ssize_t*>aligned_malloc((self.capacity + 1) * sizeof(Py_ssize_t))
         self.chars_c = <Py_UCS2*>aligned_malloc(self.char_capacity * sizeof(Py_UCS2))
@@ -1172,7 +1173,12 @@ cdef class UCS2Column(BaseColumn):
 
     @property
     def str(self):
-        return UCS2StringAccessor(self)
+        # 快路径：缓存命中直接返回（均摊实例化开销为 0）
+        if self._str_cache is not None:
+            return self._str_cache
+        # 慢路径：仅首次访问时创建一次（C 级工厂，绕过参数打包）
+        self._str_cache = _make_ucs2_str_accessor(self)
+        return self._str_cache
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -1429,12 +1435,12 @@ cdef class UCS2Column(BaseColumn):
 cdef class UCS2StringAccessor:
     """Pandas-style .str accessor for UCS2Column.
     All methods delegate to UCS2Column.
+    实例由 UCS2Column.str property 懒加载缓存（字段声明见 ucs2column.pxd）。
     """
 
-    cdef UCS2Column _col
-
-    def __cinit__(self, UCS2Column col):
-        self._col = col
+    def __cinit__(self):
+        # 无参 __cinit__：允许工厂函数直接 __new__ 绕过参数打包
+        pass
 
     # ==================== Search / Match ====================
 
@@ -1622,3 +1628,12 @@ cdef class UCS2StringAccessor:
 
     def repeat(self, int repeats):
         return self._col.repeat(repeats)
+
+
+cdef inline UCS2StringAccessor _make_ucs2_str_accessor(UCS2Column col):
+    # C 级工厂：__new__ 无参调用直接命中 tp_new，彻底绕过 Python 参数打包/解包
+    # （与 fastdataframe.pyx 的 _make_metric_accessor 同一模式）
+    cdef UCS2StringAccessor acc = <UCS2StringAccessor>UCS2StringAccessor.__new__(UCS2StringAccessor)
+    # 直接写底层 C 结构体字段（Cython 自动处理 Py_INCREF）
+    acc._col = col
+    return acc
