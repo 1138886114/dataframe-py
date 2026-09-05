@@ -139,12 +139,20 @@ cdef _value_counts_impl(FastDataFrame self, str col_name):
     result.columns['count'] = cnt_col
     return result
 
-cdef _nunique_impl(FastDataFrame self):
+cdef _nunique_impl(FastDataFrame self, str col_name=None):
     cdef dict result = {}
     cdef str name
     cdef BaseColumn col
     cdef set unique_vals
     cdef Py_ssize_t i
+    if col_name is not None:
+        if col_name not in self.columns:
+            raise KeyError(f"Column '{col_name}' not found")
+        col = self.columns[col_name]
+        unique_vals = set()
+        for i in range(self.df_length):
+            unique_vals.add(col[i])
+        return len(unique_vals)
     for name, col in self.columns.items():
         unique_vals = set()
         for i in range(self.df_length):

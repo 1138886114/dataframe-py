@@ -326,40 +326,176 @@ cdef _drop_impl(FastDataFrame self, list col_names):
             del result.columns[name]
     return result
 
+cdef _drop_with_index_impl(FastDataFrame self, list drop_indices, bint inplace):
+    cdef Py_ssize_t n_orig = self.df_length
+    if n_orig == 0:
+        return self if inplace else _copy_impl(self)
+
+    cdef char* drop_mask = <char*>aligned_malloc(n_orig * sizeof(char))
+    if not drop_mask: raise MemoryError()
+    memset(drop_mask, 0, n_orig)
+
+    cdef Py_ssize_t idx, i, j
+    cdef Py_ssize_t keep_count = 0
+    cdef Py_ssize_t* keep_idx_c = NULL
+    cdef FastDataFrame result_df
+    cdef str name
+    cdef BaseColumn col, new_col
+
+    try:
+        for py_idx in drop_indices:
+            idx = <Py_ssize_t>py_idx
+            if idx < 0: idx += n_orig
+            if idx < 0 or idx >= n_orig:
+                raise IndexError(f"Index {py_idx} out of bounds")
+            drop_mask[idx] = 1
+
+        for i in range(n_orig):
+            if drop_mask[i] == 0:
+                keep_count += 1
+
+        if keep_count == n_orig:
+            return self if inplace else _copy_impl(self)
+
+        if keep_count == 0:
+            if inplace:
+                self.df_length = 0
+                for col_obj in self.columns.values(): col_obj.length = 0
+                return self
+            else:
+                return FastDataFrame()
+
+        keep_idx_c = <Py_ssize_t*>aligned_malloc(keep_count * sizeof(Py_ssize_t))
+        if not keep_idx_c: raise MemoryError()
+
+        j = 0
+        for i in range(n_orig):
+            if drop_mask[i] == 0:
+                keep_idx_c[j] = i
+                j += 1
+
+        if inplace:
+            result_df = self
+            self.df_length = keep_count
+        else:
+            result_df = FastDataFrame()
+            result_df.df_length = keep_count
+
+        for name, col in self.columns.items():
+            new_col = self._reorder_column(col, keep_idx_c, keep_count, inplace)
+            if not inplace:
+                result_df.columns[name] = new_col
+
+        if self.index is not None:
+            if inplace:
+                self.index = self.index._take(keep_idx_c, keep_count)
+            else:
+                result_df.index = self.index._take(keep_idx_c, keep_count)
+
+        return result_df
+    finally:
+        if drop_mask: os_aligned_free(drop_mask)
+        if keep_idx_c: os_aligned_free(keep_idx_c)
+
+cdef _drop_index_impl(FastDataFrame self, object labels, bint inplace):
+    if self.index is None:
+        raise ValueError("DataFrame has no index set")
+    cdef list drop_positions = []
+    if isinstance(labels, list):
+        for label in labels:
+            drop_positions.append(self.index.get_loc(label))
+    else:
+        drop_positions.append(self.index.get_loc(labels))
+    return _drop_with_index_impl(self, drop_positions, inplace)
+
+cdef _drop_raw_impl(FastDataFrame self, Py_ssize_t row_idx):
+    if row_idx < 0: row_idx += self.df_length
+    if row_idx < 0 or row_idx >= self.df_length:
+        raise IndexError("Row index out of range")
+
+    cdef str name
+    cdef BaseColumn col
+    cdef Py_ssize_t rem_len_idx, ii
+    cdef IntColumn tmp_col, idx_col
+    cdef RangeIndex ri
+
+    for name, col in self.columns.items():
+        self._drop_row_column(col, row_idx)
+
+    self.df_length -= 1
+    if self.index is not None and self.index.length > 0:
+        if self.index.index_type == INDEX_RANGE:
+            ri = <RangeIndex>self.index
+            if row_idx == 0:
+                ri.start += ri.step
+            elif row_idx == self.index.length - 1:
+                pass
+            else:
+                # When deleting from middle, convert to IntIndex
+                rem_len_idx = self.index.length - row_idx - 1
+                tmp_col = IntColumn(self.index.length)
+                tmp_col.length = self.index.length
+                for ii in range(self.index.length):
+                    tmp_col.data_c[ii] = <int>(ri.start + ii * ri.step)
+                memmove(tmp_col.data_c + row_idx,
+                        tmp_col.data_c + row_idx + 1,
+                        rem_len_idx * sizeof(int))
+                tmp_col.length = self.index.length - 1
+                self.index = IntIndex(tmp_col)
+                return
+        elif self.index.index_type == INDEX_INT:
+            idx_col = (<IntIndex>self.index).data
+            rem_len_idx = self.index.length - row_idx - 1
+            if rem_len_idx > 0:
+                memmove(idx_col.data_c + row_idx,
+                        idx_col.data_c + row_idx + 1,
+                        rem_len_idx * sizeof(int))
+            idx_col.length -= 1
+        self.index.length -= 1
+
+cdef _insert_column_impl(FastDataFrame self, str col_name, object col_data, Py_ssize_t pos):
+    cdef BaseColumn col
+    if isinstance(col_data, BaseColumn):
+        col = col_data
+    elif isinstance(col_data, list):
+        col = _column_from_list_impl(self, col_name, col_data)
+    else:
+        raise TypeError(f"Cannot create column from {type(col_data)}")
+
+    if self.df_length == 0 and col.length > 0:
+        self.df_length = col.length
+
+    cdef list names = list(self.columns.keys())
+    cdef Py_ssize_t n = len(names)
+
+    if pos < 0 or pos >= n:
+        self.columns[col_name] = col
+    else:
+        new_cols = {}
+        for i in range(n):
+            if i == pos:
+                new_cols[col_name] = col
+            new_cols[names[i]] = self.columns[names[i]]
+        self.columns = new_cols
+
+
 cdef _duplicate_column_impl(FastDataFrame self, str src_name, str new_name):
     if src_name not in self.columns:
         raise KeyError(f"Column '{src_name}' not found")
     if new_name is None:
-        new_name = src_name + '_copy'
+        new_name = src_name + '_dup'
     self.columns[new_name] = self.columns[src_name].copy()
 
 cdef _duplicate_rows_impl(FastDataFrame self, list indices):
-    cdef Py_ssize_t n = self.df_length
-    cdef list keep_idx = []
-    cdef Py_ssize_t i, j
-    cdef dict count_map = {}
-    cdef Py_ssize_t total = 0
-
     if indices is None:
         return _copy_impl(self)
-
-    for idx in indices:
-        count_map[idx] = count_map.get(idx, 0) + 1
-
-    for i in range(n):
-        if i in count_map:
-            for j in range(count_map[i]):
-                keep_idx.append(i)
-                total += 1
-        else:
-            keep_idx.append(i)
-            total += 1
-
-    cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(total, 1) * sizeof(Py_ssize_t))
+    cdef Py_ssize_t n = len(indices)
+    cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
     if not idx_c: raise MemoryError()
+    cdef Py_ssize_t i
     try:
-        for i in range(total):
-            idx_c[i] = keep_idx[i]
-        return self._take(idx_c, total)
+        for i in range(n):
+            idx_c[i] = indices[i]
+        return self._take(idx_c, n)
     finally:
         os_aligned_free(idx_c)

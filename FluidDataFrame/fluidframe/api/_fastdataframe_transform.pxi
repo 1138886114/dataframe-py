@@ -504,5 +504,5 @@ cdef _T_impl(FastDataFrame self):
         new_col.length = cols
         for j in range(cols):
             new_col.data_c[j] = self._get_col_value_as_double(self.columns[col_names[j]], i)
-        result.columns[str(i)] = new_col
+        result.columns[col_names[i] if i < cols else str(i)] = new_col
     return result

@@ -716,7 +716,7 @@ cdef class FastDataFrame:
     def query(self, str expr):
         return _query_impl(self, expr)
 
-    def append_row(self, dict kwargs):
+    def append_row(self, **kwargs):
         return _append_row_impl(self, kwargs)
 
     def append(self, row, bint ignore_index=False):
@@ -740,11 +740,30 @@ cdef class FastDataFrame:
     def reindex(self, list new_index):
         return _reindex_impl(self, new_index)
 
-    def insert_row(self, Py_ssize_t pos, dict kwargs):
+    def insert_row(self, Py_ssize_t pos, **kwargs):
         return _insert_row_impl(self, pos, kwargs)
 
-    def drop(self, list col_names):
-        return _drop_impl(self, col_names)
+    def drop(self, col_names):
+        if isinstance(col_names, str):
+            col_names = [col_names]
+        cdef str name
+        for name in col_names:
+            if name not in self.columns:
+                raise KeyError(f"Column '{name}' not found")
+        for name in col_names:
+            del self.columns[name]
+
+    def drop_with_index(self, list drop_indices, bint inplace=False):
+        return _drop_with_index_impl(self, drop_indices, inplace)
+
+    def drop_index(self, object labels, bint inplace=False):
+        return _drop_index_impl(self, labels, inplace)
+
+    def drop_raw(self, Py_ssize_t row_idx):
+        return _drop_raw_impl(self, row_idx)
+
+    def insert_column(self, str col_name, object col_data, Py_ssize_t pos=-1):
+        return _insert_column_impl(self, col_name, col_data, pos)
 
     def duplicate_column(self, str src_name, str new_name=None):
         _duplicate_column_impl(self, src_name, new_name)
@@ -789,8 +808,37 @@ cdef class FastDataFrame:
     def value_counts(self, str col_name):
         return _value_counts_impl(self, col_name)
 
-    def nunique(self):
-        return _nunique_impl(self)
+    def nunique(self, str col_name=None):
+        return _nunique_impl(self, col_name)
+
+    # Cumulative aggregations
+    def cumsum(self):
+        return _numeric_agg_impl(self, 'cumsum')
+
+    def cumprod(self):
+        return _numeric_agg_impl(self, 'cumprod')
+
+    def cummax(self):
+        return _numeric_agg_impl(self, 'cummax')
+
+    def cummin(self):
+        return _numeric_agg_impl(self, 'cummin')
+
+    def skew(self):
+        return _numeric_agg_impl(self, 'skew')
+
+    def kurt(self):
+        return _numeric_agg_impl(self, 'kurt')
+
+    # Column-level delegates
+    def argmax(self, str col_name):
+        return self.columns[col_name].idxmax()
+
+    def argmin(self, str col_name):
+        return self.columns[col_name].idxmin()
+
+    def unique(self, str col_name):
+        return self.columns[col_name].unique()
 
     # I/O
     def __str__(self):
@@ -799,11 +847,20 @@ cdef class FastDataFrame:
     def __repr__(self):
         return _to_string_impl(self)
 
+    def to_string(self):
+        return _to_string_impl(self)
+
+    def print(self, max_rows=80):
+        print(self.to_string())
+
     def to_pickle(self, str path):
         return _to_pickle_impl(self, path)
 
-    def to_csv(self, str path, char sep=','):
+    def to_csv(self, str path, str sep=','):
         return _to_csv_impl(self, path, sep)
+
+    def to_tsv(self, filename):
+        return self.to_csv(filename, sep='\t')
 
     def to_numpy(self):
         return _to_numpy_impl(self)
@@ -821,14 +878,16 @@ cdef class FastDataFrame:
     def concat(self, FastDataFrame other):
         return _concat_impl(self, other)
 
-    def merge(self, FastDataFrame right, list on, str how='inner'):
+    def merge(self, FastDataFrame right, object on=None, str how='inner'):
+        if isinstance(on, str):
+            on = [on]
         return _merge_impl(self, right, on, how)
 
-    def duplicated(self):
-        return _duplicated_impl(self)
+    def duplicated(self, list subset=None, str keep='first'):
+        return _duplicated_impl(self, subset, keep)
 
-    def drop_duplicates(self):
-        return _drop_duplicates_impl(self)
+    def drop_duplicates(self, list subset=None, str keep='first', bint inplace=False):
+        return _drop_duplicates_impl(self, subset, keep, inplace)
 
     # Transform
     def argsort_by(self, str col_name, bint reverse=False):
@@ -836,6 +895,11 @@ cdef class FastDataFrame:
 
     def sort_values(self, str col_name, bint reverse=False, bint inplace=False):
         return _sort_values_impl(self, col_name, reverse, inplace)
+
+    def sort_index(self, bint ascending=True, bint inplace=False):
+        if 'index' not in self.columns:
+            raise KeyError("No 'index' column found. Call reset_index() first.")
+        return self.sort_values('index', reverse=not ascending, inplace=inplace)
 
     def diff(self, str col_name, int periods=1):
         return _diff_impl(self, col_name, periods)
