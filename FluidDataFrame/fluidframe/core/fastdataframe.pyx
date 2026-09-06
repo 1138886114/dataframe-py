@@ -1066,6 +1066,14 @@ cdef class FastDataFrame:
     def rolling(self, Py_ssize_t window, str col_name):
         return _rolling_impl(self, window, col_name)
 
+    # DataFrame-level shift (delegates to cdef _shift_impl in .pxi)
+    def shift(self, Py_ssize_t periods=1, str axis='index'):
+        return _shift_impl(self, periods, axis)
+
+    # DataFrame-level diff for all numeric columns
+    def diff_all(self, int periods=1):
+        return _diff_column_all_impl(self, periods)
+
 
 include "../api/_fastdataframe_crud.pxi"
 include "../api/_fastdataframe_transform.pxi"
@@ -1075,6 +1083,7 @@ include "../api/_fastdataframe_merge.pxi"
 include "../api/_fastdataframe_metric.pxi"
 include "../api/_fastdataframe_factory.pxi"
 include "../api/_fastdataframe_rolling.pxi"
+include "../api/_fastdataframe_shift.pxi"
 
 
 # _DataFrameMetricAccessor — 懒加载缓存的 metric 访问器

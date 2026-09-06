@@ -1,4 +1,5 @@
 # Shared type definitions for the fluidframe package
+import sys
 
 TYPE_INT = 0
 TYPE_DOUBLE = 2
@@ -65,6 +66,9 @@ _STRING_TYPE_MAP = {
 def _parse_schema(schema_dict):
     parsed = {}
     for k, v in schema_dict.items():
+        # 列名驻留：保证 df.col 属性访问时 dict 查找命中指针比较快路径
+        # （与 __getattr__ / __getitem__ 的 PyDict_GetItemWithError 配套）
+        k = sys.intern(k)
         if v is int: parsed[k] = TYPE_INT
         elif v is float: parsed[k] = TYPE_DOUBLE
         elif v is bool: parsed[k] = TYPE_BOOL
