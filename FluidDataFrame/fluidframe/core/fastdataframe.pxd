@@ -3,6 +3,7 @@ cimport cython
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove, strncmp
 from libc.math cimport NAN
+from libc.stdint cimport uint64_t
 from cpython.unicode cimport Py_UCS2
 from fluidframe.core._base cimport BaseColumn, NumericType, DataType
 from fluidframe.core.intcolumn cimport IntColumn
@@ -16,6 +17,28 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 from fluidframe.core.index cimport IndexBase
 
+cdef struct _ByColPtrs:
+    void** data
+    void** offsets
+    int* types
+    int count
+
+cdef struct _GroupHashEntry:
+    uint64_t hash
+    int group_id
+    bint occupied
+
+cdef struct _GroupHashTable:
+    _GroupHashEntry* entries
+    Py_ssize_t capacity
+    Py_ssize_t size
+
+cdef struct _GroupRows:
+    Py_ssize_t** rows
+    Py_ssize_t* row_sizes
+    Py_ssize_t* row_capacities
+    Py_ssize_t count
+
 cdef void _c_argsort_char256(char* data, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil
 cdef void _c_argsort_numeric(NumericType* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil
 cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil
@@ -23,10 +46,19 @@ cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indic
 @cython.final
 @cython.freelist(16)
 cdef class _DataFrameMetricAccessor:
-    # 懒加载缓存的 metric 访问器：df.metric.euclidean(...) 等。
-    # 注意：不使用 no_gc —— df._metric_cache <-> acc._df 构成循环引用，
-    # 需要 GC 追踪才能被回收（no_gc 会导致 DataFrame 永久泄漏）。
     cdef FastDataFrame _df
+
+@cython.final
+@cython.freelist(16)
+cdef class _DataFrameGroupByAccessor:
+    cdef FastDataFrame _df
+    cdef list _by_cols
+    cdef _GroupHashTable* _ht
+    cdef _GroupRows* _gr
+    cdef _ByColPtrs _ptrs
+    cdef bint _built
+    cdef void _ensure_built(self)
+    cdef FastDataFrame _convenience_agg(self, str func_name, object col_name)
 
 @cython.final
 @cython.boundscheck(False)
@@ -36,6 +68,7 @@ cdef class FastDataFrame:
     cdef public Py_ssize_t df_length
     cdef public IndexBase index
     cdef _DataFrameMetricAccessor _metric_cache
+    cdef _DataFrameGroupByAccessor _groupby_cache
     cdef BaseColumn _reorder_column(self, BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace)
     cdef str _type_name(self, BaseColumn col)
     cdef BaseColumn _diff_column(self, BaseColumn col, int periods)

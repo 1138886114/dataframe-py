@@ -383,6 +383,7 @@ cdef class FastDataFrame:
         self.df_length = 0
         self.index = RangeIndex(0, 0)
         self._metric_cache = None
+        self._groupby_cache = None
 
         if schema:
             parsed = _parse_schema(schema)
@@ -618,14 +619,17 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     def groupby(self, by_cols):
-        from fluidframe.core.groupby import FastDataFrameGroupBy
+        if self._groupby_cache is not None:
+            self._groupby_cache = None
         if isinstance(by_cols, str):
             by_cols = [by_cols]
         cdef list by_list = list(by_cols)
         for cn in by_list:
             if cn not in self.columns:
                 raise KeyError(f"Column '{cn}' not found")
-        return FastDataFrameGroupBy(self, by_list)
+        cdef _DataFrameGroupByAccessor acc = _make_groupby_accessor(self, by_list)
+        self._groupby_cache = acc
+        return acc
 
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos):
         cdef Py_ssize_t col_len
@@ -1097,6 +1101,7 @@ include "../api/_fastdataframe_factory.pxi"
 include "../api/_fastdataframe_rolling.pxi"
 include "../api/_fastdataframe_shift.pxi"
 include "../api/_fastdataframe_stats.pxi"
+include "../api/_fastdataframe_groupby.pxi"
 
 
 # _DataFrameMetricAccessor — 懒加载缓存的 metric 访问器
