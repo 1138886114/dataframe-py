@@ -506,3 +506,153 @@ cdef _T_impl(FastDataFrame self):
             new_col.data_c[j] = self._get_col_value_as_double(self.columns[col_names[j]], i)
         result.columns[col_names[i] if i < cols else str(i)] = new_col
     return result
+
+cdef _abs_impl(FastDataFrame self):
+    cdef FastDataFrame result = FastDataFrame()
+    result.df_length = self.df_length
+    result.index = self.index
+    cdef str name
+    cdef BaseColumn col
+    cdef Py_ssize_t i, n = self.df_length
+    cdef IntColumn int_col
+    cdef DoubleColumn dbl_col
+    for name, col in self.columns.items():
+        if col.dtype == TYPE_INT:
+            int_col = IntColumn(max(n, 1))
+            int_col.length = n
+            for i in range(n):
+                int_col.data_c[i] = abs((<IntColumn>col).data_c[i])
+            result.columns[name] = int_col
+        elif col.dtype == TYPE_DOUBLE:
+            dbl_col = DoubleColumn(max(n, 1))
+            dbl_col.length = n
+            for i in range(n):
+                dbl_col.data_c[i] = fabs((<DoubleColumn>col).data_c[i])
+            result.columns[name] = dbl_col
+        else:
+            result.columns[name] = col.copy()
+    return result
+
+cdef _round_impl(FastDataFrame self, int decimals):
+    cdef FastDataFrame result = FastDataFrame()
+    result.df_length = self.df_length
+    result.index = self.index
+    cdef str name
+    cdef BaseColumn col
+    cdef Py_ssize_t i, n = self.df_length
+    cdef IntColumn int_col
+    cdef DoubleColumn dbl_col
+    cdef double factor = 1.0
+    for i in range(decimals):
+        factor *= 10.0
+    for name, col in self.columns.items():
+        if col.dtype == TYPE_INT:
+            int_col = IntColumn(max(n, 1))
+            int_col.length = n
+            if decimals == 0:
+                for i in range(n):
+                    int_col.data_c[i] = (<IntColumn>col).data_c[i]
+            else:
+                for i in range(n):
+                    int_col.data_c[i] = <int>((<IntColumn>col).data_c[i])
+            result.columns[name] = int_col
+        elif col.dtype == TYPE_DOUBLE:
+            dbl_col = DoubleColumn(max(n, 1))
+            dbl_col.length = n
+            if decimals == 0:
+                for i in range(n):
+                    dbl_col.data_c[i] = <double>round((<DoubleColumn>col).data_c[i])
+            else:
+                for i in range(n):
+                    dbl_col.data_c[i] = round((<DoubleColumn>col).data_c[i] * factor) / factor
+            result.columns[name] = dbl_col
+        else:
+            result.columns[name] = col.copy()
+    return result
+
+cdef _all_impl(FastDataFrame self):
+    cdef Py_ssize_t n = self.df_length
+    if n == 0:
+        return True
+    cdef str name
+    cdef BaseColumn col
+    cdef Py_ssize_t i
+    for name, col in self.columns.items():
+        if col.dtype == TYPE_INT:
+            for i in range(n):
+                if (<IntColumn>col).data_c[i] == 0:
+                    return False
+        elif col.dtype == TYPE_DOUBLE:
+            for i in range(n):
+                if (<DoubleColumn>col).data_c[i] == 0.0:
+                    return False
+        elif col.dtype == TYPE_BOOL:
+            for i in range(n):
+                if (<BoolColumn>col).data_c[i] == 0:
+                    return False
+    return True
+
+cdef _any_impl(FastDataFrame self):
+    cdef Py_ssize_t n = self.df_length
+    if n == 0:
+        return False
+    cdef str name
+    cdef BaseColumn col
+    cdef Py_ssize_t i
+    for name, col in self.columns.items():
+        if col.dtype == TYPE_INT:
+            for i in range(n):
+                if (<IntColumn>col).data_c[i] != 0:
+                    return True
+        elif col.dtype == TYPE_DOUBLE:
+            for i in range(n):
+                if (<DoubleColumn>col).data_c[i] != 0.0:
+                    return True
+        elif col.dtype == TYPE_BOOL:
+            for i in range(n):
+                if (<BoolColumn>col).data_c[i] != 0:
+                    return True
+    return False
+
+cdef _pct_change_impl(FastDataFrame self, int periods=1):
+    cdef FastDataFrame result = FastDataFrame()
+    result.df_length = self.df_length
+    result.index = self.index
+    cdef str name
+    cdef BaseColumn col
+    cdef Py_ssize_t i, n = self.df_length
+    cdef IntColumn int_col
+    cdef DoubleColumn dbl_col
+    cdef double prev_val, curr_val
+    for name, col in self.columns.items():
+        if col.dtype == TYPE_INT:
+            dbl_col = DoubleColumn(max(n, 1))
+            dbl_col.length = n
+            for i in range(n):
+                if i < periods:
+                    dbl_col.data_c[i] = NAN
+                else:
+                    prev_val = <double>(<IntColumn>col).data_c[i - periods]
+                    curr_val = <double>(<IntColumn>col).data_c[i]
+                    if prev_val == 0.0:
+                        dbl_col.data_c[i] = NAN
+                    else:
+                        dbl_col.data_c[i] = (curr_val - prev_val) / fabs(prev_val)
+            result.columns[name] = dbl_col
+        elif col.dtype == TYPE_DOUBLE:
+            dbl_col = DoubleColumn(max(n, 1))
+            dbl_col.length = n
+            for i in range(n):
+                if i < periods:
+                    dbl_col.data_c[i] = NAN
+                else:
+                    prev_val = (<DoubleColumn>col).data_c[i - periods]
+                    curr_val = (<DoubleColumn>col).data_c[i]
+                    if prev_val == 0.0:
+                        dbl_col.data_c[i] = NAN
+                    else:
+                        dbl_col.data_c[i] = (curr_val - prev_val) / fabs(prev_val)
+            result.columns[name] = dbl_col
+        else:
+            result.columns[name] = col.copy()
+    return result

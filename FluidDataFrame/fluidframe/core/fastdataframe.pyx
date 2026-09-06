@@ -868,6 +868,12 @@ cdef class FastDataFrame:
     def to_tsv(self, filename):
         return self.to_csv(filename, sep='\t')
 
+    def to_dict(self):
+        return _to_dict_impl(self)
+
+    def to_json(self, bint orient_records=True):
+        return _to_json_impl(self, orient_records)
+
     def to_numpy(self):
         return _to_numpy_impl(self)
 
@@ -933,6 +939,21 @@ cdef class FastDataFrame:
 
     def dropna(self):
         return _dropna_impl(self)
+
+    def abs(self):
+        return _abs_impl(self)
+
+    def round(self, int decimals=0):
+        return _round_impl(self, decimals)
+
+    def all(self):
+        return _all_impl(self)
+
+    def any(self):
+        return _any_impl(self)
+
+    def pct_change(self, int periods=1):
+        return _pct_change_impl(self, periods)
 
     def head(self, Py_ssize_t n=5):
         return _head_impl(self, n)

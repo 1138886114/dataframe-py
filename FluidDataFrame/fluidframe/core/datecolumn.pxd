@@ -16,8 +16,6 @@ cdef int32_t _parse_date_str(str s) noexcept
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class DateColumn(BaseColumn):
-    cdef public Py_ssize_t length
-    cdef public Py_ssize_t capacity
     cdef int32_t* data_c
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef inline int32_t _resolve_date(self, date) except *

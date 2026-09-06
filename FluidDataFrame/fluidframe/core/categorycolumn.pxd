@@ -5,8 +5,6 @@ from fluidframe.core._base cimport BaseColumn
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class CategoryColumn(BaseColumn):
-    cdef public Py_ssize_t length
-    cdef public Py_ssize_t capacity
     cdef int* codes_c
     cdef list categories
     cdef dict _cat_to_code

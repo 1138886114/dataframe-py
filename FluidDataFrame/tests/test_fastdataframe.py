@@ -1344,6 +1344,161 @@ def test_display():
 # =====================================================================
 #  Run all
 # =====================================================================
+# =====================================================================
+#  New API tests: to_dict, to_json, abs, round, all/any, pct_change
+# =====================================================================
+def test_to_dict():
+    df = FastDataFrame({'a': int, 'b': float, 'c': str})
+    df.append_row(a=1, b=2.5, c='hello')
+    df.append_row(a=3, b=4.0, c='world')
+    d = df.to_dict()
+    check('to_dict keys', set(d.keys()) == {'a', 'b', 'c'})
+    check('to_dict int', d['a'] == [1, 3])
+    check('to_dict float', d['b'] == [2.5, 4.0])
+    check('to_dict str', d['c'] == ['hello', 'world'])
+
+    # Empty DataFrame
+    df2 = FastDataFrame({'a': int})
+    check('to_dict empty', df2.to_dict() == {'a': []})
+
+def test_to_json():
+    import json
+    df = FastDataFrame({'x': int, 'y': float})
+    df.append_row(x=10, y=1.5)
+    df.append_row(x=20, y=2.5)
+
+    # orient='records' (default)
+    j = df.to_json()
+    parsed = json.loads(j)
+    check('json records type', isinstance(parsed, list))
+    check('json records len', len(parsed) == 2)
+    check('json records vals', parsed[0]['x'] == 10 and parsed[1]['y'] == 2.5)
+
+    # orient='columns'
+    j2 = df.to_json(orient_records=False)
+    parsed2 = json.loads(j2)
+    check('json columns type', isinstance(parsed2, dict))
+    check('json columns vals', parsed2['x'] == [10, 20])
+
+def test_abs():
+    df = FastDataFrame({'a': int, 'b': float})
+    df.append_row(a=-5, b=-3.14)
+    df.append_row(a=10, b=2.71)
+    df.append_row(a=-7, b=0.0)
+    abs_df = df.abs()
+    check('abs int', [abs_df['a'][i] for i in range(abs_df['a'].length)] == [5, 10, 7])
+    check('abs float', [abs_df['b'][i] for i in range(abs_df['b'].length)] == [3.14, 2.71, 0.0])
+
+    # Empty
+    df2 = FastDataFrame({'x': int})
+    check('abs empty', df2.abs().to_dict() == {'x': []})
+
+    # Mixed types (string passthrough)
+    df3 = FastDataFrame({'a': str})
+    df3.append_row(a='hello')
+    abs3 = df3.abs()
+    check('abs string passthrough', [abs3['a'][i] for i in range(abs3['a'].length)] == ['hello'])
+
+def test_round():
+    df = FastDataFrame({'a': float})
+    df.append_row(a=1.23456)
+    df.append_row(a=5.67890)
+    df.append_row(a=-3.14159)
+
+    r0 = df.round(0)
+    check('round 0', [r0['a'][i] for i in range(r0['a'].length)] == [1.0, 6.0, -3.0])
+
+    r2 = df.round(2)
+    check('round 2', [r2['a'][i] for i in range(r2['a'].length)] == [1.23, 5.68, -3.14])
+
+    # Int column passthrough
+    df2 = FastDataFrame({'b': int})
+    df2.append_row(b=42)
+    r_int = df2.round(0)
+    check('round int passthrough', [r_int['b'][i] for i in range(r_int['b'].length)] == [42])
+
+def test_all_any():
+    # all() - all True
+    df = FastDataFrame({'x': int})
+    df.append_row(x=1)
+    df.append_row(x=2)
+    check('all true', df.all() == True)
+
+    # all() - one False
+    df2 = FastDataFrame({'x': int})
+    df2.append_row(x=1)
+    df2.append_row(x=0)
+    check('all false', df2.all() == False)
+
+    # all() - empty
+    df3 = FastDataFrame({'x': int})
+    check('all empty', df3.all() == True)
+
+    # any() - has True
+    df4 = FastDataFrame({'x': int})
+    df4.append_row(x=0)
+    df4.append_row(x=5)
+    check('any true', df4.any() == True)
+
+    # any() - all False
+    df5 = FastDataFrame({'x': int})
+    df5.append_row(x=0)
+    df5.append_row(x=0)
+    check('any false', df5.any() == False)
+
+    # any() - empty
+    df6 = FastDataFrame({'x': int})
+    check('any empty', df6.any() == False)
+
+    # bool column
+    df7 = FastDataFrame({'x': bool})
+    df7.append_row(x=True)
+    df7.append_row(x=True)
+    check('all bool true', df7.all() == True)
+    df7.append_row(x=False)
+    check('all bool mixed', df7.all() == False)
+
+    # multi-column all/any
+    df8 = FastDataFrame({'a': int, 'b': int})
+    df8.append_row(a=1, b=2)
+    df8.append_row(a=3, b=4)
+    check('multi all true', df8.all() == True)
+    df8.append_row(a=0, b=1)
+    check('multi all false', df8.all() == False)
+
+def test_pct_change():
+    df = FastDataFrame({'x': int})
+    df.append_row(x=100)
+    df.append_row(x=110)
+    df.append_row(x=99)
+    pct = df.pct_change()
+    import math
+    check('pct_change nan', math.isnan(pct['x'][0]))
+    check('pct_change 10%', abs(pct['x'][1] - 0.1) < 1e-10)
+    check('pct_change -10%', abs(pct['x'][2] - (-0.1)) < 1e-10)
+
+    # periods=2
+    pct2 = df.pct_change(periods=2)
+    check('pct_change periods=2 nan1', math.isnan(pct2['x'][0]))
+    check('pct_change periods=2 nan2', math.isnan(pct2['x'][1]))
+    check('pct_change periods=2 val', abs(pct2['x'][2] - (-0.01)) < 1e-10)
+
+    # float column
+    df2 = FastDataFrame({'y': float})
+    df2.append_row(y=10.0)
+    df2.append_row(y=20.0)
+    pct_f = df2.pct_change()
+    check('pct_change float nan', math.isnan(pct_f['y'][0]))
+    check('pct_change float 100%', abs(pct_f['y'][1] - 1.0) < 1e-10)
+
+    # zero previous value -> nan
+    df3 = FastDataFrame({'z': int})
+    df3.append_row(z=0)
+    df3.append_row(z=5)
+    pct_z = df3.pct_change()
+    check('pct_change zero prev', math.isnan(pct_z['z'][1]))
+
+
 def run_all():
     print('=== FastDataFrame Tests ===')
 
@@ -1520,6 +1675,15 @@ def run_all():
     test_stress_pop_front_back()
     test_stress_csv_roundtrip()
     test_stress_multi_type_filter()
+
+    # New API methods
+    print('\n--- new API tests ---')
+    test_to_dict()
+    test_to_json()
+    test_abs()
+    test_round()
+    test_all_any()
+    test_pct_change()
 
     print(f'\nResults: {passed} passed, {failed} failed')
     if failed: sys.exit(1)

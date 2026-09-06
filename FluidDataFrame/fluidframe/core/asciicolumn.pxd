@@ -10,8 +10,6 @@ cdef bint _c_str_contains(const char* source, const char* target) noexcept nogil
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class AsciiColumn(BaseColumn):
-    cdef public Py_ssize_t length
-    cdef public Py_ssize_t capacity
     cdef char* data_c                # 变长字符缓冲区
     cdef Py_ssize_t* offsets_c       # 地址偏移数组: offsets[i] = 字符串i在data_c中的起始字节偏移
     cdef public Py_ssize_t byte_capacity  # data_c 的字节容量

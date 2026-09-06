@@ -9,8 +9,6 @@ cdef void _datetime_to_ymdhms(int64_t us, int* y, int* m, int* d, int* h, int* m
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class DateTimeColumn(BaseColumn):
-    cdef public Py_ssize_t length
-    cdef public Py_ssize_t capacity
     cdef int64_t* data_c
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef DateTimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)

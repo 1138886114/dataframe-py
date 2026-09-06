@@ -187,3 +187,33 @@ cdef _memory_usage_impl(FastDataFrame self):
     for col in self.columns.values():
         total += col.get_size()
     return total
+
+cdef _to_dict_impl(FastDataFrame self):
+    cdef dict result = {}
+    cdef str name
+    cdef BaseColumn col
+    cdef Py_ssize_t i, n
+    for name, col in self.columns.items():
+        n = col.length
+        result[name] = [col[i] for i in range(n)]
+    return result
+
+cdef _to_json_impl(FastDataFrame self, bint orient_records=True):
+    import json
+    cdef list records = []
+    cdef dict row_dict
+    cdef list col_names = list(self.columns.keys())
+    cdef Py_ssize_t i, j, n = self.df_length
+    cdef Py_ssize_t num_cols = len(col_names)
+    cdef dict columns_dict = {}
+    if orient_records:
+        for i in range(n):
+            row_dict = {}
+            for j in range(num_cols):
+                row_dict[col_names[j]] = self.columns[col_names[j]][i]
+            records.append(row_dict)
+        return json.dumps(records)
+    else:
+        for name, col in self.columns.items():
+            columns_dict[name] = [col[i] for i in range(col.length)]
+        return json.dumps(columns_dict)

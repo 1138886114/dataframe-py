@@ -11,8 +11,6 @@ cdef int _cmp_double_asc(const void* a, const void* b) noexcept nogil
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class DoubleColumn(BaseColumn):
-    cdef public Py_ssize_t length
-    cdef public Py_ssize_t capacity
     cdef double* data_c
     cdef unsigned int _meta        # 4 字节：紧凑打包 cols, _owns_data, is_2d
     cdef object _base_obj

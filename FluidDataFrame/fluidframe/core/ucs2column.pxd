@@ -17,8 +17,6 @@ cdef Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle, int n_
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class UCS2Column(BaseColumn):
-    cdef public Py_ssize_t length
-    cdef public Py_ssize_t capacity
     cdef Py_UCS2* chars_c
     cdef Py_ssize_t* offsets_c
     cdef public Py_ssize_t char_capacity
