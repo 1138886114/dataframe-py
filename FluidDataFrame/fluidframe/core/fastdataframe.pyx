@@ -228,30 +228,60 @@ cdef inline int _cstrncmp(const char* a, Py_ssize_t a_len, const char* b, Py_ssi
 
 cdef void _c_argsort_char256(char* data, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return
-    cdef Py_ssize_t i = left, j = right
-    cdef Py_ssize_t pivot_idx = indices[(left + right) // 2]
-    cdef char* pivot_ptr = data + offsets[pivot_idx]
-    cdef Py_ssize_t pivot_len = offsets[pivot_idx + 1] - offsets[pivot_idx] - 1
-    cdef Py_ssize_t temp, cur_len
 
-    while i <= j:
-        while i <= j:
-            cur_len = offsets[indices[i] + 1] - offsets[indices[i]] - 1
-            if _cstrncmp(data + offsets[indices[i]], cur_len, pivot_ptr, pivot_len) >= 0:
-                break
-            i += 1
-        while i <= j:
-            cur_len = offsets[indices[j] + 1] - offsets[indices[j]] - 1
-            if _cstrncmp(data + offsets[indices[j]], cur_len, pivot_ptr, pivot_len) <= 0:
-                break
-            j -= 1
-        if i <= j:
-            temp = indices[i]; indices[i] = indices[j]; indices[j] = temp
-            i += 1
-            j -= 1
+    cdef Py_ssize_t stack[64]
+    cdef Py_ssize_t top = -1
+    cdef Py_ssize_t l, r, i, j, temp
+    cdef Py_ssize_t pivot_idx, cur_len
+    cdef char* pivot_ptr
+    cdef Py_ssize_t pivot_len
 
-    if left < j: _c_argsort_char256(data, offsets, indices, left, j)
-    if i < right: _c_argsort_char256(data, offsets, indices, i, right)
+    top += 1; stack[top] = left
+    top += 1; stack[top] = right
+
+    while top >= 0:
+        r = stack[top]; top -= 1
+        l = stack[top]; top -= 1
+        if l >= r:
+            continue
+
+        pivot_idx = indices[(l + r) // 2]
+        pivot_ptr = data + offsets[pivot_idx]
+        pivot_len = offsets[pivot_idx + 1] - offsets[pivot_idx] - 1
+        i = l; j = r
+
+        while i <= j:
+            while i <= j:
+                cur_len = offsets[indices[i] + 1] - offsets[indices[i]] - 1
+                if _cstrncmp(data + offsets[indices[i]], cur_len, pivot_ptr, pivot_len) >= 0:
+                    break
+                i += 1
+            while i <= j:
+                cur_len = offsets[indices[j] + 1] - offsets[indices[j]] - 1
+                if _cstrncmp(data + offsets[indices[j]], cur_len, pivot_ptr, pivot_len) <= 0:
+                    break
+                j -= 1
+            if i <= j:
+                temp = indices[i]; indices[i] = indices[j]; indices[j] = temp
+                i += 1; j -= 1
+
+        if l < j:
+            if j - l < r - i:
+                top += 1; stack[top] = l
+                top += 1; stack[top] = j
+                if i < right:
+                    top += 1; stack[top] = i
+                    top += 1; stack[top] = r
+            else:
+                if i < r:
+                    top += 1; stack[top] = i
+                    top += 1; stack[top] = r
+                if l < j:
+                    top += 1; stack[top] = l
+                    top += 1; stack[top] = j
+        elif i < r:
+            top += 1; stack[top] = i
+            top += 1; stack[top] = r
 
 
 @cython.boundscheck(False)
@@ -259,29 +289,56 @@ cdef void _c_argsort_char256(char* data, Py_ssize_t* offsets, Py_ssize_t* indice
 cdef void _c_argsort_numeric(NumericType* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return
 
-    cdef Py_ssize_t mid = left + ((right - left) >> 1)
-    cdef Py_ssize_t temp
-    if data[indices[left]] > data[indices[mid]]:
-        temp = indices[left]; indices[left] = indices[mid]; indices[mid] = temp
-    if data[indices[left]] > data[indices[right]]:
-        temp = indices[left]; indices[left] = indices[right]; indices[right] = temp
-    if data[indices[mid]] > data[indices[right]]:
-        temp = indices[mid]; indices[mid] = indices[right]; indices[right] = temp
+    cdef Py_ssize_t stack[64]
+    cdef Py_ssize_t top = -1
+    cdef Py_ssize_t l, r, i, j, temp
+    cdef Py_ssize_t mid_idx
+    cdef NumericType pivot
 
-    cdef Py_ssize_t pivot_idx = indices[mid]
-    cdef NumericType pivot = data[pivot_idx]
-    cdef Py_ssize_t i = left, j = right
+    top += 1; stack[top] = left
+    top += 1; stack[top] = right
 
-    while i <= j:
-        while data[indices[i]] < pivot: i += 1
-        while data[indices[j]] > pivot: j -= 1
-        if i <= j:
-            temp = indices[i]; indices[i] = indices[j]; indices[j] = temp
-            i += 1
-            j -= 1
+    while top >= 0:
+        r = stack[top]; top -= 1
+        l = stack[top]; top -= 1
+        if l >= r:
+            continue
 
-    if left < j: _c_argsort_numeric(data, indices, left, j)
-    if i < right: _c_argsort_numeric(data, indices, i, right)
+        mid_idx = l + ((r - l) >> 1)
+        if data[indices[l]] > data[indices[mid_idx]]:
+            temp = indices[l]; indices[l] = indices[mid_idx]; indices[mid_idx] = temp
+        if data[indices[l]] > data[indices[r]]:
+            temp = indices[l]; indices[l] = indices[r]; indices[r] = temp
+        if data[indices[mid_idx]] > data[indices[r]]:
+            temp = indices[mid_idx]; indices[mid_idx] = indices[r]; indices[r] = temp
+
+        pivot = data[indices[mid_idx]]
+        i = l; j = r
+
+        while i <= j:
+            while data[indices[i]] < pivot: i += 1
+            while data[indices[j]] > pivot: j -= 1
+            if i <= j:
+                temp = indices[i]; indices[i] = indices[j]; indices[j] = temp
+                i += 1; j -= 1
+
+        if l < j:
+            if j - l < r - i:
+                top += 1; stack[top] = l
+                top += 1; stack[top] = j
+                if i < right:
+                    top += 1; stack[top] = i
+                    top += 1; stack[top] = r
+            else:
+                if i < r:
+                    top += 1; stack[top] = i
+                    top += 1; stack[top] = r
+                if l < j:
+                    top += 1; stack[top] = l
+                    top += 1; stack[top] = j
+        elif i < r:
+            top += 1; stack[top] = i
+            top += 1; stack[top] = r
 
 
 cdef inline int _ucs2_cmp_at(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t i, Py_ssize_t j) noexcept nogil:
@@ -300,20 +357,48 @@ cdef inline int _ucs2_cmp_at(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t i, 
 @cython.wraparound(False)
 cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return
-    cdef Py_ssize_t i = left, j = right
-    cdef Py_ssize_t pivot_idx = indices[(left + right) // 2]
-    cdef Py_ssize_t temp
 
-    while i <= j:
-        while _ucs2_cmp_at(chars, offsets, indices[i], pivot_idx) < 0: i += 1
-        while _ucs2_cmp_at(chars, offsets, indices[j], pivot_idx) > 0: j -= 1
-        if i <= j:
-            temp = indices[i]; indices[i] = indices[j]; indices[j] = temp
-            i += 1
-            j -= 1
+    cdef Py_ssize_t stack[64]
+    cdef Py_ssize_t top = -1
+    cdef Py_ssize_t l, r, i, j, temp
+    cdef Py_ssize_t pivot_idx
 
-    if left < j: _c_argsort_ucs2(chars, offsets, indices, left, j)
-    if i < right: _c_argsort_ucs2(chars, offsets, indices, i, right)
+    top += 1; stack[top] = left
+    top += 1; stack[top] = right
+
+    while top >= 0:
+        r = stack[top]; top -= 1
+        l = stack[top]; top -= 1
+        if l >= r:
+            continue
+
+        pivot_idx = indices[(l + r) // 2]
+        i = l; j = r
+
+        while i <= j:
+            while _ucs2_cmp_at(chars, offsets, indices[i], pivot_idx) < 0: i += 1
+            while _ucs2_cmp_at(chars, offsets, indices[j], pivot_idx) > 0: j -= 1
+            if i <= j:
+                temp = indices[i]; indices[i] = indices[j]; indices[j] = temp
+                i += 1; j -= 1
+
+        if l < j:
+            if j - l < r - i:
+                top += 1; stack[top] = l
+                top += 1; stack[top] = j
+                if i < right:
+                    top += 1; stack[top] = i
+                    top += 1; stack[top] = r
+            else:
+                if i < r:
+                    top += 1; stack[top] = i
+                    top += 1; stack[top] = r
+                if l < j:
+                    top += 1; stack[top] = l
+                    top += 1; stack[top] = j
+        elif i < r:
+            top += 1; stack[top] = i
+            top += 1; stack[top] = r
 
 
 cdef inline void _c_shift_right(void* buf, Py_ssize_t pos, Py_ssize_t col_len, Py_ssize_t elem_size) noexcept nogil:

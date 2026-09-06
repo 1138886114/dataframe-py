@@ -252,10 +252,12 @@ cdef class DoubleColumn(BaseColumn):
     cdef void _reserve(self, Py_ssize_t new_cap):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot reallocate a view/slice column. Copy it first.")
+        cdef double* new_ptr
         if new_cap > self.capacity:
-            self.data_c = <double*>aligned_realloc(self.data_c, self.capacity * sizeof(double), new_cap * sizeof(double))
-            if not self.data_c:
+            new_ptr = <double*>aligned_realloc(self.data_c, self.capacity * sizeof(double), new_cap * sizeof(double))
+            if not new_ptr:
                 raise MemoryError()
+            self.data_c = new_ptr
             self.capacity = new_cap
 
     @cython.binding(False)

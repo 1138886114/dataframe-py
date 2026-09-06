@@ -200,6 +200,87 @@ def test_groupby_int_column_var_std():
     # cat=1: [10,20] -> std=sqrt(50)~7.07
     check('cat1_std', abs(res['val'][cats.index(1)] - 7.071067811865) < 1e-6)
 
+def test_groupby_median():
+    print('--- test_groupby_median ---')
+    df = FastDataFrame({'name': str, 'val': float})
+    df.append_row(name='A', val=1.0)
+    df.append_row(name='A', val=3.0)
+    df.append_row(name='A', val=5.0)
+    df.append_row(name='B', val=2.0)
+    df.append_row(name='B', val=4.0)
+    res = df.groupby('name').median('val')
+    names = [res['name'][i] for i in range(2)]
+    # A: [1,3,5] -> median=3.0
+    check('A_median', abs(res['val'][names.index('A')] - 3.0) < 1e-10)
+    # B: [2,4] -> median=3.0
+    check('B_median', abs(res['val'][names.index('B')] - 3.0) < 1e-10)
+
+def test_groupby_quantile():
+    print('--- test_groupby_quantile ---')
+    df = FastDataFrame({'name': str, 'val': float})
+    df.append_row(name='A', val=1.0)
+    df.append_row(name='A', val=2.0)
+    df.append_row(name='A', val=3.0)
+    df.append_row(name='A', val=4.0)
+    res = df.groupby('name').quantile('val')
+    names = [res['name'][i] for i in range(1)]
+    # A: [1,2,3,4] -> quantile(median)=2.5
+    check('A_quantile', abs(res['val'][names.index('A')] - 2.5) < 1e-10)
+
+def test_groupby_transform():
+    print('--- test_groupby_transform ---')
+    df = FastDataFrame({'name': str, 'val': float})
+    df.append_row(name='A', val=10.0)
+    df.append_row(name='A', val=20.0)
+    df.append_row(name='B', val=30.0)
+    df.append_row(name='B', val=40.0)
+    def normalize(sub_df):
+        result = FastDataFrame({'name': str, 'val': float})
+        vals = [sub_df['val'][i] for i in range(sub_df.df_length)]
+        mn = min(vals)
+        mx = max(vals)
+        rng = mx - mn if mx != mn else 1.0
+        for i in range(sub_df.df_length):
+            result.append_row(name=sub_df['name'][i], val=(sub_df['val'][i] - mn) / rng)
+        return result
+    res = df.groupby('name').transform(normalize)
+    check('length', res.df_length == 4)
+    vals = [res['val'][i] for i in range(4)]
+    # A: [10,20] -> normalized [0.0, 1.0]
+    check('A_norm_0', abs(vals[0] - 0.0) < 1e-10)
+    check('A_norm_1', abs(vals[1] - 1.0) < 1e-10)
+    # B: [30,40] -> normalized [0.0, 1.0]
+    check('B_norm_0', abs(vals[2] - 0.0) < 1e-10)
+    check('B_norm_1', abs(vals[3] - 1.0) < 1e-10)
+
+def test_groupby_filter():
+    print('--- test_groupby_filter ---')
+    df = FastDataFrame({'name': str, 'val': float})
+    df.append_row(name='A', val=10.0)
+    df.append_row(name='A', val=20.0)
+    df.append_row(name='B', val=5.0)
+    df.append_row(name='B', val=15.0)
+    df.append_row(name='C', val=50.0)
+    # Keep groups where sum(val) > 25
+    res = df.groupby('name').filter(lambda sub: sum([sub['val'][i] for i in range(sub.df_length)]) > 25)
+    check('length', res.df_length == 3)
+    names = [res['name'][i] for i in range(3)]
+    check('has_A', 'A' in names)
+    check('has_C', 'C' in names)
+    check('no_B', 'B' not in names)
+
+def test_groupby_agg_median():
+    print('--- test_groupby_agg_median ---')
+    df = FastDataFrame({'name': str, 'val': float})
+    df.append_row(name='A', val=1.0)
+    df.append_row(name='A', val=5.0)
+    df.append_row(name='B', val=2.0)
+    df.append_row(name='B', val=8.0)
+    res = df.groupby('name').agg({'val': 'median'})
+    names = [res['name'][i] for i in range(2)]
+    check('A_median', abs(res['val'][names.index('A')] - 3.0) < 1e-10)
+    check('B_median', abs(res['val'][names.index('B')] - 5.0) < 1e-10)
+
 def run_all():
     test_groupby_basic()
     test_groupby_sum()
@@ -216,6 +297,11 @@ def run_all():
     test_groupby_int_key()
     test_groupby_var_std()
     test_groupby_int_column_var_std()
+    test_groupby_median()
+    test_groupby_quantile()
+    test_groupby_transform()
+    test_groupby_filter()
+    test_groupby_agg_median()
     print()
     print(f'Results: {passed} passed, {failed} failed')
     if failed > 0:

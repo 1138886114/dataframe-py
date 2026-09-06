@@ -114,14 +114,20 @@ cdef int _group_rows_add_group(_GroupRows* gr) nogil:
 
     new_sizes = <Py_ssize_t*>aligned_realloc(gr.row_sizes, max(gr.count, 1) * sizeof(Py_ssize_t), new_count * sizeof(Py_ssize_t))
     if not new_sizes: return -1
-    gr.row_sizes = new_sizes
 
     new_caps = <Py_ssize_t*>aligned_realloc(gr.row_capacities, max(gr.count, 1) * sizeof(Py_ssize_t), new_count * sizeof(Py_ssize_t))
-    if not new_caps: return -1
-    gr.row_capacities = new_caps
+    if not new_caps:
+        os_aligned_free(new_sizes)
+        return -1
 
     new_rows = <Py_ssize_t**>aligned_realloc(gr.rows, max(gr.count, 1) * sizeof(Py_ssize_t*), new_count * sizeof(Py_ssize_t*))
-    if not new_rows: return -1
+    if not new_rows:
+        os_aligned_free(new_sizes)
+        os_aligned_free(new_caps)
+        return -1
+
+    gr.row_sizes = new_sizes
+    gr.row_capacities = new_caps
     gr.rows = new_rows
 
     gr.row_sizes[gr.count] = 0
@@ -335,13 +341,13 @@ cdef bint _gb_rows_equal(_ByColPtrs ptrs, Py_ssize_t row1, Py_ssize_t row2) noex
 # Group building
 # ============================================================
 
-cdef void _gb_build_groups(FastDataFrame df, list by_cols,
+cdef int _gb_build_groups(FastDataFrame df, list by_cols,
                             _GroupHashTable* ht, _GroupRows* gr,
-                            _ByColPtrs ptrs):
+                            _ByColPtrs ptrs) except -1:
     cdef Py_ssize_t n = df.df_length
     cdef Py_ssize_t i
     cdef uint64_t h
-    cdef int g_id
+    cdef int g_id, ret
     cdef Py_ssize_t first_seen_row
     cdef bint found
     cdef int existing_g
@@ -350,22 +356,27 @@ cdef void _gb_build_groups(FastDataFrame df, list by_cols,
         h = _gb_hash_row(ptrs, i)
         g_id = _ght_get_or_insert(ht, h)
         if g_id >= gr.count:
-            _group_rows_add_group(gr)
+            ret = _group_rows_add_group(gr)
+            if ret < 0: raise MemoryError("Failed to add group in GroupBy")
         first_seen_row = gr.rows[g_id][0] if gr.row_sizes[g_id] > 0 else -1
         if first_seen_row >= 0 and not _gb_rows_equal(ptrs, i, first_seen_row):
             found = False
             for existing_g in range(gr.count):
                 if gr.row_sizes[existing_g] > 0:
                     if _gb_rows_equal(ptrs, i, gr.rows[existing_g][0]):
-                        _group_rows_append(gr, existing_g, i)
+                        ret = _group_rows_append(gr, existing_g, i)
+                        if ret < 0: raise MemoryError("Failed to append row in GroupBy")
                         found = True
                         break
             if not found:
                 g_id = gr.count
-                _group_rows_add_group(gr)
-                _group_rows_append(gr, g_id, i)
+                ret = _group_rows_add_group(gr)
+                if ret < 0: raise MemoryError("Failed to add group in GroupBy")
+                ret = _group_rows_append(gr, g_id, i)
+                if ret < 0: raise MemoryError("Failed to append row in GroupBy")
         else:
-            _group_rows_append(gr, g_id, i)
+            ret = _group_rows_append(gr, g_id, i)
+            if ret < 0: raise MemoryError("Failed to append row in GroupBy")
 
 # ============================================================
 # Aggregation helpers
@@ -478,9 +489,10 @@ cdef IntColumn _gb_native_idx(FastDataFrame df, _GroupRows* gr, str col_name, bi
 cdef object _gb_python_agg(FastDataFrame df, _GroupRows* gr, str col_name, str func_name):
     cdef list results = []
     cdef int g_id
-    cdef Py_ssize_t sz, row_idx, i
+    cdef Py_ssize_t sz, row_idx, i, mid
     cdef BaseColumn orig_col = df.columns[col_name]
     cdef list vals
+    cdef list sorted_vals
 
     for g_id in range(gr.count):
         sz = gr.row_sizes[g_id]
@@ -498,6 +510,26 @@ cdef object _gb_python_agg(FastDataFrame df, _GroupRows* gr, str col_name, str f
             results.append(max(vals) if vals else NAN)
         elif func_name == 'count':
             results.append(len(vals))
+        elif func_name == 'median':
+            if not vals:
+                results.append(NAN)
+            else:
+                sorted_vals = sorted(vals)
+                mid = len(sorted_vals) // 2
+                if len(sorted_vals) % 2 == 0:
+                    results.append((sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0)
+                else:
+                    results.append(sorted_vals[mid])
+        elif func_name == 'quantile':
+            if not vals:
+                results.append(NAN)
+            else:
+                sorted_vals = sorted(vals)
+                mid = len(sorted_vals) // 2
+                if len(sorted_vals) % 2 == 0:
+                    results.append((sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0)
+                else:
+                    results.append(sorted_vals[mid])
         else:
             raise ValueError(f"Unsupported python aggregation function: {func_name}")
 
@@ -539,7 +571,10 @@ cdef class _DataFrameGroupByAccessor:
         if col_name is not None:
             res = FastDataFrame()
             res.df_length = self._gr.count
-            res.columns[col_name] = _gb_native_agg(self._df, self._gr, col_name, func_name)
+            if func_name in ('sum', 'mean', 'min', 'max', 'var', 'std'):
+                res.columns[col_name] = _gb_native_agg(self._df, self._gr, col_name, func_name)
+            else:
+                res.columns[col_name] = _gb_python_agg(self._df, self._gr, col_name, func_name)
             for cn in self._by_cols:
                 res.columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
             return res
@@ -600,6 +635,14 @@ cdef class _DataFrameGroupByAccessor:
     @cython.binding(False)
     def max(self, str col_name=None):
         return self._convenience_agg('max', col_name)
+
+    @cython.binding(False)
+    def median(self, str col_name=None):
+        return self._convenience_agg('median', col_name)
+
+    @cython.binding(False)
+    def quantile(self, str col_name=None):
+        return self._convenience_agg('quantile', col_name)
 
     @cython.binding(False)
     def var(self, str col_name=None):

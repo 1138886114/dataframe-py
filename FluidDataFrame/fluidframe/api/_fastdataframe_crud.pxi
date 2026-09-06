@@ -33,7 +33,11 @@ cdef BaseColumn _column_from_list_impl(FastDataFrame self, str name, list values
     elif isinstance(sample, int):
         int_col = IntColumn(max(n, 1))
         int_col.length = n
-        for i in range(n): int_col.data_c[i] = <int>(values[i] if values[i] is not None else 0)
+        for i in range(n):
+            val = values[i] if values[i] is not None else 0
+            if val > 2147483647 or val < -2147483648:
+                raise OverflowError(f"Value {val} at index {i} out of range for int32")
+            int_col.data_c[i] = <int>val
         return int_col
     elif isinstance(sample, float):
         dbl_col = DoubleColumn(max(n, 1))
@@ -268,6 +272,9 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
             self._shift_right(col_obj, pos)
             shifted_cols.append(col_name)
             if col_obj.dtype == TYPE_INT:
+                if isinstance(val, int) and not isinstance(val, bool):
+                    if val > 2147483647 or val < -2147483648:
+                        raise OverflowError(f"Value {val} out of range for int32")
                 (<IntColumn>col_obj).data_c[pos] = <int>val
             elif col_obj.dtype == TYPE_DOUBLE:
                 (<DoubleColumn>col_obj).data_c[pos] = <double>val
