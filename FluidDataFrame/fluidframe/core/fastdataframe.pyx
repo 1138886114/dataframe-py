@@ -1074,6 +1074,18 @@ cdef class FastDataFrame:
     def diff_all(self, int periods=1):
         return _diff_column_all_impl(self, periods)
 
+    # DataFrame-level rank
+    def rank(self, str col_name, str method='average', bint ascending=True, str na_option='keep'):
+        return _rank_impl(self, col_name, method, ascending, na_option)
+
+    # DataFrame-level cut
+    def cut(self, str col_name, list bins, bint include_lowest=False, str right='right'):
+        return _cut_impl(self, col_name, bins, include_lowest, right)
+
+    # DataFrame-level qcut
+    def qcut(self, str col_name, int q=4, str labels='True', double precision=3):
+        return _qcut_impl(self, col_name, q, labels, precision)
+
 
 include "../api/_fastdataframe_crud.pxi"
 include "../api/_fastdataframe_transform.pxi"
@@ -1084,6 +1096,7 @@ include "../api/_fastdataframe_metric.pxi"
 include "../api/_fastdataframe_factory.pxi"
 include "../api/_fastdataframe_rolling.pxi"
 include "../api/_fastdataframe_shift.pxi"
+include "../api/_fastdataframe_stats.pxi"
 
 
 # _DataFrameMetricAccessor — 懒加载缓存的 metric 访问器

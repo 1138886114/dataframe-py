@@ -17,6 +17,7 @@ from fluidframe.core._base cimport (
     aligned_malloc, os_aligned_free
 )
 from fluidframe.core.fastdataframe cimport FastDataFrame
+from fluidframe.core.index cimport RangeIndex
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.asciicolumn cimport AsciiColumn
@@ -567,3 +568,136 @@ cdef class FastDataFrameGroupBy:
     @cython.binding(False)
     def __repr__(self):
         return f"<FastDataFrameGroupBy: {self.num_groups} groups, by={self.by_cols}>"
+
+    @cython.binding(False)
+    def transform(self, object func):
+        """Apply a function to each group and broadcast results back to original shape.
+        
+        The function receives a sub-DataFrame for each group and should return
+        a FastDataFrame with columns matching the original. Results are placed
+        back in the original row positions.
+        """
+        cdef Py_ssize_t n = self.df.df_length
+        cdef FastDataFrame result = FastDataFrame()
+        result.df_length = n
+        result.index = self.df.index
+
+        cdef str cn
+        cdef list col_names = []
+        cdef dict col_values = {}
+
+        for cn in self.df.columns:
+            col_names.append(cn)
+            col_values[cn] = [None] * n
+
+        cdef int g_id
+        cdef Py_ssize_t sz, row_idx, i
+
+        for g_id in range(self.num_groups):
+            sz = self.group_rows[0][g_id].size()
+            indices_c = <Py_ssize_t*>aligned_malloc(max(sz, 1) * sizeof(Py_ssize_t))
+            if not indices_c: raise MemoryError()
+            try:
+                for i in range(sz):
+                    indices_c[i] = self.group_rows[0][g_id][i]
+                sub_df = self.df._take(indices_c, sz)
+                transformed = func(sub_df)
+                if isinstance(transformed, FastDataFrame):
+                    # Discover any new columns not in original
+                    for cn in transformed.columns:
+                        if cn not in col_values:
+                            col_names.append(cn)
+                            col_values[cn] = [None] * n
+                    for cn in col_names:
+                        if cn in transformed.columns:
+                            src_col = transformed.columns[cn]
+                            for i in range(sz):
+                                row_idx = self.group_rows[0][g_id][i]
+                                col_values[cn][row_idx] = src_col[i]
+                else:
+                    for cn in col_names:
+                        if cn not in self.by_cols:
+                            for i in range(sz):
+                                row_idx = self.group_rows[0][g_id][i]
+                                col_values[cn][row_idx] = transformed
+            finally:
+                os_aligned_free(indices_c)
+
+        for cn in col_names:
+            values = col_values[cn]
+            nv = len(values)
+            if nv == 0:
+                result.columns[cn] = IntColumn(0)
+                continue
+            sample = None
+            for vi in range(nv):
+                if values[vi] is not None:
+                    sample = values[vi]
+                    break
+            if sample is None:
+                dbl = DoubleColumn(max(nv, 1))
+                dbl.length = nv
+                for vi in range(nv):
+                    dbl.data_c[vi] = NAN
+                result.columns[cn] = dbl
+            elif isinstance(sample, bool):
+                bc = BoolColumn(max(nv, 1))
+                bc.length = nv
+                for vi in range(nv):
+                    bc.data_c[vi] = 1 if values[vi] else 0
+                result.columns[cn] = bc
+            elif isinstance(sample, int):
+                ic = IntColumn(max(nv, 1))
+                ic.length = nv
+                for vi in range(nv):
+                    ic.data_c[vi] = <int>(values[vi] if values[vi] is not None else 0)
+                result.columns[cn] = ic
+            elif isinstance(sample, float):
+                dc = DoubleColumn(max(nv, 1))
+                dc.length = nv
+                for vi in range(nv):
+                    dc.data_c[vi] = <double>values[vi] if values[vi] is not None else NAN
+                result.columns[cn] = dc
+            elif isinstance(sample, str):
+                ac = AsciiColumn(max(nv, 1))
+                for vi in range(nv):
+                    ac.append(str(values[vi] if values[vi] is not None else ''))
+                result.columns[cn] = ac
+
+        return result
+
+    @cython.binding(False)
+    def filter(self, object func):
+        """Filter groups based on a function that returns True/False."""
+        cdef FastDataFrame result = FastDataFrame()
+        cdef list keep_rows = []
+        cdef int g_id
+        cdef Py_ssize_t sz, row_idx, i
+
+        for g_id in range(self.num_groups):
+            sz = self.group_rows[0][g_id].size()
+            indices_c = <Py_ssize_t*>aligned_malloc(max(sz, 1) * sizeof(Py_ssize_t))
+            if not indices_c: raise MemoryError()
+            try:
+                for i in range(sz):
+                    indices_c[i] = self.group_rows[0][g_id][i]
+                sub_df = self.df._take(indices_c, sz)
+                if func(sub_df):
+                    for i in range(sz):
+                        keep_rows.append(self.group_rows[0][g_id][i])
+            finally:
+                os_aligned_free(indices_c)
+
+        if len(keep_rows) == 0:
+            result.df_length = 0
+            result.index = RangeIndex(0, 0)
+            return result
+
+        cdef Py_ssize_t* keep_c = <Py_ssize_t*>aligned_malloc(max(len(keep_rows), 1) * sizeof(Py_ssize_t))
+        if not keep_c: raise MemoryError()
+        try:
+            for i in range(len(keep_rows)):
+                keep_c[i] = keep_rows[i]
+            return self.df._take(keep_c, len(keep_rows))
+        finally:
+            os_aligned_free(keep_c)
