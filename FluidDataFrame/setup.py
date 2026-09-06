@@ -68,10 +68,6 @@ extensions = [
               ["fluidframe/core/fastdataframe.pyx"],
               extra_compile_args=COMMON_compile_args,
               extra_link_args=COMMON_link_args),
-    Extension("fluidframe.core.fluidframe",
-              ["fluidframe/core/fluidframe.pyx"],
-              extra_compile_args=COMMON_compile_args,
-              extra_link_args=COMMON_link_args),
 ]
 
 setup(

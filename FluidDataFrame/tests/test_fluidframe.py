@@ -45,7 +45,7 @@ class TestReadCsv:
             fname = f.name
         try:
             df.to_csv(fname)
-            from fluidframe.core.fluidframe import read_csv
+            from fluidframe.core.fastdataframe import read_csv
             df2 = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
             check('csv shape', df2.shape == (10, 5))
             check('csv id[0]', df2['id'][0] == 1)
@@ -59,7 +59,7 @@ class TestReadCsv:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
             f.write(content); fname = f.name
         try:
-            from fluidframe.core.fluidframe import read_csv
+            from fluidframe.core.fastdataframe import read_csv
             df = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': str, 'dt': int})
             check('shape', df.shape == (2, 5))
             check('id[0]', df['id'][0] == 1)
@@ -75,7 +75,7 @@ class TestPickle:
             fname = f.name
         try:
             df.to_pickle(fname)
-            from fluidframe.core.fluidframe import from_pickle
+            from fluidframe.core.fastdataframe import from_pickle
             df2 = from_pickle(fname)
             check('shape', df2.shape == (10, 5))
             check('id[3]', df2['id'][3] == 4)
@@ -98,11 +98,11 @@ class TestTsv:
 
 class TestConcat:
     def test_concat_empty(self):
-        from fluidframe.core.fluidframe import concat_outer
+        from fluidframe.core.fastdataframe import concat_outer
         check('empty', concat_outer([]).shape == (0, 0))
 
     def test_concat_two(self):
-        from fluidframe.core.fluidframe import concat_outer
+        from fluidframe.core.fastdataframe import concat_outer
         df1 = _make_df().head(5)
         df2 = _make_df().tail(5)
         r = concat_outer([df1, df2])
@@ -110,7 +110,7 @@ class TestConcat:
         check('has index', 'index' in r.columns)
 
     def test_concat_basic(self):
-        from fluidframe.core.fluidframe import concat
+        from fluidframe.core.fastdataframe import concat
         df1 = FastDataFrame({'A': int, 'B': int})
         df1.append_row(A=1, B=10); df1.append_row(A=2, B=20)
         df2 = FastDataFrame({'A': int, 'B': int})
@@ -120,7 +120,7 @@ class TestConcat:
         check('orig unchanged', df1.df_length == 2)
 
     def test_concat_ignore_index(self):
-        from fluidframe.core.fluidframe import concat
+        from fluidframe.core.fastdataframe import concat
         df1 = FastDataFrame({'A': int}); df1.append_row(A=1)
         df2 = FastDataFrame({'A': int}); df2.append_row(A=2)
         result = concat([df1, df2], ignore_index=True)
@@ -152,28 +152,28 @@ class TestMerge:
 
 class TestToNumericDatetimeTimedelta:
     def test_to_numeric(self):
-        from fluidframe.core.fluidframe import to_numeric
+        from fluidframe.core.fastdataframe import to_numeric
         from fluidframe.core.ucs2column import UCS2Column
         col = UCS2Column(3); col.append('1'); col.append('2.5'); col.append('abc')
         r = to_numeric(col, errors='coerce')
         check('coerce', r[0] == 1 and r[1] == 2.5)
 
     def test_to_datetime(self):
-        from fluidframe.core.fluidframe import to_datetime
+        from fluidframe.core.fastdataframe import to_datetime
         from fluidframe.core.ucs2column import UCS2Column
         col = UCS2Column(2); col.append('2023-01-15'); col.append('2023/06/20')
         r = to_datetime(col)
         check('to_datetime', r.length == 2)
 
     def test_to_date(self):
-        from fluidframe.core.fluidframe import to_date
+        from fluidframe.core.fastdataframe import to_date
         from fluidframe.core.ucs2column import UCS2Column
         col = UCS2Column(2); col.append('2023-01-15'); col.append('20230620')
         r = to_date(col)
         check('to_date', r.length == 2)
 
     def test_to_time(self):
-        from fluidframe.core.fluidframe import to_time
+        from fluidframe.core.fastdataframe import to_time
         from fluidframe.core.ucs2column import UCS2Column
         col = UCS2Column(2); col.append('10:30:45'); col.append('14:00')
         r = to_time(col)

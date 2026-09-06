@@ -333,7 +333,7 @@ def test_csv():
         fname = f.name
     try:
         df.to_csv(fname)
-        from fluidframe.core.fluidframe import read_csv
+        from fluidframe.core.fastdataframe import read_csv
         df2 = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
         check('csv shape', df2.shape == (10, 5))
         check('csv id[0]', df2['id'][0] == 1)
@@ -347,7 +347,7 @@ def test_pickle():
         fname = f.name
     try:
         df.to_pickle(fname)
-        from fluidframe.core.fluidframe import from_pickle
+        from fluidframe.core.fastdataframe import from_pickle
         df2 = from_pickle(fname)
         check('pkl shape', df2.shape == (10, 5))
         check('pkl id[3]', df2['id'][3] == 4)
@@ -366,7 +366,7 @@ def test_tsv():
         os.unlink(fname)
 
 def test_read_csv_auto():
-    from fluidframe.core.fluidframe import read_csv
+    from fluidframe.core.fastdataframe import read_csv
     content = "id,score,name,tag,dt\n1,88.5,Alice,senior,20230115\n2,92.0,Bob,mid,20230620\n"
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
         f.write(content); fname = f.name
@@ -383,7 +383,7 @@ def test_read_csv_auto():
 #  Concat & Merge
 # =====================================================================
 def test_concat():
-    from fluidframe.core.fluidframe import concat_outer, concat_inner
+    from fluidframe.core.fastdataframe import concat_outer, concat_inner
     check('concat empty', concat_outer([]).shape == (0, 0))
 
     df1 = make_complex_df().head(5)
@@ -682,7 +682,7 @@ def test_stress_csv_roundtrip():
     try:
         t0 = time.time()
         df.to_csv(fname)
-        from fluidframe.core.fluidframe import read_csv
+        from fluidframe.core.fastdataframe import read_csv
         df2 = read_csv(fname, schema={'id': int, 'val': float, 'name': str})
         elapsed = time.time() - t0
         check('stress csv shape', df2.shape == (N, 3))
@@ -1167,7 +1167,7 @@ def test_merge_outer():
 #  Concat: multi-DF, inner, outer
 # =====================================================================
 def test_concat_multi():
-    from fluidframe.core.fluidframe import concat, concat_inner
+    from fluidframe.core.fastdataframe import concat, concat_inner
     df1 = FastDataFrame({'a': int, 'b': int})
     df1.append_row(a=1, b=10); df1.append_row(a=2, b=20)
     df2 = FastDataFrame({'a': int, 'b': int})
@@ -1182,7 +1182,7 @@ def test_concat_multi():
     check('concat ignore_index', r2.shape[0] == 5)
 
 def test_concat_inner():
-    from fluidframe.core.fluidframe import concat_inner
+    from fluidframe.core.fastdataframe import concat_inner
     df1 = FastDataFrame({'a': int, 'b': int})
     df1.append_row(a=1, b=10)
     df2 = FastDataFrame({'a': int, 'c': float})
@@ -1192,7 +1192,7 @@ def test_concat_inner():
     check('concat_inner rows', r.shape[0] == 2)
 
 def test_concat_outer():
-    from fluidframe.core.fluidframe import concat_outer
+    from fluidframe.core.fastdataframe import concat_outer
     df1 = FastDataFrame({'a': int})
     df1.append_row(a=1)
     df2 = FastDataFrame({'b': float})

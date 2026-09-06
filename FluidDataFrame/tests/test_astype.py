@@ -8,7 +8,7 @@ from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.datecolumn import DateColumn as DateColumn
 from fluidframe.core.categorycolumn import CategoryColumn
 from fluidframe.core.fastdataframe import FastDataFrame
-from fluidframe.core.fluidframe import to_numeric, to_datetime, to_timedelta
+from fluidframe.core.fastdataframe import to_numeric, to_datetime, to_timedelta
 
 PASSED = 0
 FAILED = 0

@@ -1172,6 +1172,7 @@ include "../api/_fastdataframe_shift.pxi"
 include "../api/_fastdataframe_stats.pxi"
 include "../api/_fastdataframe_groupby.pxi"
 include "../api/_fastdataframe_linalg.pxi"
+include "../api/_fastdataframe_standalone.pxi"
 
 
 # _DataFrameMetricAccessor — 懒加载缓存的 metric 访问器
