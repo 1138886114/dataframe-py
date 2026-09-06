@@ -15,9 +15,6 @@ COMMON_compile_args = [
 # 链接器优化
 COMMON_link_args = ["-flto"]
 
-# C++ 模块额外标志
-CXX_compile_args = COMMON_compile_args + ["-std=c++17"]
-
 extensions = [
     Extension("fluidframe.core._base",
               ["fluidframe/core/_base.pyx"],
@@ -61,7 +58,7 @@ extensions = [
               extra_link_args=COMMON_link_args),
     Extension("fluidframe.core.index",
               ["fluidframe/core/index.pyx"],
-              extra_compile_args=CXX_compile_args,
+              extra_compile_args=COMMON_compile_args,
               extra_link_args=COMMON_link_args),
     Extension("fluidframe.core.indexers",
               ["fluidframe/core/indexers.pyx"],

@@ -13,12 +13,109 @@ def check(name, cond):
         failed += 1
         print(f'  FAIL: {name}')
 
+def expect_exception(exc_type, fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+        return False
+    except exc_type:
+        return True
+    except Exception:
+        return False
+
 def make(vals):
     c = AsciiColumn(max(len(vals), 1))
     for v in vals: c.append(v)
     return c
 
 
+# =====================================================================
+#  Column-level tests (from test_char256column.py)
+# =====================================================================
+def test_empty():
+    col = AsciiColumn()
+    check('empty length', col.length == 0)
+    check('empty capacity', col.capacity == 16)
+
+def test_append():
+    col = AsciiColumn()
+    col.append("hello"); col.append("world")
+    check('append length', col.length == 2)
+    check('getitem 0', col[0] == "hello")
+    check('getitem 1', col[1] == "world")
+
+def test_special_strings():
+    col = AsciiColumn(); col.append("")
+    check('append empty', col[0] == "")
+
+    col = AsciiColumn(); col.append("x" * 300)
+    check('append long no truncation', len(col[0]) == 300)
+
+    col = AsciiColumn(); col.append("abc123!@#")
+    check('append ascii', col[0] == "abc123!@#")
+
+    col = AsciiColumn()
+    col.append("hello\nworld"); col.append("tab\there")
+    check('special chars [0]', col[0] == "hello\nworld")
+    check('special chars [1]', col[1] == "tab\there")
+
+def test_bounds():
+    col = AsciiColumn(); col.append("test")
+    check('getitem out of range', expect_exception(IndexError, col.__getitem__, 1))
+
+def test_pop_back():
+    col = AsciiColumn(); col.append("first"); col.append("second")
+    val = col.pop_back()
+    check('pop_back val', val == "second")
+    check('pop_back len', col.length == 1)
+
+    col = AsciiColumn()
+    check('pop_back empty', expect_exception(IndexError, col.pop_back))
+
+def test_pop_front():
+    col = AsciiColumn(); col.append("first"); col.append("second"); col.append("third")
+    val = col.pop_front()
+    check('pop_front val', val == "first")
+    check('pop_front len', col.length == 2)
+    check('pop_front [0]', col[0] == "second")
+
+    col = AsciiColumn()
+    check('pop_front empty', expect_exception(IndexError, col.pop_front))
+
+def test_copy():
+    col = AsciiColumn(); col.append("hello")
+    col2 = col.copy()
+    check('copy length', col2.length == 1)
+    check('copy [0]', col2[0] == "hello")
+    col2.append("world")
+    check('copy independent', col.length == 1)
+
+def test_concat():
+    col1 = AsciiColumn(); col1.append("a")
+    col2 = AsciiColumn(); col2.append("b")
+    col1.concat(col2)
+    check('concat length', col1.length == 2)
+    check('concat [0]', col1[0] == "a")
+    check('concat [1]', col1[1] == "b")
+
+def test_unique():
+    col = AsciiColumn()
+    col.append("a"); col.append("b"); col.append("a"); col.append("c")
+    check('unique', col.unique() == ["a", "b", "c"])
+
+    col = AsciiColumn()
+    check('unique empty', col.unique() == [])
+
+def test_growth():
+    col = AsciiColumn()
+    for i in range(100):
+        col.append(f"str_{i}")
+    check('growth length', col.length == 100)
+    check('growth [99]', col[99] == "str_99")
+
+
+# =====================================================================
+#  Str accessor tests
+# =====================================================================
 class TestChar256Search:
     def test_contains(self):
         col = make(['Hello World', 'Python Programming', 'Data Science', 'hello python'])
@@ -189,7 +286,19 @@ class TestChar256Chained:
 
 
 def run_all():
-    print('=== Char256 Str Accessor Tests ===')
+    print('=== AsciiColumn (Char256) Tests ===')
+    # Column-level tests
+    test_empty()
+    test_append()
+    test_special_strings()
+    test_bounds()
+    test_pop_back()
+    test_pop_front()
+    test_copy()
+    test_concat()
+    test_unique()
+    test_growth()
+    # Str accessor tests
     for cls in [TestChar256Search, TestChar256TypeCheck, TestChar256CaseConversion,
                 TestChar256StripPad, TestChar256Split, TestChar256Access,
                 TestChar256Concat, TestChar256Regex, TestChar256Chained]:

@@ -40,8 +40,7 @@ TESTS=(
     test_astype
     test_boolcolumn
     test_categorycolumn
-    test_char256_str_accessor
-    test_char256column
+    test_asciicolumn
     test_datecolumn
     test_datetimecolumn
     test_doublecolumn
@@ -55,7 +54,6 @@ TESTS=(
     test_rolling
     test_shift_and_drop
     test_timecolumn
-    test_ucs2_str_accessor
     test_ucs2column
     test_zero_copy
 )
