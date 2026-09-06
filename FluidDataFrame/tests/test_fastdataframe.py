@@ -5,7 +5,7 @@ import sys
 import tempfile
 import time
 sys.path.insert(0, '..')
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.fastdataframe import FastDataFrame, read_json
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.asciicolumn import AsciiColumn
@@ -1499,6 +1499,154 @@ def test_pct_change():
     check('pct_change zero prev', math.isnan(pct_z['z'][1]))
 
 
+def test_replace():
+    df = FastDataFrame({'a': int, 'b': float})
+    df.append_row(a=1, b=1.0)
+    df.append_row(a=2, b=2.0)
+    df.append_row(a=3, b=3.0)
+    r = df.replace(2, 99)
+    check('replace a', r['a'][1] == 99)
+    check('replace b', r['b'][1] == 99.0)
+    check('replace other unchanged', r['a'][0] == 1)
+
+    df2 = FastDataFrame({'s': str})
+    df2.append_row(s='hello')
+    df2.append_row(s='world')
+    r2 = df2.replace('world', 'python')
+    check('replace str', r2['s'][1] == 'python')
+
+
+def test_ffill_bfill():
+    import math
+    df = FastDataFrame({'a': float})
+    df.append_row(a=1.0)
+    df.append_row(a=float('nan'))
+    df.append_row(a=3.0)
+    df.append_row(a=float('nan'))
+
+    ff = df.ffill()
+    check('ffill first', ff['a'][0] == 1.0)
+    check('ffill nan->prev', ff['a'][1] == 1.0)
+    check('ffill keeps valid', ff['a'][2] == 3.0)
+    check('ffill nan->prev2', ff['a'][3] == 3.0)
+
+    bf = df.bfill()
+    check('bfill nan->next', bf['a'][1] == 3.0)
+    check('bfill last stays nan', math.isnan(bf['a'][3]))
+
+
+def test_eq():
+    df1 = FastDataFrame({'a': int, 'b': float})
+    df1.append_row(a=1, b=1.0)
+    df1.append_row(a=2, b=2.0)
+
+    df2 = FastDataFrame({'a': int, 'b': float})
+    df2.append_row(a=1, b=1.0)
+    df2.append_row(a=2, b=2.0)
+
+    check('eq same', df1 == df2)
+
+    df3 = FastDataFrame({'a': int, 'b': float})
+    df3.append_row(a=1, b=1.0)
+    df3.append_row(a=2, b=99.0)
+    check('eq diff val', not (df1 == df3))
+
+    df4 = FastDataFrame({'a': int})
+    df4.append_row(a=1)
+    check('eq diff cols', not (df1 == df4))
+
+    df5 = FastDataFrame({'a': int, 'b': float})
+    df5.append_row(a=1, b=1.0)
+    check('eq diff len', not (df1 == df5))
+
+
+def test_pivot():
+    df = FastDataFrame({'idx': str, 'col': str, 'val': float})
+    df.append_row(idx='r1', col='A', val=1.0)
+    df.append_row(idx='r1', col='B', val=2.0)
+    df.append_row(idx='r2', col='A', val=3.0)
+    df.append_row(idx='r2', col='B', val=4.0)
+
+    p = df.pivot(index='idx', columns='col', values='val')
+    check('pivot shape', p.shape == (2, 3))
+    check('pivot r1_A', p['A'][0] == 1.0)
+    check('pivot r2_B', p['B'][1] == 4.0)
+
+
+def test_melt():
+    df = FastDataFrame({'id': str, 'x': float, 'y': float})
+    df.append_row(id='r1', x=1.0, y=10.0)
+    df.append_row(id='r2', x=2.0, y=20.0)
+
+    m = df.melt(id_vars=['id'], value_vars=['x', 'y'])
+    check('melt shape', m.shape == (4, 3))
+    check('melt var', m['variable'][0] == 'x')
+    check('melt val', m['value'][0] == 1.0)
+    check('melt id', m['id'][0] == 'r1')
+
+
+def test_expanding_ewm():
+    df = FastDataFrame({'a': float})
+    df.append_row(a=1.0)
+    df.append_row(a=2.0)
+    df.append_row(a=3.0)
+
+    ex = df.expanding_sum('a')
+    check('expanding_sum [0]', ex[0] == 1.0)
+    check('expanding_sum [1]', ex[1] == 3.0)
+    check('expanding_sum [2]', ex[2] == 6.0)
+
+    ew = df.ewm_mean('a', span=3)
+    check('ewm_mean first', ew[0] == 0.5)
+    check('ewm_mean is float', isinstance(ew[1], float))
+
+
+def test_read_json():
+    import json, os, tempfile
+    from fluidframe.core.fastdataframe import read_json
+    data = [
+        {'id': 1, 'val': 10.0, 'flag': True},
+        {'id': 2, 'val': 20.0, 'flag': False},
+    ]
+    path = os.path.join(tempfile.gettempdir(), '_ff_test.json')
+    with open(path, 'w') as f:
+        json.dump(data, f)
+    df = read_json(path, schema={'id': int, 'val': float, 'flag': bool})
+    os.unlink(path)
+    check('read_json shape', df.shape == (2, 3))
+    check('read_json id', df['id'][0] == 1)
+    check('read_json val', df['val'][1] == 20.0)
+    check('read_json flag', df['flag'][0] == 1)
+
+
+def test_merge_multicol():
+    df1 = FastDataFrame({'a': int, 'b': int, 'v1': float})
+    df1.append_row(a=1, b=10, v1=1.0)
+    df1.append_row(a=2, b=20, v1=2.0)
+
+    df2 = FastDataFrame({'a': int, 'b': int, 'v2': float})
+    df2.append_row(a=1, b=10, v2=100.0)
+    df2.append_row(a=2, b=20, v2=200.0)
+
+    m = df1.merge(df2, on=['a', 'b'])
+    check('merge_multicol shape', m.shape == (2, 4))
+    check('merge_multicol v2', m['v2'][0] == 100.0)
+
+
+def test_merge_col_conflict():
+    df1 = FastDataFrame({'id': int, 'val': float})
+    df1.append_row(id=1, val=1.0)
+
+    df2 = FastDataFrame({'id': int, 'val': float})
+    df2.append_row(id=1, val=99.0)
+
+    m = df1.merge(df2, on='id')
+    check('merge_conflict has val_x', 'val_x' in m.columns)
+    check('merge_conflict has val_y', 'val_y' in m.columns)
+    check('merge_conflict val_x', m['val_x'][0] == 1.0)
+    check('merge_conflict val_y', m['val_y'][0] == 99.0)
+
+
 def run_all():
     print('=== FastDataFrame Tests ===')
 
@@ -1684,6 +1832,15 @@ def run_all():
     test_round()
     test_all_any()
     test_pct_change()
+    test_replace()
+    test_ffill_bfill()
+    test_eq()
+    test_pivot()
+    test_melt()
+    test_expanding_ewm()
+    test_read_json()
+    test_merge_multicol()
+    test_merge_col_conflict()
 
     print(f'\nResults: {passed} passed, {failed} failed')
     if failed: sys.exit(1)

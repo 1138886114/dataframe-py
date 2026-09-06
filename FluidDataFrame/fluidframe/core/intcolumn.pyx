@@ -1656,24 +1656,28 @@ cdef class IntColumn(BaseColumn):
         cdef int* dst = res.data_c
         cdef int* src = self.data_c
         cdef int sentinel = 2147483647
-        cdef Py_ssize_t col_idx, offset, i, j
-        cdef int cur_min
-        with nogil:
-            if r < window:
-                for i in range(r * c): dst[i] = sentinel
-            else:
+        cdef Py_ssize_t col_idx, offset, i, head, tail
+
+        cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
+        if not q: raise MemoryError()
+        try:
+            with nogil:
                 for col_idx in range(c):
                     offset = col_idx * r
-                    for i in range(window - 1): dst[offset + i] = sentinel
-                    cur_min = sentinel
-                    for i in range(window):
-                        if src[offset + i] < cur_min: cur_min = src[offset + i]
-                    dst[offset + window - 1] = cur_min
-                    for i in range(window, r):
-                        cur_min = sentinel
-                        for j in range(i - window + 1, i + 1):
-                            if src[offset + j] < cur_min: cur_min = src[offset + j]
-                        dst[offset + i] = cur_min
+                    head = 0; tail = 0
+                    for i in range(r):
+                        while head < tail and q[head] <= i - window:
+                            head += 1
+                        while head < tail and src[offset + q[tail - 1]] >= src[offset + i]:
+                            tail -= 1
+                        q[tail] = i
+                        tail += 1
+                        if i >= window - 1:
+                            dst[offset + i] = src[offset + q[head]]
+                        else:
+                            dst[offset + i] = sentinel
+        finally:
+            os_aligned_free(q)
         return res
 
     def roll_max(self, Py_ssize_t window):
@@ -1683,24 +1687,28 @@ cdef class IntColumn(BaseColumn):
         cdef int* dst = res.data_c
         cdef int* src = self.data_c
         cdef int sentinel = -2147483647 - 1
-        cdef Py_ssize_t col_idx, offset, i, j
-        cdef int cur_max
-        with nogil:
-            if r < window:
-                for i in range(r * c): dst[i] = sentinel
-            else:
+        cdef Py_ssize_t col_idx, offset, i, head, tail
+
+        cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
+        if not q: raise MemoryError()
+        try:
+            with nogil:
                 for col_idx in range(c):
                     offset = col_idx * r
-                    for i in range(window - 1): dst[offset + i] = sentinel
-                    cur_max = sentinel
-                    for i in range(window):
-                        if src[offset + i] > cur_max: cur_max = src[offset + i]
-                    dst[offset + window - 1] = cur_max
-                    for i in range(window, r):
-                        cur_max = sentinel
-                        for j in range(i - window + 1, i + 1):
-                            if src[offset + j] > cur_max: cur_max = src[offset + j]
-                        dst[offset + i] = cur_max
+                    head = 0; tail = 0
+                    for i in range(r):
+                        while head < tail and q[head] <= i - window:
+                            head += 1
+                        while head < tail and src[offset + q[tail - 1]] <= src[offset + i]:
+                            tail -= 1
+                        q[tail] = i
+                        tail += 1
+                        if i >= window - 1:
+                            dst[offset + i] = src[offset + q[head]]
+                        else:
+                            dst[offset + i] = sentinel
+        finally:
+            os_aligned_free(q)
         return res
 
     def roll_var(self, Py_ssize_t window, bint ddof=True):

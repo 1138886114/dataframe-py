@@ -496,6 +496,27 @@ cdef class FastDataFrame:
     def __len__(self):
         return self.df_length
 
+    def __eq__(self, other):
+        if not isinstance(other, FastDataFrame):
+            return NotImplemented
+        cdef FastDataFrame rhs = <FastDataFrame>other
+        if self.df_length != rhs.df_length:
+            return False
+        if set(self.columns.keys()) != set(rhs.columns.keys()):
+            return False
+        cdef Py_ssize_t i, n = self.df_length
+        cdef str name
+        cdef BaseColumn col_l, col_r
+        for name in self.columns:
+            col_l = self.columns[name]
+            col_r = rhs.columns[name]
+            if col_l.dtype != col_r.dtype:
+                return False
+            for i in range(n):
+                if col_l[i] != col_r[i]:
+                    return False
+        return True
+
     cdef inline str _fast_type_name(self, int dt):
         if dt == TYPE_INT: return 'i64'
         elif dt == TYPE_DOUBLE: return 'f64'
@@ -1040,6 +1061,15 @@ cdef class FastDataFrame:
     def pct_change(self, int periods=1):
         return _pct_change_impl(self, periods)
 
+    def replace(self, to_replace, value):
+        return _replace_impl(self, to_replace, value)
+
+    def ffill(self):
+        return _ffill_impl(self)
+
+    def bfill(self):
+        return _bfill_impl(self)
+
     def head(self, Py_ssize_t n=5):
         return _head_impl(self, n)
 
@@ -1243,6 +1273,18 @@ cdef class FastDataFrame:
     # DataFrame-level qcut
     def qcut(self, str col_name, int q=4, str labels='True', double precision=3):
         return _qcut_impl(self, col_name, q, labels, precision)
+
+    def pivot(self, str index, str columns, str values):
+        return _pivot_impl(self, index, columns, values)
+
+    def melt(self, list id_vars=None, list value_vars=None, str var_name='variable', str value_name='value'):
+        return _melt_impl(self, id_vars, value_vars, var_name, value_name)
+
+    def expanding_sum(self, str col_name):
+        return _expanding_sum_impl(self, col_name)
+
+    def ewm_mean(self, str col_name, double span):
+        return _ewm_mean_impl(self, col_name, span)
 
 
 include "../api/_fastdataframe_crud.pxi"

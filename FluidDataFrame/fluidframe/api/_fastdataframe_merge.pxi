@@ -11,31 +11,32 @@ cdef _concat_impl(FastDataFrame self, FastDataFrame other):
     return result
 
 cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inner'):
-    cdef str join_col
+    cdef list join_cols
     if on is not None:
-        join_col = on[0] if len(on) == 1 else on[0]
-        if join_col not in self.columns:
-            raise KeyError(f"Column '{join_col}' not found in left DataFrame")
-        if join_col not in other.columns:
-            raise KeyError(f"Column '{join_col}' not found in right DataFrame")
+        join_cols = on if isinstance(on, list) else [on]
+        for jc in join_cols:
+            if jc not in self.columns:
+                raise KeyError(f"Column '{jc}' not found in left DataFrame")
+            if jc not in other.columns:
+                raise KeyError(f"Column '{jc}' not found in right DataFrame")
     else:
         common = set(self.columns.keys()) & set(other.columns.keys())
         if not common:
             raise ValueError("No common columns to merge on")
-        join_col = sorted(common)[0]
+        join_cols = sorted(common)
 
     cdef dict left_map = {}
     cdef dict right_map = {}
     cdef Py_ssize_t i, j
 
     for i in range(self.df_length):
-        key = self.columns[join_col][i]
+        key = tuple(self.columns[jc][i] for jc in join_cols)
         if key not in left_map:
             left_map[key] = []
         left_map[key].append(i)
 
     for j in range(other.df_length):
-        key = other.columns[join_col][j]
+        key = tuple(other.columns[jc][j] for jc in join_cols)
         if key not in right_map:
             right_map[key] = []
         right_map[key].append(j)
@@ -98,8 +99,9 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
     result.df_length = result_len
     result.index = RangeIndex(0, result_len)
 
-    cdef list left_col_names = [n for n in self.columns.keys() if n != join_col]
-    cdef list right_col_names = [n for n in other.columns.keys() if n != join_col]
+    cdef set join_set = set(join_cols)
+    cdef list left_col_names = [n for n in self.columns.keys() if n not in join_set]
+    cdef list right_col_names = [n for n in other.columns.keys() if n not in join_set]
 
     cdef Py_ssize_t* left_idx_c = <Py_ssize_t*>aligned_malloc(max(result_len, 1) * sizeof(Py_ssize_t))
     cdef Py_ssize_t* right_idx_c = <Py_ssize_t*>aligned_malloc(max(result_len, 1) * sizeof(Py_ssize_t))
@@ -114,7 +116,7 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
             left_idx_c[i] = left_indices[i]
             right_idx_c[i] = right_indices[i]
 
-        for cn in [join_col] + left_col_names:
+        for cn in join_cols:
             src_col = self.columns[cn]
             if src_col.dtype == TYPE_INT:
                 result.columns[cn] = (<IntColumn>src_col).gather_with_sentinel(left_idx_c, result_len, 0)
@@ -123,9 +125,19 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
             else:
                 result.columns[cn] = self._reorder_column(src_col, left_idx_c, result_len, False)
 
+        for cn in left_col_names:
+            src_col = self.columns[cn]
+            out_name = cn + '_x' if cn in right_col_names else cn
+            if src_col.dtype == TYPE_INT:
+                result.columns[out_name] = (<IntColumn>src_col).gather_with_sentinel(left_idx_c, result_len, 0)
+            elif src_col.dtype == TYPE_DOUBLE:
+                result.columns[out_name] = (<DoubleColumn>src_col).gather_with_sentinel(left_idx_c, result_len, NAN)
+            else:
+                result.columns[out_name] = self._reorder_column(src_col, left_idx_c, result_len, False)
+
         for cn in right_col_names:
             src_col = other.columns[cn]
-            out_name = cn + '_y' if cn in result.columns else cn
+            out_name = cn + '_y' if cn in result.columns or cn in left_col_names else cn
             if src_col.dtype == TYPE_INT:
                 result.columns[out_name] = (<IntColumn>src_col).gather_with_sentinel(right_idx_c, result_len, 0)
             elif src_col.dtype == TYPE_DOUBLE:
