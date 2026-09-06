@@ -61,6 +61,11 @@ cdef class _DataFrameGroupByAccessor:
     cdef FastDataFrame _convenience_agg(self, str func_name, object col_name)
 
 @cython.final
+@cython.freelist(16)
+cdef class _DataFrameLinalgAccessor:
+    cdef FastDataFrame _df
+
+@cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class FastDataFrame:
@@ -69,6 +74,7 @@ cdef class FastDataFrame:
     cdef public IndexBase index
     cdef _DataFrameMetricAccessor _metric_cache
     cdef _DataFrameGroupByAccessor _groupby_cache
+    cdef _DataFrameLinalgAccessor _linalg_cache
     cdef BaseColumn _reorder_column(self, BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace)
     cdef str _type_name(self, BaseColumn col)
     cdef BaseColumn _diff_column(self, BaseColumn col, int periods)

@@ -6,11 +6,6 @@ from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.fastdataframe import FastDataFrame
 from fluidframe.core.index import RangeIndex
-from fluidframe.core.linalg import (
-    euclidean_dist, manhattan_dist, cosine_dist,
-    cosine_similarity, jaccard_sim, hamming_dist,
-    norm, dot, transpose,
-)
 
 passed = 0
 failed = 0
@@ -243,7 +238,7 @@ class TestLinalgZeroCopy:
     def test_euclidean(self):
         data = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y'])
-        d = euclidean_dist(df)
+        d = df.linalg.euclidean_dist()
         names = list(d.columns.keys())
         check('d00', near(d[names[0]][0], 0.0))
         check('d01', near(d[names[1]][0], math.sqrt(2.0)))
@@ -251,56 +246,56 @@ class TestLinalgZeroCopy:
     def test_manhattan(self):
         data = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y'])
-        d = manhattan_dist(df)
+        d = df.linalg.manhattan_dist()
         names = list(d.columns.keys())
         check('d01', near(d[names[1]][0], 2.0))
 
     def test_cosine(self):
         data = np.array([[1.0, 0.0], [1.0, 1.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y'])
-        d = cosine_dist(df)
+        d = df.linalg.cosine_dist()
         names = list(d.columns.keys())
         check('cos', near(d[names[1]][0], 1.0 - 1.0/math.sqrt(2.0)))
 
     def test_cosine_sim(self):
         data = np.array([[1.0, 0.0], [1.0, 1.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y'])
-        d = cosine_similarity(df)
+        d = df.linalg.cosine_similarity()
         names = list(d.columns.keys())
         check('sim', near(d[names[1]][0], 1.0/math.sqrt(2.0)))
 
     def test_hamming(self):
         data = np.array([[1.0, 2.0, 3.0], [1.0, 5.0, 3.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['A', 'B', 'C'])
-        d = hamming_dist(df)
+        d = df.linalg.hamming_dist()
         names = list(d.columns.keys())
         check('hamm', near(d[names[1]][0], 1.0/3.0))
 
     def test_jaccard(self):
         data = np.array([[1.0, 0.0, 1.0], [1.0, 1.0, 0.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['A', 'B', 'C'])
-        d = jaccard_sim(df)
+        d = df.linalg.jaccard_sim()
         names = list(d.columns.keys())
         check('jacc', near(d[names[1]][0], 1.0/3.0))
 
     def test_norm(self):
         data = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y'])
-        check('norm', near(norm(df), math.sqrt(30.0)))
+        check('norm', near(df.linalg.norm(), math.sqrt(30.0)))
 
     def test_dot(self):
         a = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64, order='F')
         b = np.array([[5.0, 6.0], [7.0, 8.0]], dtype=np.float64, order='F')
         df_a = self._build_df(a, ['A', 'B'])
         df_b = self._build_df(b, ['C', 'D'])
-        r = dot(df_a, df_b)
+        r = df_a.linalg.dot(df_b)
         names = list(r.columns.keys())
         check('dot', near(r[names[0]][0], 19.0) and near(r[names[1]][1], 50.0))
 
     def test_transpose(self):
         data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y', 'Z'])
-        r = transpose(df)
+        r = df.linalg.transpose()
         names = list(r.columns.keys())
         check('T rows', r.df_length == 3)
         check('T val', near(r[names[0]][0], 1.0) and near(r[names[0]][2], 3.0))
@@ -313,7 +308,7 @@ class TestLinalgMixed:
         ic = IntColumn(); ic.append(1); ic.append(0)
         dc = DoubleColumn(); dc.append(0.0); dc.append(1.0)
         df.columns['I'] = ic; df.columns['D'] = dc
-        d = euclidean_dist(df)
+        d = df.linalg.euclidean_dist()
         names = list(d.columns.keys())
         check('mixed', near(d[names[1]][0], math.sqrt(2.0)))
 
@@ -324,7 +319,7 @@ class TestLinalgMixed:
             col = DoubleColumn()
             for v in vals: col.append(v)
             df.columns[name] = col
-        d = euclidean_dist(df)
+        d = df.linalg.euclidean_dist()
         names = list(d.columns.keys())
         check('non-contig', near(d[names[1]][0], math.sqrt(2.0)))
 

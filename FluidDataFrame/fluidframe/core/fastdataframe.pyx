@@ -384,6 +384,7 @@ cdef class FastDataFrame:
         self.index = RangeIndex(0, 0)
         self._metric_cache = None
         self._groupby_cache = None
+        self._linalg_cache = None
 
         if schema:
             parsed = _parse_schema(schema)
@@ -1007,6 +1008,53 @@ cdef class FastDataFrame:
     def hamming_dist_withcols(self, col1, col2):
         return _hamming_dist_withcols_impl(self, col1, col2)
 
+    # Linear Algebra
+    @property
+    def linalg(self):
+        if self._linalg_cache is not None:
+            return self._linalg_cache
+        self._linalg_cache = _make_linalg_accessor(self)
+        return self._linalg_cache
+
+    def dot(self, FastDataFrame b):
+        return _linalg_dot(self, b)
+
+    def matmul(self, FastDataFrame b):
+        return _linalg_dot(self, b)
+
+    def transpose(self):
+        return _linalg_transpose(self)
+
+    def det(self):
+        return _linalg_det(self)
+
+    def inv(self):
+        return _linalg_inv(self)
+
+    def solve(self, FastDataFrame b):
+        return _linalg_solve(self, b)
+
+    def norm(self, str ord_type="frobenius"):
+        return _linalg_norm(self, ord_type)
+
+    def euclidean_dist_matrix(self):
+        return _linalg_euclidean_dist(self)
+
+    def manhattan_dist_matrix(self):
+        return _linalg_manhattan_dist(self)
+
+    def cosine_dist_matrix(self):
+        return _linalg_cosine_dist(self)
+
+    def hamming_dist_matrix(self):
+        return _linalg_hamming_dist(self)
+
+    def jaccard_sim_matrix(self):
+        return _linalg_jaccard_sim(self)
+
+    def cosine_similarity_matrix(self):
+        return _linalg_cosine_similarity(self)
+
     def corr(self):
         return _corr_impl(self)
 
@@ -1102,6 +1150,7 @@ include "../api/_fastdataframe_rolling.pxi"
 include "../api/_fastdataframe_shift.pxi"
 include "../api/_fastdataframe_stats.pxi"
 include "../api/_fastdataframe_groupby.pxi"
+include "../api/_fastdataframe_linalg.pxi"
 
 
 # _DataFrameMetricAccessor — 懒加载缓存的 metric 访问器

@@ -2,7 +2,6 @@ import sys
 import math
 sys.path.insert(0, '.')
 from fluidframe.core.fastdataframe import FastDataFrame
-from fluidframe.core import linalg
 
 passed = 0
 failed = 0
@@ -120,125 +119,125 @@ class TestLinalgDot:
     def test_2x2(self):
         A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
         B = FastDataFrame.from_dict({'0': [5, 6], '1': [7, 8]}, schema={'0': int, '1': int})
-        C = linalg.dot(A, B)
+        C = A.dot(B)
         check('C[0][0]', C['A'][0] == 23.0)
         check('C[1][1]', C['B'][1] == 46.0)
 
     def test_identity(self):
         A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
         I = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 1]}, schema={'0': int, '1': int})
-        C = linalg.dot(A, I)
+        C = A.dot(I)
         check('A*I~A', C['A'][0] == 1.0 and C['B'][0] == 3.0)
 
     def test_shape_mismatch(self):
         A = FastDataFrame.from_dict({'0': [1, 2, 3]}, schema={'0': int})
         B = FastDataFrame.from_dict({'0': [1, 2]}, schema={'0': int})
-        check('raises', expect_exception(ValueError, linalg.dot, A, B))
+        check('raises', expect_exception(ValueError, A.dot, B))
 
     def test_3x3(self):
         A = FastDataFrame.from_dict({'0': [1,0,0], '1': [0,2,0], '2': [0,0,3]}, schema={'0': int, '1': int, '2': int})
         B = FastDataFrame.from_dict({'0': [4,0,0], '1': [0,5,0], '2': [0,0,6]}, schema={'0': int, '1': int, '2': int})
-        C = linalg.dot(A, B)
+        C = A.dot(B)
         check('diag', C['A'][0] == 4.0 and C['B'][1] == 10.0 and C['C'][2] == 18.0)
 
 
 class TestLinalgTranspose:
     def test_basic(self):
         A = FastDataFrame.from_dict({'0': [1, 2, 3], '1': [4, 5, 6]}, schema={'0': int, '1': int})
-        T = linalg.transpose(A)
+        T = A.transpose()
         check('rows', T.df_length == 2)
         check('T[0][0]', T['A'][0] == 1.0)
         check('T[2][1]', T['C'][1] == 6.0)
 
     def test_square(self):
         A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
-        T = linalg.transpose(A)
+        T = A.transpose()
         check('T[0][1]', T['A'][1] == 3.0)
 
 
 class TestLinalgDet:
     def test_2x2(self):
         A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
-        check('det', linalg.det(A) == -2.0)
+        check('det', A.det() == -2.0)
 
     def test_identity(self):
         I = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 1]}, schema={'0': int, '1': int})
-        check('det(I)', linalg.det(I) == 1.0)
+        check('det(I)', I.det() == 1.0)
 
     def test_singular(self):
         S = FastDataFrame.from_dict({'0': [1, 2], '1': [2, 4]}, schema={'0': int, '1': int})
-        check('det(singular)', linalg.det(S) == 0.0)
+        check('det(singular)', S.det() == 0.0)
 
     def test_3x3(self):
         M = FastDataFrame.from_dict({'0': [6,1,1], '1': [4,-2,5], '2': [2,8,7]}, schema={'0': int, '1': int, '2': int})
-        check('det(3x3)', linalg.det(M) == -306.0)
+        check('det(3x3)', M.det() == -306.0)
 
     def test_not_square(self):
         A = FastDataFrame.from_dict({'0': [1,2], '1': [3,4], '2': [5,6]}, schema={'0': int, '1': int, '2': int})
-        check('raises', expect_exception(ValueError, linalg.det, A))
+        check('raises', expect_exception(ValueError, A.det))
 
 
 class TestLinalgInv:
     def test_2x2(self):
         A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
-        A_inv = linalg.inv(A)
+        A_inv = A.inv()
         check('inv[0][0]', near(A_inv['A'][0], -2.0))
         check('inv[1][1]', near(A_inv['B'][1], -0.5))
 
     def test_identity(self):
         I = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 1]}, schema={'0': int, '1': int})
-        I_inv = linalg.inv(I)
+        I_inv = I.inv()
         check('inv(I)', near(I_inv['A'][0], 1.0) and near(I_inv['B'][1], 1.0))
 
     def test_times_self(self):
         A = FastDataFrame.from_dict({'0': [2, 1], '1': [5, 3]}, schema={'0': int, '1': int})
-        prod = linalg.dot(A, linalg.inv(A))
+        prod = A.dot(A.inv())
         check('A*A^-1~I', near(prod['A'][0], 1.0) and near(prod['B'][1], 1.0))
 
     def test_singular(self):
         A = FastDataFrame.from_dict({'0': [1, 2], '1': [2, 4]}, schema={'0': int, '1': int})
-        check('raises', expect_exception(ValueError, linalg.inv, A))
+        check('raises', expect_exception(ValueError, A.inv))
 
 
 class TestLinalgSolve:
     def test_basic(self):
         A = FastDataFrame.from_dict({'0': [1, 3], '1': [2, 4]}, schema={'0': int, '1': int})
         b = FastDataFrame.from_dict({'0': [5, 11]}, schema={'0': int})
-        x = linalg.solve(A, b)
+        x = A.solve(b)
         check('x[0]', near(x['0'][0], 1.0))
         check('x[1]', near(x['0'][1], 2.0))
 
     def test_diagonal(self):
         A = FastDataFrame.from_dict({'0': [2, 0], '1': [0, 3]}, schema={'0': int, '1': int})
         b = FastDataFrame.from_dict({'0': [4, 9]}, schema={'0': int})
-        x = linalg.solve(A, b)
+        x = A.solve(b)
         check('x', near(x['0'][0], 2.0) and near(x['0'][1], 3.0))
 
 
 class TestLinalgNorm:
     def test_frobenius(self):
         A = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 2]}, schema={'0': int, '1': int})
-        check('frobenius', near(linalg.norm(A), math.sqrt(5)))
+        check('frobenius', near(A.norm(), math.sqrt(5)))
 
     def test_max(self):
         A = FastDataFrame.from_dict({'0': [1, -5], '1': [3, 2]}, schema={'0': int, '1': int})
-        check('max', linalg.norm(A, 'max') == 5.0)
+        check('max', A.norm('max') == 5.0)
 
     def test_count(self):
         A = FastDataFrame.from_dict({'0': [1, 0], '1': [0, 4]}, schema={'0': int, '1': int})
-        check('count', linalg.norm(A, 'count') == 2.0)
+        check('count', A.norm('count') == 2.0)
 
 
 class TestLinalgIntegration:
     def test_arange_inv_dot(self):
         A = FastDataFrame.arange(4).reshape(2, 2)
-        prod = linalg.dot(A, linalg.inv(A))
+        prod = A.dot(A.inv())
         check('A*A^-1~I', near(prod['A'][0], 1.0) and near(prod['B'][1], 1.0))
 
     def test_3x3_inv_dot(self):
         A = FastDataFrame.from_dict({'0': [1, 2, 3], '1': [0, 1, 4], '2': [5, 6, 0]},
                                     schema={'0': int, '1': int, '2': int})
-        prod = linalg.dot(A, linalg.inv(A))
+        prod = A.dot(A.inv())
         for i in range(3):
             for j in range(3):
                 expected = 1.0 if i == j else 0.0
@@ -250,7 +249,7 @@ class TestLinalgMatmul:
     def test_basic(self):
         A = FastDataFrame.from_dict({'0': [1, 2], '1': [3, 4]}, schema={'0': int, '1': int})
         B = FastDataFrame.from_dict({'0': [5, 6], '1': [7, 8]}, schema={'0': int, '1': int})
-        C = linalg.matmul(A, B)
+        C = A.matmul(B)
         check('C[0][0]', C['A'][0] == 23.0)
         check('C[1][1]', C['B'][1] == 46.0)
 
