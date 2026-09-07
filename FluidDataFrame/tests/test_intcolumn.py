@@ -677,11 +677,13 @@ def test_2d_comparison():
     check('2d lt [2]', r[2] == 0)
 
 def test_2d_cumsum():
+    # cumsum 按列独立计算 (列优先存储, 每列分别累计)
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     r = col.cumsum()
+    # col0 cumsum: [1, 3, 6]; col1 cumsum: [10, 30, 60]
     check('2d cumsum [0]', r[0] == 1)
     check('2d cumsum [2]', r[2] == 6)
-    check('2d cumsum [3]', r[3] == 16)
+    check('2d cumsum [3]', r[3] == 10)
 
 def test_2d_diff():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])

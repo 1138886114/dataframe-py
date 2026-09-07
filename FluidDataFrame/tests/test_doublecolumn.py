@@ -1158,24 +1158,25 @@ def test_2d_comparison():
     check('2d gt c1 [4]', m[4] == 1)   # 20 > 4
 
 def test_2d_cumsum():
-    # cumsum 作用于整个扁平数组 (非逐列独立)
+    # cumsum 按列独立计算 (列优先存储, 每列分别累计)
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     r = col.cumsum()
-    # flat: [1, 2, 3, 10, 20, 30] -> cumsum: [1, 3, 6, 16, 36, 66]
+    # col-major flat: [1, 2, 3, 10, 20, 30]
+    # col0 cumsum: [1, 3, 6]; col1 cumsum: [10, 30, 60]
     check('2d cumsum [0]', r[0] == 1.0)
     check('2d cumsum [2]', r[2] == 6.0)
-    check('2d cumsum [3]', r[3] == 16.0)
-    check('2d cumsum [5]', r[5] == 66.0)
+    check('2d cumsum [3]', r[3] == 10.0)
+    check('2d cumsum [5]', r[5] == 60.0)
 
 def test_2d_diff():
-    # diff 作用于整个扁平数组
+    # diff 按列独立计算 (每列内部差分)
     col = _make_2d(4, [[1, 3, 6, 10], [100, 200, 350, 550]])
     r = col.diff(1)
-    # flat: [1, 3, 6, 10, 100, 200, 350, 550]
+    # col0: [1, 3, 6, 10] -> [nan, 2, 3, 4]; col1: [100, 200, 350, 550] -> [nan, 100, 150, 200]
     check('2d diff nan [0]', _is_nan(r[0]))
     check('2d diff [1]', _approx(r[1], 2.0))   # 3-1
     check('2d diff [3]', _approx(r[3], 4.0))   # 10-6
-    check('2d diff [4]', _approx(r[4], 90.0))  # 100-10
+    check('2d diff [4]', _is_nan(r[4]))        # col1 首个元素 -> nan
 
 def test_2d_clip():
     col = _make_2d(3, [[1, 5, 10], [2, 8, 15]])
