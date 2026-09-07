@@ -15,7 +15,8 @@ from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_DATE, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
     TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target,
-    _c_shift_left
+    _c_shift_left, _col_pop_back, _col_pop_front, _col_concat,
+    _col_drop_row, _col_gather
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -205,8 +206,9 @@ cdef class DateColumn(BaseColumn):
     def pop_back(self):
         if self.length == 0:
             raise IndexError("pop from empty column")
-        self.length -= 1
-        return self._to_ymd_int((<int32_t*>self.data_c)[self.length])
+        cdef int32_t* ptr = <int32_t*>_col_pop_back(
+            self.data_c, &self.length, sizeof(int32_t))
+        return self._to_ymd_int(ptr[0])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -214,20 +216,16 @@ cdef class DateColumn(BaseColumn):
         if self.length == 0:
             raise IndexError("pop from empty column")
         cdef int32_t val = (<int32_t*>self.data_c)[0]
-        if self.length > 1:
-            memmove(self.data_c, <int32_t*>self.data_c + 1, (self.length - 1) * sizeof(int32_t))
-        self.length -= 1
+        _col_pop_front(self.data_c, &self.length, sizeof(int32_t))
         return self._to_ymd_int(val)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, DateColumn other):
-        cdef Py_ssize_t other_len = other.length
-        if other_len == 0: return
-        cdef Py_ssize_t new_len = self.length + other_len
-        self._reserve(new_len)
-        memcpy(<int32_t*>self.data_c + self.length, other.data_c, other_len * sizeof(int32_t))
-        self.length = new_len
+        if other.length == 0: return
+        self._reserve(self.length + other.length)
+        _col_concat(self.data_c, &self.length, other.data_c, other.length,
+                     sizeof(int32_t))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -267,8 +265,11 @@ cdef class DateColumn(BaseColumn):
 
         cdef int32_t* new_data = <int32_t*>aligned_malloc(n * sizeof(int32_t))
         if not new_data: raise MemoryError()
-        cdef int32_t* self_data = <int32_t*>self.data_c
         cdef Py_ssize_t i, idx
+        cdef Py_ssize_t* c_indices = <Py_ssize_t*>aligned_malloc(n * sizeof(Py_ssize_t))
+        if not c_indices:
+            os_aligned_free(new_data)
+            raise MemoryError()
         try:
             for i in range(n):
                 idx = <Py_ssize_t>indices[i]
@@ -276,10 +277,13 @@ cdef class DateColumn(BaseColumn):
                 if idx < 0 or idx >= self.length:
                     snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
                     raise IndexError(err_buf.decode('ascii'))
-                new_data[i] = self_data[idx]
+                c_indices[i] = idx
+            _col_gather(new_data, self.data_c, c_indices, n, sizeof(int32_t))
         except Exception:
             os_aligned_free(new_data)
+            os_aligned_free(c_indices)
             raise
+        os_aligned_free(c_indices)
 
         os_aligned_free(self.data_c)
         self.data_c = new_data
@@ -1012,24 +1016,18 @@ cdef class DateColumn(BaseColumn):
         return self.length
 
     cdef DateColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef Py_ssize_t i
-        cdef int32_t* old_data = <int32_t*>self.data_c
-        cdef int32_t* new_data
         cdef DateColumn new_col
+        cdef int32_t* new_data
 
         if not inplace:
             new_col = DateColumn(max(n, 1))
             new_col.length = n
-            with nogil:
-                for i in range(n):
-                    (<int32_t*>new_col.data_c)[i] = old_data[indices[i]]
+            _col_gather(new_col.data_c, self.data_c, indices, n, sizeof(int32_t))
             return new_col
         else:
             new_data = <int32_t*>aligned_malloc(max(n, 1) * sizeof(int32_t))
             if not new_data: raise MemoryError()
-            with nogil:
-                for i in range(n):
-                    new_data[i] = old_data[indices[i]]
+            _col_gather(new_data, self.data_c, indices, n, sizeof(int32_t))
             os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
@@ -1041,12 +1039,9 @@ cdef class DateColumn(BaseColumn):
     def drop_row(self, Py_ssize_t row_idx):
         if row_idx < 0:
             row_idx += self.length
-        cdef Py_ssize_t rem_len = self.length - row_idx - 1
-        if rem_len > 0:
-            memmove(<int32_t*>self.data_c + row_idx,
-                    <int32_t*>self.data_c + row_idx + 1,
-                    rem_len * sizeof(int32_t))
-        self.length -= 1
+        if row_idx < 0 or row_idx >= self.length:
+            raise IndexError("Index out of bounds")
+        _col_drop_row(self.data_c, &self.length, row_idx, sizeof(int32_t))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

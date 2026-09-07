@@ -21,7 +21,8 @@ from fluidframe.core._base cimport (
     _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist,
     _double_int_pearson_corr, _double_int_pearson_cov, _double_int_euclidean_dist,
     _double_int_manhattan_dist, _double_int_cosine_sim, _double_int_jaccard_sim, _double_int_hamming_dist,
-    _c_shift_left
+    _c_shift_left, _col_pop_back, _col_pop_front, _col_concat,
+    _col_drop_row, _col_gather
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -286,8 +287,9 @@ cdef class DoubleColumn(BaseColumn):
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
-        self.length -= 1
-        return self.data_c[self.length]
+        cdef double* ptr = <double*>_col_pop_back(
+            self.data_c, &self.length, sizeof(double))
+        return ptr[0]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -297,9 +299,7 @@ cdef class DoubleColumn(BaseColumn):
         if self.length == 0:
             raise IndexError("pop from empty column")
         cdef double val = self.data_c[0]
-        self.length -= 1
-        if self.length > 0:
-            memmove(self.data_c, self.data_c + 1, self.length * sizeof(double))
+        _col_pop_front(self.data_c, &self.length, sizeof(double))
         return val
 
     @cython.binding(False)
@@ -307,12 +307,10 @@ cdef class DoubleColumn(BaseColumn):
     def concat(self, DoubleColumn other):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
-        cdef Py_ssize_t other_len = other.length
-        if other_len == 0: return
-        cdef Py_ssize_t new_len = self.length + other_len
-        self._reserve(new_len)
-        memcpy(self.data_c + self.length, other.data_c, other_len * sizeof(double))
-        self.length = new_len
+        if other.length == 0: return
+        self._reserve(self.length + other.length)
+        _col_concat(self.data_c, &self.length, other.data_c, other.length,
+                     sizeof(double))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -400,8 +398,10 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* new_data = <double*>aligned_malloc(new_cap * sizeof(double))
         if not new_data: raise MemoryError()
         cdef Py_ssize_t idx, i
-        cdef double* self_data = self.data_c
-
+        cdef Py_ssize_t* c_indices = <Py_ssize_t*>aligned_malloc(n * sizeof(Py_ssize_t))
+        if not c_indices:
+            os_aligned_free(new_data)
+            raise MemoryError()
         try:
             for i in range(n):
                 idx = <Py_ssize_t>indices[i]
@@ -409,10 +409,13 @@ cdef class DoubleColumn(BaseColumn):
                 if idx < 0 or idx >= self.length:
                     snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
                     raise IndexError(err_buf.decode('ascii'))
-                new_data[i] = self_data[idx]
+                c_indices[i] = idx
+            _col_gather(new_data, self.data_c, c_indices, n, sizeof(double))
         except Exception:
             os_aligned_free(new_data)
+            os_aligned_free(c_indices)
             raise
+        os_aligned_free(c_indices)
 
         if self.get_owns_data_c() and self.data_c != NULL:
             os_aligned_free(self.data_c)
@@ -1329,24 +1332,18 @@ cdef class DoubleColumn(BaseColumn):
         return self.length
 
     cdef DoubleColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef Py_ssize_t i
-        cdef double* old_data = self.data_c
         cdef DoubleColumn new_col
         cdef double* new_data
 
         if not inplace:
             new_col = DoubleColumn(max(n, 1))
             new_col.length = n
-            with nogil:
-                for i in range(n):
-                    new_col.data_c[i] = old_data[indices[i]]
+            _col_gather(new_col.data_c, self.data_c, indices, n, sizeof(double))
             return new_col
         else:
             new_data = <double*>aligned_malloc(max(n, 1) * sizeof(double))
             if not new_data: raise MemoryError()
-            with nogil:
-                for i in range(n):
-                    new_data[i] = old_data[indices[i]]
+            _col_gather(new_data, self.data_c, indices, n, sizeof(double))
             if self.get_owns_data_c() and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data
@@ -1444,12 +1441,7 @@ cdef class DoubleColumn(BaseColumn):
             row_idx += self.length
         if row_idx < 0 or row_idx >= self.length:
             raise IndexError("Row index out of bounds")
-        cdef Py_ssize_t rem_len = self.length - row_idx - 1
-        if rem_len > 0:
-            memmove(self.data_c + row_idx,
-                    self.data_c + row_idx + 1,
-                    rem_len * sizeof(double))
-        self.length -= 1
+        _col_drop_row(self.data_c, &self.length, row_idx, sizeof(double))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

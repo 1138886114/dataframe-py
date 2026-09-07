@@ -1,6 +1,6 @@
 # cython: language_level=3
 from libc.math cimport sqrt, fabs, NAN
-from libc.string cimport memmove
+from libc.string cimport memmove, memcpy, memset
 
 cdef void* aligned_malloc(size_t size, size_t alignment=*) nogil
 cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t alignment=*) nogil
@@ -41,6 +41,71 @@ cdef inline void _c_shift_left(void* buf, Py_ssize_t pos, Py_ssize_t col_len, Py
         memmove(<char*>buf + pos * elem_size,
                 <char*>buf + (pos + 1) * elem_size,
                 n * elem_size)
+
+
+# ============================================================
+#  Generic column helpers — zero-abstraction, void* + elem_size
+#  Used by all column types to eliminate duplicated boilerplate.
+# ============================================================
+
+cdef inline void* _col_pop_back(void* data_c, Py_ssize_t* length,
+                                 Py_ssize_t elem_size) noexcept nogil:
+    """Decrement length and return pointer to popped element (last)."""
+    if length[0] == 0:
+        return NULL
+    length[0] -= 1
+    return <char*>data_c + length[0] * elem_size
+
+cdef inline void _col_pop_front(void* data_c, Py_ssize_t* length,
+                                 Py_ssize_t elem_size) noexcept nogil:
+    """Remove first element by shifting left."""
+    if length[0] > 1:
+        memmove(data_c, <char*>data_c + elem_size,
+                (length[0] - 1) * elem_size)
+    length[0] -= 1
+
+cdef inline void _col_concat(void* data_c, Py_ssize_t* length,
+                              void* other_data, Py_ssize_t other_len,
+                              Py_ssize_t elem_size) noexcept nogil:
+    """Append other_len elements from other_data."""
+    if other_len > 0:
+        memcpy(<char*>data_c + length[0] * elem_size, other_data,
+               other_len * elem_size)
+    length[0] += other_len
+
+cdef inline void _col_drop_row(void* data_c, Py_ssize_t* length,
+                                Py_ssize_t row_idx,
+                                Py_ssize_t elem_size) noexcept nogil:
+    """Remove element at row_idx by shifting left."""
+    cdef Py_ssize_t rem_len = length[0] - row_idx - 1
+    if rem_len > 0:
+        memmove(<char*>data_c + row_idx * elem_size,
+                <char*>data_c + (row_idx + 1) * elem_size,
+                rem_len * elem_size)
+    length[0] -= 1
+
+cdef inline void _col_gather(void* dst, void* src,
+                              Py_ssize_t* indices, Py_ssize_t n,
+                              Py_ssize_t elem_size) noexcept nogil:
+    """Gather elements from src by indices into dst."""
+    cdef Py_ssize_t i
+    for i in range(n):
+        memcpy(<char*>dst + i * elem_size,
+               <char*>src + indices[i] * elem_size,
+               elem_size)
+
+cdef inline Py_ssize_t _col_reserve(void** data_c, Py_ssize_t* capacity,
+                                     Py_ssize_t new_cap, Py_ssize_t old_size,
+                                     Py_ssize_t elem_size) except -1 nogil:
+    """Reallocate if new_cap > capacity. Returns 0 on no-op, 1 on realloc."""
+    if new_cap <= capacity[0]:
+        return 0
+    cdef void* new_ptr = aligned_realloc(data_c[0], old_size, new_cap * elem_size)
+    if not new_ptr:
+        return -1
+    data_c[0] = new_ptr
+    capacity[0] = new_cap
+    return 1
 
 
 ctypedef fused NumericType:

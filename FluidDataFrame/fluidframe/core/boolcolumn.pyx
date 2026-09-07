@@ -13,7 +13,8 @@ from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
     TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target,
-    _c_shift_left
+    _c_shift_left, _col_pop_back, _col_pop_front, _col_concat,
+    _col_drop_row, _col_gather
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -87,8 +88,9 @@ cdef class BoolColumn(BaseColumn):
     def pop_back(self):
         if self.length == 0:
             raise IndexError("pop from empty column")
-        self.length -= 1
-        return bool(self.data_c[self.length])
+        cdef unsigned char* ptr = <unsigned char*>_col_pop_back(
+            self.data_c, &self.length, sizeof(unsigned char))
+        return bool(ptr[0])
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -96,19 +98,15 @@ cdef class BoolColumn(BaseColumn):
         if self.length == 0:
             raise IndexError("pop from empty column")
         cdef unsigned char val = self.data_c[0]
-        if self.length > 1:
-            memmove(self.data_c, self.data_c + 1, (self.length - 1) * sizeof(unsigned char))
-        self.length -= 1
+        _col_pop_front(self.data_c, &self.length, sizeof(unsigned char))
         return bool(val)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def concat(self, BoolColumn other):
-        cdef Py_ssize_t new_len = self.length + other.length
-        self._reserve(new_len)
-        if other.length > 0:
-            memcpy(self.data_c + self.length, other.data_c, other.length * sizeof(unsigned char))
-        self.length = new_len
+        self._reserve(self.length + other.length)
+        _col_concat(self.data_c, &self.length, other.data_c, other.length,
+                     sizeof(unsigned char))
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -136,8 +134,11 @@ cdef class BoolColumn(BaseColumn):
         if not new_data:
             raise MemoryError()
 
-        cdef unsigned char* self_data = self.data_c
         cdef Py_ssize_t i, idx
+        cdef Py_ssize_t* c_indices = <Py_ssize_t*>aligned_malloc(n * sizeof(Py_ssize_t))
+        if not c_indices:
+            os_aligned_free(new_data)
+            raise MemoryError()
         try:
             for i in range(n):
                 idx = <Py_ssize_t>indices[i]
@@ -146,10 +147,13 @@ cdef class BoolColumn(BaseColumn):
                 if idx < 0 or idx >= self.length:
                     snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
                     raise IndexError(err_buf.decode('ascii'))
-                new_data[i] = self_data[idx]
+                c_indices[i] = idx
+            _col_gather(new_data, self.data_c, c_indices, n, sizeof(unsigned char))
         except Exception:
             os_aligned_free(new_data)
+            os_aligned_free(c_indices)
             raise
+        os_aligned_free(c_indices)
 
         os_aligned_free(self.data_c)
         self.data_c = new_data
@@ -347,25 +351,19 @@ cdef class BoolColumn(BaseColumn):
         return self.__str__()
 
     cdef BoolColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
-        cdef Py_ssize_t i
-        cdef unsigned char* old_data = self.data_c
-        cdef unsigned char* new_data
         cdef BoolColumn new_col
+        cdef unsigned char* new_data
 
         if not inplace:
             new_col = BoolColumn(max(n, 1))
             new_col.length = n
-            with nogil:
-                for i in range(n):
-                    new_col.data_c[i] = old_data[indices[i]]
+            _col_gather(new_col.data_c, self.data_c, indices, n, sizeof(unsigned char))
             return new_col
         else:
             new_data = <unsigned char*>aligned_malloc(max(n, 1) * sizeof(unsigned char))
             if not new_data:
                 raise MemoryError()
-            with nogil:
-                for i in range(n):
-                    new_data[i] = old_data[indices[i]]
+            _col_gather(new_data, self.data_c, indices, n, sizeof(unsigned char))
             os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
@@ -377,12 +375,9 @@ cdef class BoolColumn(BaseColumn):
     def drop_row(self, Py_ssize_t row_idx):
         if row_idx < 0:
             row_idx += self.length
-        cdef Py_ssize_t rem_len = self.length - row_idx - 1
-        if rem_len > 0:
-            memmove(self.data_c + row_idx,
-                    self.data_c + row_idx + 1,
-                    rem_len * sizeof(unsigned char))
-        self.length -= 1
+        if row_idx < 0 or row_idx >= self.length:
+            raise IndexError("Index out of bounds")
+        _col_drop_row(self.data_c, &self.length, row_idx, sizeof(unsigned char))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
