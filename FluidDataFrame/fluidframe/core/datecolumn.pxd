@@ -17,9 +17,13 @@ cdef int32_t _parse_date_str(str s) noexcept
 @cython.wraparound(False)
 cdef class DateColumn(BaseColumn):
     cdef int32_t* data_c
+    cdef bint _owns_data
+    cdef object _base_obj
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef inline int32_t _resolve_date(self, date) except *
     cdef inline int32_t _to_ymd_int(self, int32_t epoch_days) noexcept nogil
     cdef inline int _iso_week_of_year(self, int32_t days, int* iso_y) noexcept nogil
     cdef DateColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
+    @staticmethod
+    cdef DateColumn create_view(int32_t* ptr, Py_ssize_t length, object base_obj)
 

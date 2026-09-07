@@ -34,6 +34,8 @@ cdef class CategoryColumn(BaseColumn):
         self.dtype = TYPE_CATEGORY
         self.capacity = capacity if capacity > 0 else 0
         self.length = 0
+        self._owns_data = True
+        self._base_obj = None
         self.categories = []
         self._cat_to_code = {}
         if self.capacity > 0:
@@ -46,9 +48,22 @@ cdef class CategoryColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __dealloc__(self):
-        if self.codes_c != NULL:
+        if self._owns_data and self.codes_c != NULL:
             os_aligned_free(self.codes_c)
             self.codes_c = NULL
+
+    @staticmethod
+    cdef CategoryColumn create_view(int* ptr, Py_ssize_t length, list categories, dict cat_to_code, object base_obj):
+        cdef CategoryColumn col = CategoryColumn.__new__(CategoryColumn)
+        col.dtype = TYPE_CATEGORY
+        col.capacity = length
+        col.length = length
+        col.codes_c = ptr
+        col._owns_data = False
+        col._base_obj = base_obj
+        col.categories = categories
+        col._cat_to_code = cat_to_code
+        return col
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -93,6 +108,8 @@ cdef class CategoryColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def pop_back(self):
+        if not self._owns_data:
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
         self.length -= 1
@@ -101,6 +118,8 @@ cdef class CategoryColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def pop_front(self):
+        if not self._owns_data:
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
         cdef str val = self._resolve(0)
@@ -115,6 +134,8 @@ cdef class CategoryColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def concat(self, CategoryColumn other):
+        if not self._owns_data:
+            raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
         cdef Py_ssize_t other_len = other.length
         if other_len == 0:
             return
@@ -178,9 +199,12 @@ cdef class CategoryColumn(BaseColumn):
         except Exception:
             os_aligned_free(new_data)
             raise
-        os_aligned_free(self.codes_c)
+        if self._owns_data and self.codes_c != NULL:
+            os_aligned_free(self.codes_c)
         self.codes_c = new_data
         self.capacity = n
+        self._owns_data = True
+        self._base_obj = None
 
     @property
     def cate(self):
@@ -302,15 +326,20 @@ cdef class CategoryColumn(BaseColumn):
             with nogil:
                 for i in range(n):
                     new_codes[i] = old_codes[indices[i]]
-            os_aligned_free(self.codes_c)
+            if self._owns_data and self.codes_c != NULL:
+                os_aligned_free(self.codes_c)
             self.codes_c = new_codes
             self.capacity = n
             self.length = n
+            self._owns_data = True
+            self._base_obj = None
             return self
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
+        if not self._owns_data:
+            raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
         if row_idx < 0:
             row_idx += self.length
         cdef Py_ssize_t rem_len = self.length - row_idx - 1

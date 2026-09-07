@@ -36,6 +36,8 @@ cdef class BoolColumn(BaseColumn):
         self.dtype = TYPE_BOOL
         self.capacity = capacity if capacity > 0 else 0
         self.length = 0
+        self._owns_data = True
+        self._base_obj = None
         if self.capacity > 0:
             self.data_c = <unsigned char*>aligned_malloc(self.capacity * sizeof(unsigned char))
             if not self.data_c:
@@ -47,9 +49,20 @@ cdef class BoolColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __dealloc__(self):
-        if self.data_c != NULL:
+        if self._owns_data and self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
+
+    @staticmethod
+    cdef BoolColumn create_view(unsigned char* ptr, Py_ssize_t length, object base_obj):
+        cdef BoolColumn col = BoolColumn.__new__(BoolColumn)
+        col.dtype = TYPE_BOOL
+        col.capacity = length
+        col.length = length
+        col.data_c = ptr
+        col._owns_data = False
+        col._base_obj = base_obj
+        return col
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -86,6 +99,8 @@ cdef class BoolColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def pop_back(self):
+        if not self._owns_data:
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
         cdef unsigned char* ptr = <unsigned char*>_col_pop_back(
@@ -95,6 +110,8 @@ cdef class BoolColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def pop_front(self):
+        if not self._owns_data:
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
         cdef unsigned char val = self.data_c[0]
@@ -104,6 +121,8 @@ cdef class BoolColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def concat(self, BoolColumn other):
+        if not self._owns_data:
+            raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
         self._reserve(self.length + other.length)
         _col_concat(self.data_c, &self.length, other.data_c, other.length,
                      sizeof(unsigned char))
@@ -155,9 +174,12 @@ cdef class BoolColumn(BaseColumn):
             raise
         os_aligned_free(c_indices)
 
-        os_aligned_free(self.data_c)
+        if self._owns_data and self.data_c != NULL:
+            os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = n
+        self._owns_data = True
+        self._base_obj = None
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -364,15 +386,20 @@ cdef class BoolColumn(BaseColumn):
             if not new_data:
                 raise MemoryError()
             _col_gather(new_data, self.data_c, indices, n, sizeof(unsigned char))
-            os_aligned_free(self.data_c)
+            if self._owns_data and self.data_c != NULL:
+                os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
             self.length = n
+            self._owns_data = True
+            self._base_obj = None
             return self
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
+        if not self._owns_data:
+            raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
         if row_idx < 0:
             row_idx += self.length
         if row_idx < 0 or row_idx >= self.length:
@@ -392,8 +419,10 @@ cdef class BoolColumn(BaseColumn):
         if not isinstance(other, BoolColumn):
             return NotImplemented
         cdef BoolColumn o = <BoolColumn>other
+        cdef char err_buf[128]
         if o.length != self.length:
-            return False
+            snprintf(err_buf, sizeof(err_buf), "Column length %zd != %zd", o.length, self.length)
+            raise ValueError(err_buf.decode('ascii'))
         if self.length == 0:
             return True
         return memcmp(self.data_c, o.data_c, self.length * sizeof(unsigned char)) == 0

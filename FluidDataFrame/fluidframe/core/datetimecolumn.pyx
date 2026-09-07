@@ -142,6 +142,8 @@ cdef class DateTimeColumn(BaseColumn):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_DATETIME
+        self._owns_data = True
+        self._base_obj = None
         self.data_c = <int64_t*>aligned_malloc(self.capacity * sizeof(int64_t))
         if not self.data_c:
             raise MemoryError()
@@ -149,9 +151,20 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __dealloc__(self):
-        if self.data_c != NULL:
+        if self._owns_data and self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
+
+    @staticmethod
+    cdef DateTimeColumn create_view(int64_t* ptr, Py_ssize_t length, object base_obj):
+        cdef DateTimeColumn col = DateTimeColumn.__new__(DateTimeColumn)
+        col.dtype = TYPE_DATETIME
+        col.capacity = length
+        col.length = length
+        col.data_c = ptr
+        col._owns_data = False
+        col._base_obj = base_obj
+        return col
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -194,6 +207,8 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_back(self):
+        if not self._owns_data:
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
         cdef int64_t* ptr = <int64_t*>_col_pop_back(
@@ -203,6 +218,8 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_front(self):
+        if not self._owns_data:
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
         cdef int64_t val = (<int64_t*>self.data_c)[0]
@@ -212,6 +229,8 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, DateTimeColumn other):
+        if not self._owns_data:
+            raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
         if other.length == 0: return
         self._reserve(self.length + other.length)
         _col_concat(self.data_c, &self.length, other.data_c, other.length,
@@ -275,9 +294,12 @@ cdef class DateTimeColumn(BaseColumn):
             raise
         os_aligned_free(c_indices)
 
-        os_aligned_free(self.data_c)
+        if self._owns_data and self.data_c != NULL:
+            os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = n
+        self._owns_data = True
+        self._base_obj = None
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -472,6 +494,8 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
+        if not self._owns_data:
+            raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
         if row_idx < 0:
             row_idx += self.length
         if row_idx < 0 or row_idx >= self.length:
@@ -498,10 +522,13 @@ cdef class DateTimeColumn(BaseColumn):
             new_data = <int64_t*>aligned_malloc(max(n, 1) * sizeof(int64_t))
             if not new_data: raise MemoryError()
             _col_gather(new_data, self.data_c, indices, n, sizeof(int64_t))
-            os_aligned_free(self.data_c)
+            if self._owns_data and self.data_c != NULL:
+                os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
             self.length = n
+            self._owns_data = True
+            self._base_obj = None
             return self
 
     # ------------------------------------------------------------
