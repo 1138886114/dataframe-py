@@ -139,12 +139,15 @@ cdef class TimeColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def __cinit__(self, Py_ssize_t init_capacity=16):
+    def __cinit__(self, Py_ssize_t init_capacity=16, Py_ssize_t cols=1):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_TIME
-        self._owns_data = True
         self._base_obj = None
+
+        cdef int c = <int>cols if cols > 0 else 1
+        self.set_meta_c(c, True, c > 1)
+
         self.data_c = <int32_t*>aligned_malloc(self.capacity * sizeof(int32_t))
         if not self.data_c:
             raise MemoryError()
@@ -155,9 +158,32 @@ cdef class TimeColumn(BaseColumn):
         return self.capacity * sizeof(int32_t)
 
     def __dealloc__(self):
-        if self._owns_data and self.data_c != NULL:
+        if self.get_owns_data_c() and self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
+
+    @property
+    def cols(self):
+        return self.get_cols_c()
+
+    @property
+    def rows(self):
+        return self.get_rows_c()
+
+    @property
+    def is_2d(self):
+        return self.get_is_2d_c()
+
+    @property
+    def _owns_data(self):
+        return self.get_owns_data_c()
+
+    @_owns_data.setter
+    def _owns_data(self, bint val):
+        if val:
+            self._meta |= 0x00010000
+        else:
+            self._meta &= ~0x00010000
 
     @staticmethod
     cdef TimeColumn create_view(int32_t* ptr, Py_ssize_t length, object base_obj):
@@ -166,19 +192,53 @@ cdef class TimeColumn(BaseColumn):
         col.capacity = length
         col.length = length
         col.data_c = ptr
-        col._owns_data = False
         col._base_obj = base_obj
+        col.set_meta_c(1, False, False)
         return col
 
+    @staticmethod
+    cdef TimeColumn create_view_2d(int32_t* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj):
+        cdef TimeColumn col = TimeColumn.__new__(TimeColumn)
+        cdef Py_ssize_t total = rows * cols
+        col.dtype = TYPE_TIME
+        col.capacity = total
+        col.length = total
+        col.data_c = ptr
+        col._base_obj = base_obj
+        col.set_meta_c(<int>cols, False, True)
+        return col
+
+    cdef inline int get_cols_c(self) noexcept nogil:
+        cdef int c = <int>(self._meta & 0x0000FFFF)
+        return c if c > 0 else 1
+
+    cdef inline bint get_owns_data_c(self) noexcept nogil:
+        return (self._meta & 0x00010000) != 0
+
+    cdef inline bint get_is_2d_c(self) noexcept nogil:
+        return (self._meta & 0x00020000) != 0
+
+    cdef inline Py_ssize_t get_rows_c(self) noexcept nogil:
+        cdef int c = self.get_cols_c()
+        return self.length // c if c > 0 else self.length
+
+    cdef inline void set_meta_c(self, int cols, bint owns_data, bint is_2d) noexcept nogil:
+        self._meta = (
+            (<unsigned int>cols & 0x0000FFFF) |
+            ((<unsigned int>(1 if owns_data else 0)) << 16) |
+            ((<unsigned int>(1 if is_2d else 0)) << 17)
+        )
+
     cdef void _reserve(self, Py_ssize_t new_cap):
-        if new_cap <= self.capacity:
-            return
-        cdef int32_t* new_ptr = <int32_t*>aligned_realloc(
-            self.data_c, self.capacity * sizeof(int32_t), new_cap * sizeof(int32_t))
-        if not new_ptr:
-            raise MemoryError()
-        self.data_c = new_ptr
-        self.capacity = new_cap
+        if not self.get_owns_data_c():
+            raise RuntimeError("Cannot reallocate a view/slice column. Copy it first.")
+        cdef int32_t* new_ptr
+        if new_cap > self.capacity:
+            new_ptr = <int32_t*>aligned_realloc(self.data_c, self.capacity * sizeof(int32_t), new_cap * sizeof(int32_t))
+            if not new_ptr:
+                raise MemoryError()
+            self.data_c = new_ptr
+            self.capacity = new_cap
 
     cdef inline int32_t _resolve_time(self, val) except -1:
         if isinstance(val, str):
@@ -188,6 +248,8 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, val):
+        if not self.get_owns_data_c():
+            raise RuntimeError("Cannot append to a view/slice column. Copy it first.")
         cdef int32_t v = _parse_time_str(<str>val) if isinstance(val, str) else <int32_t>val
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
@@ -197,7 +259,7 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
-        cdef TimeColumn new_col = TimeColumn(max(self.length, 1))
+        cdef TimeColumn new_col = TimeColumn(max(self.length, 1), cols=self.cols)
         new_col.length = self.length
         if self.length > 0:
             memcpy(new_col.data_c, self.data_c, self.length * sizeof(int32_t))
@@ -206,7 +268,7 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_back(self):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
@@ -217,7 +279,7 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_front(self):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
@@ -228,7 +290,7 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, TimeColumn other):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
         if other.length == 0: return
         self._reserve(self.length + other.length)
@@ -293,12 +355,12 @@ cdef class TimeColumn(BaseColumn):
             raise
         os_aligned_free(c_indices)
 
-        if self._owns_data and self.data_c != NULL:
+        if self.get_owns_data_c() and self.data_c != NULL:
             os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = n
         self.length = n
-        self._owns_data = True
+        self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
         self._base_obj = None
 
     @cython.binding(False)
@@ -373,7 +435,7 @@ cdef class TimeColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
-        cdef TimeColumn col = TimeColumn(max(n, 1))
+        cdef TimeColumn col = TimeColumn(max(n, 1), cols=self.cols)
         col.length = n
         if n == 0: return col
 
@@ -437,7 +499,7 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
-        if not self._owns_data:
+        if not self.get_owns_data_c():
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
         if row_idx < 0:
             row_idx += self.length
@@ -448,6 +510,12 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_left(self, Py_ssize_t pos):
+        if not self.get_owns_data_c():
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
+        if pos < 0:
+            pos += self.length
+        if pos < 0 or pos >= self.length:
+            raise IndexError("Index out of bounds")
         cdef Py_ssize_t col_len = self.length
         _c_shift_left(self.data_c, pos, col_len, sizeof(int32_t))
         self.length = col_len - 1
@@ -457,7 +525,7 @@ cdef class TimeColumn(BaseColumn):
         cdef int32_t* new_data
 
         if not inplace:
-            new_col = TimeColumn(max(n, 1))
+            new_col = TimeColumn(max(n, 1), cols=self.cols)
             new_col.length = n
             _col_gather(new_col.data_c, self.data_c, indices, n, sizeof(int32_t))
             return new_col
@@ -465,12 +533,12 @@ cdef class TimeColumn(BaseColumn):
             new_data = <int32_t*>aligned_malloc(max(n, 1) * sizeof(int32_t))
             if not new_data: raise MemoryError()
             _col_gather(new_data, self.data_c, indices, n, sizeof(int32_t))
-            if self._owns_data and self.data_c != NULL:
+            if self.get_owns_data_c() and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
             self.length = n
-            self._owns_data = True
+            self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
             self._base_obj = None
             return self
 
@@ -575,7 +643,10 @@ cdef class TimeColumn(BaseColumn):
     def astype(self, object target):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t first_col_n = self.rows if c > 1 else n
         cdef Py_ssize_t safe_cap = max(n, 1)
+        cdef Py_ssize_t first_col_cap = max(first_col_n, 1)
         cdef int32_t* ptr = self.data_c
         cdef char str_buf[16]
 
@@ -589,55 +660,55 @@ cdef class TimeColumn(BaseColumn):
         cdef DateTimeColumn dtc
 
         if target_type == TYPE_INT:
-            ic = IntColumn(safe_cap)
+            ic = IntColumn(safe_cap, cols=self.cols)
             ic.length = n
             with nogil:
                 for i in range(n):
                     ic.data_c[i] = ptr[i]
             return ic
         elif target_type == TYPE_DOUBLE:
-            dc = DoubleColumn(safe_cap)
+            dc = DoubleColumn(safe_cap, cols=self.cols)
             dc.length = n
             with nogil:
                 for i in range(n):
                     dc.data_c[i] = <double>ptr[i]
             return dc
         elif target_type == TYPE_BOOL:
-            bc = BoolColumn(safe_cap)
-            bc.length = n
+            bc = BoolColumn(first_col_cap)
+            bc.length = first_col_n
             with nogil:
-                for i in range(n):
+                for i in range(first_col_n):
                     bc.data_c[i] = <unsigned char>(ptr[i] != 0)
             return bc
         elif target_type == TYPE_CHAR256:
-            cc = AsciiColumn(safe_cap)
-            cc.length = n
+            cc = AsciiColumn(first_col_cap)
+            cc.length = first_col_n
             with nogil:
-                for i in range(n):
+                for i in range(first_col_n):
                     _format_time_c(ptr[i], cc.data_c + (i * 256))
             return cc
         elif target_type == TYPE_UCS2:
-            uc = UCS2Column(safe_cap)
-            uc.length = n
-            for i in range(n):
+            uc = UCS2Column(first_col_cap)
+            uc.length = first_col_n
+            for i in range(first_col_n):
                 _format_time_c(ptr[i], str_buf)
                 uc._set_item(i, str_buf.decode('ascii'))
             return uc
         elif target_type == TYPE_CATEGORY:
-            catc = CategoryColumn(safe_cap)
-            for i in range(n):
+            catc = CategoryColumn(first_col_cap)
+            for i in range(first_col_n):
                 _format_time_c(ptr[i], str_buf)
                 catc.append(str_buf.decode('ascii'))
             return catc
         elif target_type == TYPE_DATE:
-            tc = DateColumn(safe_cap)
+            tc = DateColumn(safe_cap, cols=self.cols)
             tc.length = n
             with nogil:
                 for i in range(n):
                     tc.data_c[i] = 0
             return tc
         elif target_type == TYPE_DATETIME:
-            dtc = DateTimeColumn(safe_cap)
+            dtc = DateTimeColumn(safe_cap, cols=self.cols)
             dtc.length = n
             # Time -> DateTime: 秒数转换为微秒数 (1970-01-01 当天对应的时间点)
             with nogil:

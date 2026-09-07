@@ -1563,7 +1563,10 @@ cdef class IntColumn(BaseColumn):
     def astype(self, object target):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t first_col_n = self.rows if c > 1 else n
         cdef Py_ssize_t safe_cap = max(n, 1)
+        cdef Py_ssize_t first_col_cap = max(first_col_n, 1)
         cdef DoubleColumn dc
         cdef BoolColumn bc
         cdef UCS2Column uc
@@ -1590,24 +1593,24 @@ cdef class IntColumn(BaseColumn):
             return dc
 
         elif target_type == TYPE_BOOL:
-            bc = BoolColumn(safe_cap, cols=self.cols)
-            bc.length = n
+            bc = BoolColumn(first_col_cap)
+            bc.length = first_col_n
             with nogil:
-                for i in range(n):
+                for i in range(first_col_n):
                     bc.data_c[i] = (s_ptr[i] != 0)
             return bc
 
         elif target_type == TYPE_UCS2:
-            uc = UCS2Column(safe_cap)
-            uc.length = n
-            for i in range(n):
+            uc = UCS2Column(first_col_cap)
+            uc.length = first_col_n
+            for i in range(first_col_n):
                 sz = snprintf(buf, sizeof(buf), "%d", s_ptr[i])
                 uc._set_item(i, buf[:sz].decode('ascii'))
             return uc
 
         elif target_type == TYPE_CHAR256:
-            cc = AsciiColumn(safe_cap)
-            for i in range(n):
+            cc = AsciiColumn(first_col_cap)
+            for i in range(first_col_n):
                 cc.append(str(s_ptr[i]))
             return cc
 
@@ -1625,8 +1628,8 @@ cdef class IntColumn(BaseColumn):
             return tc
 
         elif target_type == TYPE_CATEGORY:
-            catc = CategoryColumn(safe_cap)
-            for i in range(n):
+            catc = CategoryColumn(first_col_cap)
+            for i in range(first_col_n):
                 sz = snprintf(buf, sizeof(buf), "%d", s_ptr[i])
                 catc.append(buf[:sz].decode('ascii'))
             return catc
