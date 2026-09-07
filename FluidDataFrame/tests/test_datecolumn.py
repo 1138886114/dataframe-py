@@ -282,11 +282,33 @@ class TestDateColumnMisc:
         check('large', col[0] == 99991231)
 
 
+class TestDateColumnOwnership:
+    def test_pop_front_raises_on_empty(self):
+        col = DateColumn()
+        check('pop_front empty', expect_exception(IndexError, col.pop_front))
+
+    def test_pop_back_raises_on_empty(self):
+        col = DateColumn()
+        check('pop_back empty', expect_exception(IndexError, col.pop_back))
+
+    def test_owning_pop_front_works(self):
+        col = DateColumn(); col.append(20160101); col.append(20231225); col.append(20240615)
+        col.pop_front()
+        check('owning pop_front len', col.length == 2)
+        check('owning pop_front val', col[0] == 20231225)
+
+    def test_owning_pop_back_works(self):
+        col = DateColumn(); col.append(20160101); col.append(20231225); col.append(20240615)
+        col.pop_back()
+        check('owning pop_back len', col.length == 2)
+        check('owning pop_back val', col[1] == 20231225)
+
+
 def run_all():
     print('=== DateColumn Tests ===')
     for cls in [TestDateColumnConstruction, TestDateColumnOps, TestDateColumnStats,
                 TestDateColumnExtractors, TestDateColumnArithmetic, TestDateColumnCalendar,
-                TestDateColumnMisc]:
+                TestDateColumnMisc, TestDateColumnOwnership]:
         for name in dir(cls):
             if name.startswith('test_'):
                 getattr(cls(), name)()

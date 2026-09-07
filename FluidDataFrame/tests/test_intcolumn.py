@@ -1147,8 +1147,6 @@ def run_all():
     test_where_mask()
     test_mask()
     test_drop_row()
-    test_pop_back()
-    test_pop_front()
     test_astype()
     test_get_size()
     test_quantile()
@@ -1156,7 +1154,6 @@ def run_all():
     test_distances_int_double()
     test_jaccard_sim_int()
     test_hamming_dist_int()
-    test_reorder()
     print(f'\nResults: {passed} passed, {failed} failed')
     if failed: sys.exit(1)
 

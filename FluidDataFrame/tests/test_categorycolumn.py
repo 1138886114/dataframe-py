@@ -15,6 +15,15 @@ def check(name, cond):
         failed += 1
         print(f'  FAIL: {name}')
 
+def expect_exception(exc_type, fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+        return False
+    except exc_type:
+        return True
+    except Exception:
+        return False
+
 
 class TestCategoryColumnConstruction:
     def test_empty(self):
@@ -200,9 +209,34 @@ class TestCategoryInDataFrame:
         check('val', r[0] == 'AA')
 
 
+class TestCategoryColumnOwnership:
+    def test_pop_front_raises_on_empty(self):
+        cc = CategoryColumn(4)
+        check('pop_front empty', expect_exception(IndexError, cc.pop_front))
+
+    def test_pop_back_raises_on_empty(self):
+        cc = CategoryColumn(4)
+        check('pop_back empty', expect_exception(IndexError, cc.pop_back))
+
+    def test_owning_pop_front_works(self):
+        cc = CategoryColumn(4)
+        cc.append('apple'); cc.append('banana'); cc.append('apple'); cc.append('cherry')
+        cc.pop_front()
+        check('owning pop_front len', len(cc) == 3)
+        check('owning pop_front val', cc[0] == 'banana')
+
+    def test_owning_pop_back_works(self):
+        cc = CategoryColumn(4)
+        cc.append('apple'); cc.append('banana'); cc.append('apple'); cc.append('cherry')
+        cc.pop_back()
+        check('owning pop_back len', len(cc) == 3)
+        check('owning pop_back val', cc[2] == 'apple')
+
+
 def run_all():
     print('=== CategoryColumn Tests ===')
-    for cls in [TestCategoryColumnConstruction, TestCategoryColumnOps, TestCategoryAccessor, TestCategoryInDataFrame]:
+    for cls in [TestCategoryColumnConstruction, TestCategoryColumnOps, TestCategoryAccessor,
+                TestCategoryInDataFrame, TestCategoryColumnOwnership]:
         for name in dir(cls):
             if name.startswith('test_'):
                 getattr(cls(), name)()

@@ -15,6 +15,15 @@ def check(name, cond):
         failed += 1
         print(f'  FAIL: {name}')
 
+def expect_exception(exc_type, fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+        return False
+    except exc_type:
+        return True
+    except Exception:
+        return False
+
 
 class TestBoolColumnConstruction:
     def test_empty(self):
@@ -115,9 +124,44 @@ class TestBoolColumnInDataFrame:
         check('df mean', abs(df['B'].mean() - 2/3) < 1e-9)
 
 
+class TestBoolColumnOwnership:
+    def test_eq_length_mismatch(self):
+        bc1 = BoolColumn(4); bc1.append(True); bc1.append(False); bc1.append(True)
+        bc2 = BoolColumn(4); bc2.append(True); bc2.append(False)
+        try:
+            _ = (bc1 == bc2)
+            check('eq mismatch raises', False)
+        except ValueError:
+            check('eq mismatch raises', True)
+
+    def test_eq_same(self):
+        bc1 = BoolColumn(4); bc1.append(True); bc1.append(False)
+        bc2 = BoolColumn(4); bc2.append(True); bc2.append(False)
+        check('eq same', bc1 == bc2)
+
+    def test_pop_front_raises_on_empty(self):
+        bc = BoolColumn(4)
+        check('pop_front empty', expect_exception(IndexError, bc.pop_front))
+
+    def test_pop_back_raises_on_empty(self):
+        bc = BoolColumn(4)
+        check('pop_back empty', expect_exception(IndexError, bc.pop_back))
+
+    def test_owning_pop_front_works(self):
+        bc = BoolColumn(4); bc.append(True); bc.append(False); bc.append(True); bc.append(False)
+        bc.pop_front()
+        check('owning pop_front len', len(bc) == 3)
+
+    def test_owning_pop_back_works(self):
+        bc = BoolColumn(4); bc.append(True); bc.append(False); bc.append(True); bc.append(False)
+        bc.pop_back()
+        check('owning pop_back len', len(bc) == 3)
+
+
 def run_all():
     print('=== BoolColumn Tests ===')
-    for cls in [TestBoolColumnConstruction, TestBoolColumnOps, TestBoolColumnInDataFrame]:
+    for cls in [TestBoolColumnConstruction, TestBoolColumnOps, TestBoolColumnInDataFrame,
+                TestBoolColumnOwnership]:
         for name in dir(cls):
             if name.startswith('test_'):
                 getattr(cls(), name)()

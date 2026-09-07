@@ -1,6 +1,7 @@
 import sys
 sys.path.insert(0, '.')
 from fluidframe.core.datetimecolumn import DateTimeColumn
+from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.fastdataframe import FastDataFrame
 from fluidframe._schema_types import Date
 
@@ -112,10 +113,85 @@ class TestDateTimeInDataFrame:
         check('from_dict len', df.df_length == 2)
 
 
+class TestDateTimeColumnOps2:
+    def test_pop_front(self):
+        col = DateTimeColumn()
+        col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2024-01-01 08:00:00')
+        val = col.pop_front()
+        check('pop_front len', col.length == 2)
+
+    def test_pop_back(self):
+        col = DateTimeColumn()
+        col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00')
+        val = col.pop_back()
+        check('pop_back len', col.length == 1)
+
+    def test_concat(self):
+        c1 = DateTimeColumn(); c1.append('2023-01-15 10:30:00')
+        c2 = DateTimeColumn(); c2.append('2023-06-20 14:00:00')
+        c1.concat(c2)
+        check('concat len', c1.length == 2)
+
+    def test_drop_row(self):
+        col = DateTimeColumn()
+        col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2024-01-01 08:00:00')
+        col.drop_row(1)
+        check('drop_row len', col.length == 2)
+
+    def test_unique(self):
+        col = DateTimeColumn()
+        col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2023-01-15 10:30:00')
+        u = col.unique()
+        check('unique len', len(u) == 2)
+
+    def test_isin(self):
+        col = DateTimeColumn()
+        col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00')
+        r = col.isin({'2023-01-15 10:30:00'})
+        check('isin', [r[i] for i in range(2)] == [True, False])
+
+    def test_where_mask(self):
+        mask = IntColumn(3); mask.append(1); mask.append(0); mask.append(1)
+        col = DateTimeColumn()
+        col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2024-01-01 08:00:00')
+        r = col.where_mask(mask, '2000-01-01 00:00:00')
+        check('where_mask masked', r[0] == '2023-01-15 10:30:00')
+        check('where_mask fill', '2000' in r[1])
+
+    def test_reorder(self):
+        col = DateTimeColumn()
+        col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2024-01-01 08:00:00')
+        col._reorder([2, 0, 1])
+        check('reorder', col[0] == '2024-01-01 08:00:00')
+
+
+class TestDateTimeColumnOwnership:
+    def test_pop_front_raises_on_empty(self):
+        col = DateTimeColumn()
+        check('pop_front empty', expect_exception(IndexError, col.pop_front))
+
+    def test_pop_back_raises_on_empty(self):
+        col = DateTimeColumn()
+        check('pop_back empty', expect_exception(IndexError, col.pop_back))
+
+    def test_owning_pop_front_works(self):
+        col = DateTimeColumn()
+        col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2024-01-01 08:00:00')
+        col.pop_front()
+        check('owning pop_front len', col.length == 2)
+
+    def test_owning_pop_back_works(self):
+        col = DateTimeColumn()
+        col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2024-01-01 08:00:00')
+        col.pop_back()
+        check('owning pop_back len', col.length == 2)
+
+
 def run_all():
     print('=== DateTimeColumn Tests ===')
     for cls in [TestDateTimeColumnConstruction, TestDateTimeColumnExtractors,
-                TestDateTimeColumnOps, TestDateTimeInDataFrame]:
+                TestDateTimeColumnOps, TestDateTimeInDataFrame,
+                TestDateTimeColumnOps2, TestDateTimeColumnOwnership]:
         for name in dir(cls):
             if name.startswith('test_'):
                 getattr(cls(), name)()
