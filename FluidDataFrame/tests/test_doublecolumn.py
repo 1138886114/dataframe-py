@@ -294,6 +294,10 @@ def test_roll_mean_1d():
     check('roll_mean_1d w=len nan', all(_is_nan(r8[i]) for i in range(7)))
     check('roll_mean_1d w=len [7]', _approx(r8[7], 4.5))
 
+    r0 = col.roll_mean(0)
+    check('roll_mean_1d w=0 all nan', all(_is_nan(r0[i]) for i in range(8)))
+    check('roll_mean_1d w<0 raises', expect_exception(ValueError, col.roll_mean, -1))
+
 def test_roll_sum_1d():
     col = _make_1d([1, 2, 3, 4, 5, 6, 7, 8])
     r = col.roll_sum(3)
@@ -303,6 +307,10 @@ def test_roll_sum_1d():
 
     r1 = col.roll_sum(1)
     check('roll_sum_1d w=1 [3]', _approx(r1[3], 4.0))
+
+    r0 = col.roll_sum(0)
+    check('roll_sum_1d w=0 all nan', all(_is_nan(r0[i]) for i in range(8)))
+    check('roll_sum_1d w<0 raises', expect_exception(ValueError, col.roll_sum, -1))
 
 def test_roll_min_1d():
     col = _make_1d([3, 1, 4, 1, 5, 9, 2, 6])
@@ -412,7 +420,7 @@ def test_roll_dispatch_1d():
 
 def test_roll_error_1d():
     col = _make_1d([1, 2, 3])
-    check('roll_error window<1', expect_exception(ValueError, col.roll_mean, 0))
+    check('roll_error w<0 raises', expect_exception(ValueError, col.roll_mean, -1))
     check('roll_error var w<2', expect_exception(ValueError, col.roll_var, 1))
     check('roll_error bad method', expect_exception(ValueError, col.roll, 2, 'invalid'))
 

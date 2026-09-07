@@ -1725,11 +1725,11 @@ cdef class DoubleColumn(BaseColumn):
         滚动均值计算。支持一维与二维矩阵。
         时间复杂度: O(rows * cols)，严格常数时间增量滑动。
         """
-        if window < 1: raise ValueError("window must be >= 1")
+        if window < 0: raise ValueError("window must be >= 0")
         cdef DoubleColumn res = self._make_like_nan()
         cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
         cdef Py_ssize_t c = self.cols
-        if r < window: return res
+        if window <= 0 or r < window: return res
 
         cdef double inv_w = 1.0 / <double>window
         cdef double* src = self.data_c
@@ -1759,11 +1759,11 @@ cdef class DoubleColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def roll_sum(self, Py_ssize_t window):
         """滚动累加和"""
-        if window < 1: raise ValueError("window must be >= 1")
+        if window < 0: raise ValueError("window must be >= 0")
         cdef DoubleColumn res = self._make_like_nan()
         cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
         cdef Py_ssize_t c = self.cols
-        if r < window: return res
+        if window <= 0 or r < window: return res
 
         cdef double* src = self.data_c
         cdef double* dst = res.data_c

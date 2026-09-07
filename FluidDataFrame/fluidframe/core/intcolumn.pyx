@@ -1667,11 +1667,11 @@ cdef class IntColumn(BaseColumn):
         raise TypeError(err_buf.decode('ascii'))
 
     def roll_mean(self, Py_ssize_t window):
-        if window <= 0:
-            raise ValueError("window must be > 0")
+        if window < 0:
+            raise ValueError("window must be >= 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r < window: return res
+        if window <= 0 or r < window: return res
         cdef double* dst = res.data_c
         cdef int* src = self.data_c
         cdef double inv_w = 1.0 / <double>window
@@ -1690,11 +1690,11 @@ cdef class IntColumn(BaseColumn):
         return res
 
     def roll_sum(self, Py_ssize_t window):
-        if window <= 0:
-            raise ValueError("window must be > 0")
+        if window < 0:
+            raise ValueError("window must be >= 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r < window: return res
+        if window <= 0 or r < window: return res
         cdef double* dst = res.data_c
         cdef int* src = self.data_c
         cdef Py_ssize_t col_idx, offset, i

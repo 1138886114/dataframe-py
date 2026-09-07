@@ -463,6 +463,8 @@ def test_roll_edge_cases():
     check('roll_w>len all nan', all(math.isnan(r[i]) for i in range(5)))
     r = col.roll_mean(0)
     check('roll_w0 all nan', all(math.isnan(r[i]) for i in range(5)))
+    check('roll_w<0 raises', expect_exception(ValueError, col.roll_mean, -1))
+    check('roll_sum w<0 raises', expect_exception(ValueError, col.roll_sum, -1))
 
 def test_roll_mean_2d():
     col = _make_2d(4, [[1, 2, 3, 4], [10, 20, 30, 40]])
