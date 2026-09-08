@@ -79,6 +79,67 @@ cdef BaseColumn _column_from_list_impl(FastDataFrame self, str name, list values
 
     raise TypeError(f"Unsupported type: {type(sample)}")
 
+cdef bint _col_is_2d(BaseColumn col):
+    """2D 且多子列（cols>1）时才视为二维语义列。"""
+    cdef int dtype = col.dtype
+    if dtype == TYPE_INT:
+        return (<IntColumn>col).get_is_2d_c() and (<IntColumn>col).get_cols_c() > 1
+    elif dtype == TYPE_DOUBLE:
+        return (<DoubleColumn>col).get_is_2d_c() and (<DoubleColumn>col).get_cols_c() > 1
+    elif dtype == TYPE_DATE:
+        return (<DateColumn>col).get_is_2d_c() and (<DateColumn>col).get_cols_c() > 1
+    elif dtype == TYPE_DATETIME:
+        return (<DateTimeColumn>col).get_is_2d_c() and (<DateTimeColumn>col).get_cols_c() > 1
+    elif dtype == TYPE_TIME:
+        return (<TimeColumn>col).get_is_2d_c() and (<TimeColumn>col).get_cols_c() > 1
+    return False
+
+cdef BaseColumn _col_from_keys_2d(BaseColumn src, list keys):
+    """由整行键（_col_row_key 输出，各为定长子列取值）重建保持 cols 维的 2D 列。
+    Int/Double 用公开 from_2d 工厂；Date 键为 ymd int，转回 days 存储；
+    其余 2D 类型无对应存储，明确 NotImpl。"""
+    cdef int dtype = src.dtype
+    cdef Py_ssize_t nkeys = len(keys)
+    if nkeys == 0:
+        return IntColumn(0)
+    cdef Py_ssize_t c = 1
+    if dtype == TYPE_INT:
+        c = (<IntColumn>src).get_cols_c()
+    elif dtype == TYPE_DOUBLE:
+        c = (<DoubleColumn>src).get_cols_c()
+    elif dtype == TYPE_DATE:
+        c = (<DateColumn>src).get_cols_c()
+    elif dtype == TYPE_DATETIME:
+        c = (<DateTimeColumn>src).get_cols_c()
+    elif dtype == TYPE_TIME:
+        c = (<TimeColumn>src).get_cols_c()
+    cdef Py_ssize_t total = nkeys * c
+    cdef Py_ssize_t k, j
+    cdef object flat = []
+    cdef DateColumn dcol
+    cdef int32_t* dptr
+    cdef int ymd
+    # from_2d 输入为列优先（先 col0 全部行，再 col1…），行键需转置
+    for j in range(c):
+        for k in range(nkeys):
+            flat.append(keys[k][j])
+
+    if dtype == TYPE_INT:
+        return IntColumn.from_2d(<object>flat, nkeys, c)
+    elif dtype == TYPE_DOUBLE:
+        return DoubleColumn.from_2d(<object>flat, nkeys, c)
+    elif dtype == TYPE_DATE:
+        dcol = DateColumn(max(total, 1), cols=c)
+        dcol.length = total
+        dcol.set_meta_c(<int>c, True, True)
+        dptr = <int32_t*>dcol.data_c
+        for k in range(nkeys):
+            for j in range(c):
+                ymd = <int>keys[k][j]
+                dptr[j * nkeys + k] = _ymd_to_days(ymd // 10000, (ymd // 100) % 100, ymd % 100)
+        return dcol
+    raise NotImplementedError(f"value_counts on 2D column not supported for dtype {dtype}")
+
 cdef _eval_impl(FastDataFrame self, str expr, bint inplace):
     cdef FastDataFrame target_df = self if inplace else self.copy()
     cdef bint is_assignment = False

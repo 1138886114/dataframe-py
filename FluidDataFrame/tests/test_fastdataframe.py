@@ -1002,6 +1002,35 @@ def test_display_export_2d():
     check('exp 2d nan null', '[1.5, null]' in ds)
 
 
+def test_agg_stats_2d():
+    # 2D 列子列0 有重复：行 (1,10)(1,20)(2,30)(2,30)
+    df = FastDataFrame({'a': int, 's': str})
+    for a, s in [(1, 'w'), (1, 'x'), (2, 'y'), (2, 'z')]:
+        df.append_row(a=a, s=s)
+    df['a2d'] = IntColumn.from_2d([1, 1, 2, 2, 10, 20, 30, 30], 4, 2)
+
+    # nunique：整行去重 = 3（旧实现 flat 读子列0 只得 2）
+    check('agg2d nunique', df.nunique('a2d') == 3)
+
+    # value_counts：行 (2,30) 计 2，(1,10)/(1,20) 各 1；结果 key 列保持 2D
+    vc = df.value_counts('a2d')
+    check('agg2d vc total', len(vc) == 3)
+    check('agg2d vc cols', vc['a2d'].cols == 2 and vc['a2d'].rows == 3)
+    check('agg2d vc flat', [vc['a2d'][i] for i in range(6)] == [2, 1, 1, 30, 10, 20])
+    check('agg2d vc counts', [vc['count'][i] for i in range(3)] == [2, 1, 1])
+
+    # argsort_by：整行字典序 [0,1,2,3]（旧实现 flat 排子列0 → [1,0,3,2]）
+    check('agg2d argsort', df.argsort_by('a2d') == [0, 1, 2, 3])
+
+    # rank：average → 行(1,*)并列 rank1/2，行(2,*)并列 3.5
+    r = df.rank('a2d')
+    check('agg2d rank', [r[i] for i in range(4)] == [1.0, 2.0, 3.5, 3.5])
+
+    # cut / qcut：2D 列无标量可分箱 → 明确 TypeError
+    check('agg2d cut guard', expect_exception(TypeError, df.cut, 'a2d', [0, 1, 2]))
+    check('agg2d qcut guard', expect_exception(TypeError, df.qcut, 'a2d'))
+
+
 # =====================================================================
 #  Aggregation: mean, median, std, var, max, min, sum, count, quantile, skew, kurt
 # =====================================================================
@@ -1873,6 +1902,9 @@ def run_all():
     test_drop_duplicates_2d()
     test_duplicated_2d_rowaware()
     test_display_export_2d()
+
+    # Regression: 类别五摘要统计 2D
+    test_agg_stats_2d()
 
     # Aggregation
     test_aggregation()

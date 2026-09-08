@@ -10,6 +10,10 @@ cdef _argsort_by_impl(FastDataFrame self, str col_name, bint reverse):
     if n == 0:
         return []
 
+    # 2D 列：整行向量作排序键（_col_row_key 语义），Python 级字典序
+    if _col_is_2d(col):
+        return sorted(range(n), key=lambda i: _col_row_key(col, i), reverse=reverse)
+
     cdef Py_ssize_t* indices_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
     if not indices_c: raise MemoryError()
     cdef Py_ssize_t i
