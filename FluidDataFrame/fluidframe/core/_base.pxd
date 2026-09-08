@@ -99,6 +99,89 @@ cdef inline void _col_gather(void* dst, void* src,
                <char*>src + idx * elem_size,
                elem_size)
 
+# ============================================================
+#  2D (rows*cols column-major) row-level helpers
+#  A logical row i lives at flat index j*rows + i for sub-column j.
+#  These ops need no reallocation: they only memmove within the
+#  existing flat buffer (caller must ensure spare capacity for
+#  _col_shift_right_2d).
+# ============================================================
+cdef inline void _col_shift_right_2d_double(void* buf, Py_ssize_t* length,
+                                            Py_ssize_t rows, Py_ssize_t cols,
+                                            Py_ssize_t row_idx) noexcept nogil:
+    """针对 Double 的 2D 插入，填补 NaN"""
+    cdef Py_ssize_t j, base_src, base_dst, tail
+    cdef double* d_buf = <double*>buf
+    for j in range(cols - 1, -1, -1):
+        base_src = j * rows
+        base_dst = j * (rows + 1)
+        tail = rows - row_idx
+        if tail > 0:
+            memmove(d_buf + base_dst + row_idx + 1,
+                    d_buf + base_src + row_idx,
+                    tail * sizeof(double))
+        if row_idx > 0:
+            memmove(d_buf + base_dst,
+                    d_buf + base_src,
+                    row_idx * sizeof(double))
+        # 清空产生的垃圾内存洞，赋默认值 NaN
+        d_buf[base_dst + row_idx] = NAN
+    length[0] += cols
+
+cdef inline void _col_shift_right_2d_int(void* buf, Py_ssize_t* length,
+                                         Py_ssize_t rows, Py_ssize_t cols,
+                                         Py_ssize_t row_idx, Py_ssize_t elem_size) noexcept nogil:
+    """针对 Int/Date/Time 等整数型的 2D 插入，填补 0 (或者你自定义的 Null Sentinel)"""
+    cdef Py_ssize_t j, base_src, base_dst, tail
+    for j in range(cols - 1, -1, -1):
+        base_src = j * rows
+        base_dst = j * (rows + 1)
+        tail = rows - row_idx
+        if tail > 0:
+            memmove(<char*>buf + (base_dst + row_idx + 1) * elem_size,
+                    <char*>buf + (base_src + row_idx) * elem_size,
+                    tail * elem_size)
+        if row_idx > 0:
+            memmove(<char*>buf + base_dst * elem_size,
+                    <char*>buf + base_src * elem_size,
+                    row_idx * elem_size)
+        # 将新拉开的一行置为 0
+        memset(<char*>buf + (base_dst + row_idx) * elem_size, 0, elem_size)
+    length[0] += cols
+
+cdef inline void _col_shift_left_2d(void* buf, Py_ssize_t* length,
+                                    Py_ssize_t rows, Py_ssize_t cols,
+                                    Py_ssize_t row_idx,
+                                    Py_ssize_t elem_size) noexcept nogil:
+    """Remove logical row (row_idx in [0, rows)) from every sub-column.
+    length shrinks by cols."""
+    cdef Py_ssize_t j, base_src, base_dst, tail
+    for j in range(cols):
+        base_dst = j * (rows - 1)
+        base_src = j * rows
+        if row_idx > 0 and j > 0:
+            memmove(<char*>buf + base_dst * elem_size,
+                    <char*>buf + base_src * elem_size,
+                    row_idx * elem_size)
+        tail = rows - row_idx - 1
+        if tail > 0:
+            memmove(<char*>buf + (base_dst + row_idx) * elem_size,
+                    <char*>buf + (base_src + row_idx + 1) * elem_size,
+                    tail * elem_size)
+    length[0] -= cols
+
+cdef inline void _col_gather_2d(void* dst, void* src,
+                                Py_ssize_t* indices, Py_ssize_t n,
+                                Py_ssize_t rows, Py_ssize_t cols,
+                                Py_ssize_t elem_size) noexcept nogil:
+    """Row-wise gather: dst keeps cols sub-columns of n rows each, one
+    per src sub-column (which has rows entries)."""
+    cdef Py_ssize_t j
+    for j in range(cols):
+        _col_gather(<char*>dst + j * n * elem_size,
+                    <char*>src + j * rows * elem_size,
+                    indices, n, elem_size)
+
 cdef inline Py_ssize_t _col_reserve(void** data_c, Py_ssize_t* capacity,
                                     Py_ssize_t new_cap, Py_ssize_t old_size,
                                     Py_ssize_t elem_size) except -1 nogil:
