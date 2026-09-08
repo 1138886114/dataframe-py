@@ -150,6 +150,31 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
         os_aligned_free(left_idx_c)
         os_aligned_free(right_idx_c)
 
+cdef _col_row_key(BaseColumn col, Py_ssize_t row):
+    """返回某列在逻辑行 row 的 Python 键：1D 列返回标量，2D 列返回
+    各子列取值构成的 tuple（整行重排语义，与 _take 一致）。"""
+    cdef bint is2d = False
+    cdef Py_ssize_t c = 1
+    cdef Py_ssize_t r = col.length
+    if col.dtype == TYPE_INT:
+        is2d = (<IntColumn>col).get_is_2d_c(); c = (<IntColumn>col).get_cols_c(); r = (<IntColumn>col).get_rows_c()
+    elif col.dtype == TYPE_DOUBLE:
+        is2d = (<DoubleColumn>col).get_is_2d_c(); c = (<DoubleColumn>col).get_cols_c(); r = (<DoubleColumn>col).get_rows_c()
+    elif col.dtype == TYPE_DATE:
+        is2d = (<DateColumn>col).get_is_2d_c(); c = (<DateColumn>col).get_cols_c(); r = (<DateColumn>col).get_rows_c()
+    elif col.dtype == TYPE_DATETIME:
+        is2d = (<DateTimeColumn>col).get_is_2d_c(); c = (<DateTimeColumn>col).get_cols_c(); r = (<DateTimeColumn>col).get_rows_c()
+    elif col.dtype == TYPE_TIME:
+        is2d = (<TimeColumn>col).get_is_2d_c(); c = (<TimeColumn>col).get_cols_c(); r = (<TimeColumn>col).get_rows_c()
+
+    if not is2d or c <= 1:
+        return col[row]
+    cdef Py_ssize_t j
+    cdef list vals = []
+    for j in range(c):
+        vals.append(col[j * r + row])
+    return tuple(vals)
+
 cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
     cdef Py_ssize_t n = self.df_length
     cdef IntColumn result = IntColumn(max(n, 1))
@@ -163,10 +188,11 @@ cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
     cdef dict seen = {}
     cdef Py_ssize_t i
     cdef tuple row_key
+    cdef BaseColumn col
 
     if keep == 'first':
         for i in range(n):
-            row_key = tuple(self.columns[c][i] for c in subset)
+            row_key = tuple(_col_row_key(self.columns[c], i) for c in subset)
             if row_key in seen:
                 result.data_c[i] = 1
             else:
@@ -174,12 +200,12 @@ cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
                 result.data_c[i] = 0
     elif keep == 'last':
         for i in range(n):
-            row_key = tuple(self.columns[c][i] for c in subset)
+            row_key = tuple(_col_row_key(self.columns[c], i) for c in subset)
             if row_key in seen:
                 result.data_c[seen[row_key]] = 1
             seen[row_key] = i
         for i in range(n):
-            row_key = tuple(self.columns[c][i] for c in subset)
+            row_key = tuple(_col_row_key(self.columns[c], i) for c in subset)
             if seen[row_key] == i:
                 result.data_c[i] = 0
     else:

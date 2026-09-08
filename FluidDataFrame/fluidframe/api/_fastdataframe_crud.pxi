@@ -10,6 +10,11 @@ cdef BaseColumn _column_from_list_impl(FastDataFrame self, str name, list values
     cdef AsciiColumn c256_col
     cdef UCS2Column ucs2_col
     cdef BoolColumn bool_col
+    cdef int* int_ptr
+    cdef double* dbl_ptr
+    cdef int64_t val64
+    cdef bint all_ascii
+
     if n == 0:
         return IntColumn(0)
 
@@ -22,7 +27,8 @@ cdef BaseColumn _column_from_list_impl(FastDataFrame self, str name, list values
     if sample is None:
         dbl_col = DoubleColumn(max(n, 1))
         dbl_col.length = n
-        for i in range(n): dbl_col.data_c[i] = NAN
+        dbl_ptr = dbl_col.data_c
+        for i in range(n): dbl_ptr[i] = NAN
         return dbl_col
 
     if isinstance(sample, bool):
@@ -30,33 +36,47 @@ cdef BaseColumn _column_from_list_impl(FastDataFrame self, str name, list values
         bool_col.length = n
         for i in range(n): bool_col.data_c[i] = 1 if values[i] else 0
         return bool_col
+
     elif isinstance(sample, int):
         int_col = IntColumn(max(n, 1))
         int_col.length = n
+        int_ptr = int_col.data_c
         for i in range(n):
-            val = values[i] if values[i] is not None else 0
-            if val > 2147483647 or val < -2147483648:
-                raise OverflowError(f"Value {val} at index {i} out of range for int32")
-            int_col.data_c[i] = <int>val
+            if values[i] is None:
+                int_ptr[i] = 0
+            else:
+                val64 = <int64_t>values[i]
+                if val64 > 2147483647 or val64 < -2147483648:
+                    raise OverflowError(f"Value {val64} at index {i} out of range for int32")
+                int_ptr[i] = <int>val64
         return int_col
+
     elif isinstance(sample, float):
         dbl_col = DoubleColumn(max(n, 1))
         dbl_col.length = n
+        dbl_ptr = dbl_col.data_c
         for i in range(n):
-            dbl_col.data_c[i] = <double>values[i] if values[i] is not None else NAN
+            dbl_ptr[i] = <double>values[i] if values[i] is not None else NAN
         return dbl_col
+
     elif isinstance(sample, str):
-        try:
-            (<str>sample).encode('ascii')
+        all_ascii = True
+        for i in range(n):
+            if values[i] is not None and not (<str>values[i]).isascii():
+                all_ascii = False
+                break
+
+        if all_ascii:
             c256_col = AsciiColumn(max(n, 1))
             for i in range(n):
-                c256_col.append(<str>(values[i] if values[i] is not None else ''))
+                c256_col.append(<str>(values[i]) if values[i] is not None else '')
             return c256_col
-        except UnicodeEncodeError:
+        else:
             ucs2_col = UCS2Column(max(n, 1))
             for i in range(n):
-                ucs2_col.append(<str>(values[i] if values[i] is not None else ''))
+                ucs2_col.append(<str>(values[i]) if values[i] is not None else '')
             return ucs2_col
+
     raise TypeError(f"Unsupported type: {type(sample)}")
 
 cdef _eval_impl(FastDataFrame self, str expr, bint inplace):
@@ -233,25 +253,175 @@ cdef _reindex_impl(FastDataFrame self, list new_index):
     cdef Py_ssize_t new_len = len(new_index)
     cdef dict old_pos = {}
     cdef Py_ssize_t i, old_idx
+    cdef FastDataFrame result
+
     if self.index is not None and self.index.length > 0:
         old_vals = self.index.values()
         for i in range(len(old_vals)):
             old_pos[old_vals[i]] = i
 
-    cdef FastDataFrame result = FastDataFrame()
-    result.df_length = new_len
-    result.index = RangeIndex(0, new_len)
+    # 【性能修复 1】：一次性映射索引，将 O(C * N) 的字典查找暴降至 O(N)
+    cdef Py_ssize_t* index_map = <Py_ssize_t*>aligned_malloc(max(new_len, 1) * sizeof(Py_ssize_t))
+    if not index_map:
+        raise MemoryError()
 
-    for col_name, col_obj in self.columns.items():
-        new_col_list = []
+    try:
         for i in range(new_len):
-            if new_index[i] in old_pos:
-                old_idx = old_pos[new_index[i]]
-                new_col_list.append(col_obj[old_idx])
+            index_map[i] = old_pos.get(new_index[i], -1)
+
+        result = FastDataFrame()
+        result.df_length = new_len
+        result.index = RangeIndex(0, new_len)
+
+        for col_name, col_obj in self.columns.items():
+            result.columns[col_name] = _reindex_column_impl(col_obj, index_map, new_len)
+
+        return result
+    finally:
+        os_aligned_free(index_map)
+
+cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_ssize_t new_len):
+    """按 index_map 重新索引单列（-1 表示缺失标签，用 dtype 默认填充）。
+    2D 列保持 cols 维，整行重排，语义与 _take 一致。"""
+    cdef int dtype = col.dtype
+    cdef Py_ssize_t cols = 1
+    cdef Py_ssize_t rows = col.length
+    cdef bint is2d = False
+    if dtype == TYPE_INT:
+        cols = (<IntColumn>col).get_cols_c(); rows = (<IntColumn>col).get_rows_c(); is2d = (<IntColumn>col).get_is_2d_c()
+    elif dtype == TYPE_DOUBLE:
+        cols = (<DoubleColumn>col).get_cols_c(); rows = (<DoubleColumn>col).get_rows_c(); is2d = (<DoubleColumn>col).get_is_2d_c()
+    elif dtype == TYPE_DATE:
+        cols = (<DateColumn>col).get_cols_c(); rows = (<DateColumn>col).get_rows_c(); is2d = (<DateColumn>col).get_is_2d_c()
+    elif dtype == TYPE_DATETIME:
+        cols = (<DateTimeColumn>col).get_cols_c(); rows = (<DateTimeColumn>col).get_rows_c(); is2d = (<DateTimeColumn>col).get_is_2d_c()
+    elif dtype == TYPE_TIME:
+        cols = (<TimeColumn>col).get_cols_c(); rows = (<TimeColumn>col).get_rows_c(); is2d = (<TimeColumn>col).get_is_2d_c()
+
+    cdef Py_ssize_t c = cols
+    cdef Py_ssize_t i, j, old_idx
+    cdef Py_ssize_t total = new_len * c
+    cdef bint found
+    cdef int* nd
+    cdef int* sd
+    cdef double* ndd
+    cdef double* sdd
+    cdef int32_t* nda
+    cdef int32_t* sda
+    cdef int64_t* ndt
+    cdef int64_t* sdt
+    cdef int32_t* ntm
+    cdef int32_t* stm
+    cdef IntColumn ric
+    cdef DoubleColumn rdc
+    cdef DateColumn rdc2
+    cdef DateTimeColumn rdtc
+    cdef TimeColumn rtmc
+
+    # 非 2D 的布尔/类别/字符串列：保持旧的逐元素重建语义（1D）
+    if dtype == TYPE_BOOL:
+        new_col = BoolColumn(max(new_len, 1))
+        for i in range(new_len):
+            old_idx = index_map[i]
+            if old_idx >= 0:
+                new_col.append((<BoolColumn>col)[old_idx])
             else:
-                new_col_list.append(None if col_obj.dtype in (TYPE_CHAR256, TYPE_UCS2) else (NAN if col_obj.dtype == TYPE_DOUBLE else 0))
-        result.columns[col_name] = _column_from_list_impl(self, col_name, new_col_list)
-    return result
+                new_col.append(False)
+        return new_col
+    elif dtype == TYPE_CATEGORY:
+        new_col = CategoryColumn(max(new_len, 1))
+        for i in range(new_len):
+            old_idx = index_map[i]
+            if old_idx >= 0:
+                new_col.append((<CategoryColumn>col)[old_idx])
+            else:
+                new_col.append(None)
+        return new_col
+    elif dtype == TYPE_CHAR256:
+        new_col = AsciiColumn(max(new_len, 1))
+        for i in range(new_len):
+            old_idx = index_map[i]
+            if old_idx >= 0:
+                new_col.append((<AsciiColumn>col)[old_idx])
+            else:
+                new_col.append('')
+        return new_col
+    elif dtype == TYPE_UCS2:
+        new_col = UCS2Column(max(new_len, 1))
+        for i in range(new_len):
+            old_idx = index_map[i]
+            if old_idx >= 0:
+                new_col.append((<UCS2Column>col)[old_idx])
+            else:
+                new_col.append('')
+        return new_col
+
+    if dtype == TYPE_INT:
+        ric = IntColumn(max(total, 1), cols=c)
+        ric.length = total
+        if is2d: ric.set_meta_c(<int>c, True, True)
+        nd = ric.data_c
+        sd = (<IntColumn>col).data_c
+        for i in range(total): nd[i] = 0
+        for i in range(new_len):
+            old_idx = index_map[i]
+            if old_idx >= 0:
+                for j in range(c):
+                    nd[j * new_len + i] = sd[j * rows + old_idx]
+        return ric
+    elif dtype == TYPE_DOUBLE:
+        rdc = DoubleColumn(max(total, 1), cols=c)
+        rdc.length = total
+        if is2d: rdc.set_meta_c(<int>c, True, True)
+        ndd = rdc.data_c
+        sdd = (<DoubleColumn>col).data_c
+        for i in range(total): ndd[i] = NAN
+        for i in range(new_len):
+            old_idx = index_map[i]
+            if old_idx >= 0:
+                for j in range(c):
+                    ndd[j * new_len + i] = sdd[j * rows + old_idx]
+        return rdc
+    elif dtype == TYPE_DATE:
+        rdc2 = DateColumn(max(total, 1), cols=c)
+        rdc2.length = total
+        if is2d: rdc2.set_meta_c(<int>c, True, True)
+        nda = rdc2.data_c
+        sda = (<DateColumn>col).data_c
+        for i in range(total): nda[i] = 0
+        for i in range(new_len):
+            old_idx = index_map[i]
+            if old_idx >= 0:
+                for j in range(c):
+                    nda[j * new_len + i] = sda[j * rows + old_idx]
+        return rdc2
+    elif dtype == TYPE_DATETIME:
+        rdtc = DateTimeColumn(max(total, 1), cols=c)
+        rdtc.length = total
+        if is2d: rdtc.set_meta_c(<int>c, True, True)
+        ndt = rdtc.data_c
+        sdt = (<DateTimeColumn>col).data_c
+        for i in range(total): ndt[i] = 0
+        for i in range(new_len):
+            old_idx = index_map[i]
+            if old_idx >= 0:
+                for j in range(c):
+                    ndt[j * new_len + i] = sdt[j * rows + old_idx]
+        return rdtc
+    elif dtype == TYPE_TIME:
+        rtmc = TimeColumn(max(total, 1), cols=c)
+        rtmc.length = total
+        if is2d: rtmc.set_meta_c(<int>c, True, True)
+        ntm = rtmc.data_c
+        stm = (<TimeColumn>col).data_c
+        for i in range(total): ntm[i] = 0
+        for i in range(new_len):
+            old_idx = index_map[i]
+            if old_idx >= 0:
+                for j in range(c):
+                    ntm[j * new_len + i] = stm[j * rows + old_idx]
+        return rtmc
+    raise TypeError(f"Unsupported column dtype: {dtype}")
 
 cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
     if pos < 0 or pos > self.df_length:

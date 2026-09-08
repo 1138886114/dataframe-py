@@ -140,7 +140,7 @@ from fluidframe.core._base cimport (
 )
 from fluidframe.core.asciicolumn cimport AsciiColumn
 from fluidframe.core.ucs2column cimport UCS2Column
-from fluidframe.core.datecolumn cimport DateColumn, _days_to_ymd
+from fluidframe.core.datecolumn cimport DateColumn, _days_to_ymd, _ymd_to_days
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
 from fluidframe.core.datetimecolumn cimport DateTimeColumn

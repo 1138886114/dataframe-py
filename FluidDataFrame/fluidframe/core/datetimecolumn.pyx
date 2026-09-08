@@ -17,7 +17,7 @@ from fluidframe.core._base cimport (
     TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_TIME, _resolve_astype_target,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
-    _col_shift_right_2d, _col_shift_left_2d, _col_gather_2d
+    _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn

@@ -886,6 +886,87 @@ def test_reindex():
 
 
 # =====================================================================
+#  类别二：行选择 _take 路径对 2D 列（整行重排，保持 cols 维）
+# =====================================================================
+def _make_2d_frame():
+    df = FastDataFrame({'a': int, 's': str})
+    df.append_row(a=1, s='w'); df.append_row(a=2, s='x')
+    df.append_row(a=3, s='y'); df.append_row(a=4, s='z')
+    df['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    return df
+
+def test_take_path_2d():
+    df = _make_2d_frame()
+    # iloc list（走 _take）
+    sub = df.iloc[[0, 2]]
+    check('take 2d len', len(sub) == 2)
+    check('take 2d a2d cols', sub['a2d'].cols == 2 and sub['a2d'].rows == 2)
+    check('take 2d a2d flat', [sub['a2d'][i] for i in range(4)] == [1, 3, 10, 30])
+    check('take 2d a 1d', [sub['a'][i] for i in range(2)] == [1, 3])
+    # head / tail
+    h = df.head(3)
+    check('take head a2d flat', [h['a2d'][i] for i in range(6)] == [1, 2, 3, 10, 20, 30])
+    t = df.tail(2)
+    check('take tail a2d flat', [t['a2d'][i] for i in range(4)] == [3, 4, 30, 40])
+    # sample
+    s = df.sample(2, seed=7)
+    check('take sample a2d cols', s['a2d'].cols == 2 and s['a2d'].rows == 2)
+    check('take sample a2d flat', [s['a2d'][i] for i in range(4)] == [3, 1, 30, 10])
+
+def test_sort_values_2d():
+    df = FastDataFrame({'a': int})
+    df.append_row(a=4); df.append_row(a=2); df.append_row(a=3); df.append_row(a=1)
+    df['a2d'] = IntColumn.from_2d([4, 2, 3, 1, 40, 20, 30, 10], 4, 2)
+    r = df.sort_values('a')
+    check('sort 2d a2d flat', [r['a2d'][i] for i in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
+    check('sort 2d a2d cols', r['a2d'].cols == 2 and r['a2d'].rows == 4)
+    # inplace
+    df.sort_values('a', inplace=True)
+    check('sort 2d inplace flat', [df['a2d'][i] for i in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
+
+def test_reindex_2d():
+    df = _make_2d_frame()
+    r = df.reindex([3, 0])
+    check('reindex 2d len', len(r) == 2)
+    check('reindex 2d a2d cols', r['a2d'].cols == 2 and r['a2d'].rows == 2)
+    check('reindex 2d a2d flat', [r['a2d'][i] for i in range(4)] == [4, 1, 40, 10])
+    # missing label 填充：两子列都填默认值
+    r2 = df.reindex([0, 1, 2, 3, 4])
+    check('reindex 2d fill len', len(r2) == 5)
+    check('reindex 2d fill flat', [r2['a2d'][i] for i in range(10)] == [1, 2, 3, 4, 0, 10, 20, 30, 40, 0])
+    check('reindex 2d fill rows', r2['a2d'].rows == 5 and r2['a2d'].cols == 2)
+
+def test_drop_duplicates_2d():
+    df = FastDataFrame({'a': int})
+    df.append_row(a=1); df.append_row(a=1); df.append_row(a=2); df.append_row(a=2)
+    df['a2d'] = IntColumn.from_2d([1, 1, 2, 2, 10, 10, 20, 20], 4, 2)
+    r = df.drop_duplicates()
+    check('dup 2d len', len(r) == 2)
+    check('dup 2d a2d flat', [r['a2d'][i] for i in range(4)] == [1, 2, 10, 20])
+    check('dup 2d a2d rows', r['a2d'].rows == 2 and r['a2d'].cols == 2)
+
+def test_duplicated_2d_rowaware():
+    # col0 重复但 col1 区分：旧 flat 读只读 col0 会误判为 dup
+    df = FastDataFrame({'a': int})
+    df.append_row(a=0); df.append_row(a=0)
+    df['a2d'] = IntColumn.from_2d([1, 1, 10, 20], 2, 2)
+    df['b'] = IntColumn(2); df['b'].append(7); df['b'].append(7)
+    check('dup row-aware distinct', [df.duplicated(subset=['a2d'])[i] for i in range(2)] == [0, 0])
+    r = df.drop_duplicates(subset=['a2d'])
+    check('dup row-aware drop len', len(r) == 2)
+    check('dup row-aware drop flat', [r['a2d'][i] for i in range(4)] == [1, 1, 10, 20])
+
+    # 整行重复 → 仅第 2 个标记 dup
+    df2 = FastDataFrame({'a': int})
+    df2.append_row(a=0); df2.append_row(a=0); df2.append_row(a=0)
+    df2['a2d'] = IntColumn.from_2d([1, 2, 1, 10, 20, 10], 3, 2)
+    check('dup row-aware dup', [df2.duplicated(subset=['a2d'])[i] for i in range(3)] == [0, 0, 1])
+    check('dup row-aware keep-last', [df2.duplicated(subset=['a2d'], keep='last')[i] for i in range(3)] == [1, 0, 0])
+    r2 = df2.drop_duplicates(subset=['a2d'])
+    check('dup row-aware drop flat', [r2['a2d'][i] for i in range(4)] == [1, 2, 10, 20])
+
+
+# =====================================================================
 #  Aggregation: mean, median, std, var, max, min, sum, count, quantile, skew, kurt
 # =====================================================================
 def test_aggregation():
@@ -1750,6 +1831,11 @@ def run_all():
     test_drop_duplicates()
     test_select_dtypes()
     test_reindex()
+    test_take_path_2d()
+    test_sort_values_2d()
+    test_reindex_2d()
+    test_drop_duplicates_2d()
+    test_duplicated_2d_rowaware()
 
     # Aggregation
     test_aggregation()
