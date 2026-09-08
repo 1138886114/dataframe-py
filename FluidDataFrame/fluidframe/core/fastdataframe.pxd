@@ -17,6 +17,8 @@ from fluidframe.core.datetimecolumn cimport DateTimeColumn
 from fluidframe.core.timecolumn cimport TimeColumn
 from fluidframe.core.index cimport IndexBase
 
+cdef _col_row_key(BaseColumn col, Py_ssize_t row)
+
 cdef struct _ByColPtrs:
     void** data
     void** offsets

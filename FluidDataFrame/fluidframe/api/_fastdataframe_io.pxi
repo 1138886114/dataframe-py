@@ -1,6 +1,48 @@
 # _fastdataframe_io.pxi — I/O and display (module-level cdef)
 # Included at module level in fastdataframe.pyx (after class definition)
 
+
+cdef list _col_to_list(BaseColumn col):
+    """
+    【核心加速机制】：一次性探测列的 shape（1D 还是 2D），成 Python list 一次性返回。
+    """
+    cdef int dtype = col.dtype
+    cdef Py_ssize_t c = 1
+    cdef Py_ssize_t r = col.length
+    cdef bint is2d = False
+
+    if dtype == TYPE_INT:
+        is2d = (<IntColumn>col).get_is_2d_c(); c = (<IntColumn>col).get_cols_c(); r = (<IntColumn>col).get_rows_c()
+    elif dtype == TYPE_DOUBLE:
+        is2d = (<DoubleColumn>col).get_is_2d_c(); c = (<DoubleColumn>col).get_cols_c(); r = (<DoubleColumn>col).get_rows_c()
+    elif dtype == TYPE_DATE:
+        is2d = (<DateColumn>col).get_is_2d_c(); c = (<DateColumn>col).get_cols_c(); r = (<DateColumn>col).get_rows_c()
+    elif dtype == TYPE_DATETIME:
+        is2d = (<DateTimeColumn>col).get_is_2d_c(); c = (<DateTimeColumn>col).get_cols_c(); r = (<DateTimeColumn>col).get_rows_c()
+    elif dtype == TYPE_TIME:
+        is2d = (<TimeColumn>col).get_is_2d_c(); c = (<TimeColumn>col).get_cols_c(); r = (<TimeColumn>col).get_rows_c()
+    # Ascii, UCS2, Bool, Category 自动 fallback 到 is2d=False, c=1, r=length
+
+    if r == 0:
+        return []
+
+    cdef Py_ssize_t i, j
+    cdef list res = [None] * r
+    cdef list row_vals
+
+    # 极速批处理 Dump
+    if is2d and c > 1:
+        for i in range(r):
+            row_vals = [None] * c
+            for j in range(c):
+                row_vals[j] = col[j * r + i]
+            res[i] = row_vals
+    else:
+        for i in range(r):
+            res[i] = col[i]
+    return res
+
+
 cdef _to_string_impl(FastDataFrame self, Py_ssize_t max_rows=80):
     cdef Py_ssize_t n = self.df_length
     cdef list row_indices = []
@@ -85,10 +127,15 @@ cdef _to_pickle_impl(FastDataFrame self, filename):
         pickle.dump(data, f)
 
 cdef _to_csv_impl(FastDataFrame self, filename, sep=','):
+    """
+    导出为 CSV 文件。
+    优化点：批量列数据提取，摆脱嵌套循环中的重复类型查询。
+    """
     cdef list col_names = list(self.columns.keys())
-    cdef list col_objs = [self.columns[name] for name in col_names]
-    cdef Py_ssize_t i, j
     cdef Py_ssize_t num_cols = len(col_names)
+    cdef Py_ssize_t n = self.df_length
+    cdef Py_ssize_t i, j
+
     cdef size_t buf_pos = 0
     cdef size_t write_res
     cdef char sep_c = <char>ord(sep) if len(sep) == 1 else <char>ord(',')
@@ -96,12 +143,15 @@ cdef _to_csv_impl(FastDataFrame self, filename, sep=','):
     cdef size_t buf_cap = sizeof(line_buf)
     cdef bytes b_field
 
+    cdef list cols_data = [_col_to_list(self.columns[name]) for name in col_names]
+
     with open(filename, 'wb') as f:
         for j in range(num_cols):
             b_field = col_names[j].encode('utf-8')
             if j > 0:
                 line_buf[buf_pos] = sep_c
                 buf_pos += 1
+
             write_res = _csv_write_field(line_buf, buf_cap, buf_pos, <const char*>b_field, len(b_field), sep_c)
             if write_res == <size_t>-1:
                 f.write(line_buf[:buf_pos])
@@ -113,10 +163,12 @@ cdef _to_csv_impl(FastDataFrame self, filename, sep=','):
         buf_pos += 1
         f.write(line_buf[:buf_pos])
 
-        for i in range(self.df_length):
+
+        for i in range(n):
             buf_pos = 0
             for j in range(num_cols):
-                b_field = str(col_objs[j][i]).encode('utf-8')
+                b_field = str(cols_data[j][i]).encode('utf-8')
+
                 if j > 0:
                     line_buf[buf_pos] = sep_c
                     buf_pos += 1
@@ -132,17 +184,23 @@ cdef _to_csv_impl(FastDataFrame self, filename, sep=','):
             f.write(line_buf[:buf_pos])
 
 cdef _to_numpy_impl(FastDataFrame self):
-    cdef list result = []
-    cdef list row
-    cdef Py_ssize_t i, j
+    """
+    导出为二维数组 (List of Lists)。
+    """
+    cdef Py_ssize_t n = self.df_length
     cdef list col_names = list(self.columns.keys())
-    cdef list col_objs = [self.columns[name] for name in col_names]
     cdef Py_ssize_t num_cols = len(col_names)
-    for i in range(self.df_length):
-        row = []
+    cdef Py_ssize_t i, j
+
+    cdef list cols_data = [_col_to_list(self.columns[name]) for name in col_names]
+    cdef list result = [None] * n
+    cdef list row
+
+    for i in range(n):
+        row = [None] * num_cols
         for j in range(num_cols):
-            row.append(col_objs[j][i])
-        result.append(row)
+            row[j] = cols_data[j][i]
+        result[i] = row
     return result
 
 cdef _info_impl(FastDataFrame self):
@@ -189,31 +247,40 @@ cdef _memory_usage_impl(FastDataFrame self):
     return total
 
 cdef _to_dict_impl(FastDataFrame self):
+    """导出为字段字典 (Columnar Dictionary)"""
     cdef dict result = {}
     cdef str name
     cdef BaseColumn col
-    cdef Py_ssize_t i, n
+
     for name, col in self.columns.items():
-        n = col.length
-        result[name] = [col[i] for i in range(n)]
+        result[name] = _col_to_list(col)
     return result
 
 cdef _to_json_impl(FastDataFrame self, bint orient_records=True):
+    """导出为 JSON"""
     import json
-    cdef list records = []
-    cdef dict row_dict
-    cdef list col_names = list(self.columns.keys())
-    cdef Py_ssize_t i, j, n = self.df_length
-    cdef Py_ssize_t num_cols = len(col_names)
-    cdef dict columns_dict = {}
-    if orient_records:
-        for i in range(n):
-            row_dict = {}
-            for j in range(num_cols):
-                row_dict[col_names[j]] = self.columns[col_names[j]][i]
-            records.append(row_dict)
-        return json.dumps(records)
-    else:
-        for name, col in self.columns.items():
-            columns_dict[name] = [col[i] for i in range(col.length)]
+
+    cdef dict columns_dict = _to_dict_impl(self)
+
+    if not orient_records:
         return json.dumps(columns_dict)
+
+    # ---------------------------------------------------------
+    # Orient Records 模式（行翻转矩阵）
+    # ---------------------------------------------------------
+    cdef Py_ssize_t n = self.df_length
+    cdef list records = [None] * n
+
+    cdef list col_names = list(columns_dict.keys())
+    cdef Py_ssize_t num_cols = len(col_names)
+
+    cdef list cols_data = list(columns_dict.values())
+    cdef dict row_dict
+    cdef Py_ssize_t i, j
+
+    for i in range(n):
+        row_dict = {}
+        for j in range(num_cols):
+            row_dict[col_names[j]] = cols_data[j][i]
+        records[i] = row_dict
+    return json.dumps(records)

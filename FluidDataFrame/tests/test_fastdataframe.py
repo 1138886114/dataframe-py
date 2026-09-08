@@ -965,6 +965,42 @@ def test_duplicated_2d_rowaware():
     r2 = df2.drop_duplicates(subset=['a2d'])
     check('dup row-aware drop flat', [r2['a2d'][i] for i in range(4)] == [1, 2, 10, 20])
 
+def test_display_export_2d():
+    df = _make_2d_frame()
+    # to_string：2D 列每行显示整行向量（含子列 ≥1），旧实现只显示子列0
+    s = df.to_string()
+    check('disp 2d row0', '[1, 10]' in s)
+    check('disp 2d row3', '[4, 40]' in s)
+    # to_dict：每个逻辑行一个行向量
+    d = df.to_dict()
+    check('exp 2d dict', d['a2d'] == [[1, 10], [2, 20], [3, 30], [4, 40]])
+    # to_numpy
+    arr = df.to_numpy()
+    check('exp 2d numpy', arr[0][2] == [1, 10] and arr[3][2] == [4, 40])
+    # to_json records / columns
+    j = df.to_json()
+    check('exp 2d json rec row0', '"a2d": [1, 10]' in j)
+    check('exp 2d json rec row3', '"a2d": [4, 40]' in j)
+    j2 = df.to_json(orient_records=False)
+    check('exp 2d json col', '[[1, 10], [2, 20], [3, 30], [4, 40]]' in j2)
+    # to_csv
+    fn = os.path.join(tempfile.mkdtemp(), 't2d.csv')
+    df.to_csv(fn)
+    txt = open(fn).read()
+    check('exp 2d csv row0', '[1, 10]' in txt)
+    check('exp 2d csv row3', '[4, 40]' in txt)
+    # __eq__：2D 列必须整行比较（子列 ≥1 差异要区分）
+    df2 = _make_2d_frame()
+    df2['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 99, 98, 97, 96], 4, 2)
+    check('exp 2d eq differs', not (df == df2))
+    check('exp 2d eq same', df == _make_2d_frame())
+    # double 2D 含 NaN：显示为 null（-ffast-math 下 dval != dval 失效，需位模式判定）
+    dd = FastDataFrame({'a': int})
+    dd.append_row(a=0); dd.append_row(a=0)
+    dd['d2d'] = DoubleColumn.from_2d([1.5, 2.5, float('nan'), 4.5], 2, 2)
+    ds = dd.to_string()
+    check('exp 2d nan null', '[1.5, null]' in ds)
+
 
 # =====================================================================
 #  Aggregation: mean, median, std, var, max, min, sum, count, quantile, skew, kurt
@@ -1836,6 +1872,7 @@ def run_all():
     test_reindex_2d()
     test_drop_duplicates_2d()
     test_duplicated_2d_rowaware()
+    test_display_export_2d()
 
     # Aggregation
     test_aggregation()

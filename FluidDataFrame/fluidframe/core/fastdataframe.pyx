@@ -8,7 +8,7 @@
 cimport cython
 from libc.string cimport memcpy, memmove, strncmp, memset, strncpy
 from libc.stdio cimport snprintf
-from libc.stdint cimport uint32_t, int32_t, int64_t
+from libc.stdint cimport uint32_t, int32_t, int64_t, uint64_t
 from libc.time cimport time_t, time
 from libc.math cimport NAN, sqrt, log, cos, isnan
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
@@ -513,7 +513,7 @@ cdef class FastDataFrame:
             if col_l.dtype != col_r.dtype:
                 return False
             for i in range(n):
-                if col_l[i] != col_r[i]:
+                if _col_row_key(col_l, i) != _col_row_key(col_r, i):
                     return False
         return True
 
@@ -567,6 +567,64 @@ cdef class FastDataFrame:
         cdef object val
         cdef int32_t* date_ptr
         cdef int dy, dm, dd
+        cdef bint is2d = False
+        cdef Py_ssize_t cols = 1
+        cdef Py_ssize_t rows = col.length
+        cdef Py_ssize_t j
+        cdef list parts
+        cdef uint64_t dbits
+
+        if dt == TYPE_INT:
+            is2d = (<IntColumn>col).get_is_2d_c()
+            cols = (<IntColumn>col).get_cols_c()
+            rows = (<IntColumn>col).get_rows_c()
+        elif dt == TYPE_DOUBLE:
+            is2d = (<DoubleColumn>col).get_is_2d_c()
+            cols = (<DoubleColumn>col).get_cols_c()
+            rows = (<DoubleColumn>col).get_rows_c()
+        elif dt == TYPE_DATE:
+            is2d = (<DateColumn>col).get_is_2d_c()
+            cols = (<DateColumn>col).get_cols_c()
+            rows = (<DateColumn>col).get_rows_c()
+        elif dt == TYPE_DATETIME:
+            is2d = (<DateTimeColumn>col).get_is_2d_c()
+            cols = (<DateTimeColumn>col).get_cols_c()
+            rows = (<DateTimeColumn>col).get_rows_c()
+        elif dt == TYPE_TIME:
+            is2d = (<TimeColumn>col).get_is_2d_c()
+            cols = (<TimeColumn>col).get_cols_c()
+            rows = (<TimeColumn>col).get_rows_c()
+
+        # 2D 列：单元格 = 整行向量（各子列取值），与 _col_row_key 语义一致
+        if is2d and cols > 1:
+            parts = []
+            for j in range(cols):
+                if dt == TYPE_INT:
+                    sz = snprintf(buf, sizeof(buf), "%d", (<IntColumn>col).data_c[j * rows + i])
+                    parts.append(buf[:sz].decode('ascii'))
+                elif dt == TYPE_DOUBLE:
+                    dval = (<DoubleColumn>col).data_c[j * rows + i]
+                    memcpy(&dbits, &dval, sizeof(double))
+                    if (dbits & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL and (dbits & 0x000FFFFFFFFFFFFFULL) != 0:
+                        parts.append("null")
+                    else:
+                        sz = snprintf(buf, sizeof(buf), "%.6g", dval)
+                        parts.append(buf[:sz].decode('ascii'))
+                elif dt == TYPE_DATE:
+                    date_ptr = <int32_t*>(<DateColumn>col).data_c
+                    _days_to_ymd(date_ptr[j * rows + i], &dy, &dm, &dd)
+                    sz = snprintf(buf, sizeof(buf), "%04d-%02d-%02d", dy, dm, dd)
+                    parts.append(buf[:sz].decode('ascii'))
+                elif dt == TYPE_TIME:
+                    tval = (<TimeColumn>col).data_c[j * rows + i]
+                    h = <int>(tval / 3600)
+                    mm = <int>((tval % 3600) / 60)
+                    s = <int>(tval % 60)
+                    sz = snprintf(buf, sizeof(buf), "%02d:%02d:%02d", h, mm, s)
+                    parts.append(buf[:sz].decode('ascii'))
+                else:
+                    parts.append(str(col[j * rows + i]))
+            return "[" + ", ".join(parts) + "]"
 
         if dt == TYPE_INT:
             sz = snprintf(buf, sizeof(buf), "%d", (<IntColumn>col).data_c[i])
@@ -574,7 +632,8 @@ cdef class FastDataFrame:
 
         elif dt == TYPE_DOUBLE:
             dval = (<DoubleColumn>col).data_c[i]
-            if dval != dval:
+            memcpy(&dbits, &dval, sizeof(double))
+            if (dbits & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL and (dbits & 0x000FFFFFFFFFFFFFULL) != 0:
                 return "null"
             sz = snprintf(buf, sizeof(buf), "%.6g", dval)
             return buf[:sz].decode('ascii')

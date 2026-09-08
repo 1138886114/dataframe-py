@@ -170,9 +170,9 @@ cdef _col_row_key(BaseColumn col, Py_ssize_t row):
     if not is2d or c <= 1:
         return col[row]
     cdef Py_ssize_t j
-    cdef list vals = []
+    cdef list vals = [None] * c
     for j in range(c):
-        vals.append(col[j * r + row])
+        vals[j] = col[j * r + row]
     return tuple(vals)
 
 cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
