@@ -257,33 +257,96 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
     if pos < 0 or pos > self.df_length:
         raise IndexError(f"Position {pos} out of range [0, {self.df_length}]")
 
+    cdef Py_ssize_t orig_len = self.df_length
+    cdef Py_ssize_t ucs2_val_len, ucs2_start, _ci, _oi, _j2, _nr2, _nc2
+    cdef int dtype
+    cdef int32_t days
+    cdef int64_t tmp_dt
+    cdef UCS2Column ucs2_obj
+    cdef str ucs2_val
+    cdef bytes bval
+    cdef list shifted_cols = []
+
     for col_name in self.columns:
         if col_name not in kwargs:
             raise ValueError(f"Missing value for column '{col_name}'")
-
-    cdef Py_ssize_t orig_len = self.df_length
-    cdef Py_ssize_t ucs2_val_len, ucs2_start, _ci, _oi
-    cdef UCS2Column ucs2_obj
-    cdef str ucs2_val
-    cdef list shifted_cols = []
     try:
         for col_name, col_obj in self.columns.items():
             val = kwargs[col_name]
+            dtype = col_obj.dtype
             self._shift_right(col_obj, pos)
             shifted_cols.append(col_name)
-            if col_obj.dtype == TYPE_INT:
-                if isinstance(val, int) and not isinstance(val, bool):
-                    if val > 2147483647 or val < -2147483648:
-                        raise OverflowError(f"Value {val} out of range for int32")
-                (<IntColumn>col_obj).data_c[pos] = <int>val
-            elif col_obj.dtype == TYPE_DOUBLE:
-                (<DoubleColumn>col_obj).data_c[pos] = <double>val
-            elif col_obj.dtype == TYPE_CHAR256:
-                bval = (<str>val).encode('utf-8')[:255] if isinstance(val, str) else str(val).encode('utf-8')[:255]
+
+            if dtype == TYPE_INT:
+                if isinstance(val, int) and (val > 2147483647 or val < -2147483648):
+                    raise OverflowError(f"Value {val} out of range for int32")
+                if (<IntColumn>col_obj).get_is_2d_c():
+                    _nr2 = (<IntColumn>col_obj).get_rows_c()
+                    _nc2 = (<IntColumn>col_obj).get_cols_c()
+                    for _j2 in range(_nc2):
+                        (<IntColumn>col_obj).data_c[_j2 * _nr2 + pos] = <int>val[_j2]
+                else:
+                    (<IntColumn>col_obj).data_c[pos] = <int>val
+
+            elif dtype == TYPE_DOUBLE:
+                if (<DoubleColumn>col_obj).get_is_2d_c():
+                    _nr2 = (<DoubleColumn>col_obj).get_rows_c()
+                    _nc2 = (<DoubleColumn>col_obj).get_cols_c()
+                    for _j2 in range(_nc2):
+                        (<DoubleColumn>col_obj).data_c[_j2 * _nr2 + pos] = <double>val[_j2]
+                else:
+                    (<DoubleColumn>col_obj).data_c[pos] = <double>val
+
+            elif dtype == TYPE_DATE:
+                if isinstance(val, int) and val > 10000000:
+                    days = _ymd_to_days(val // 10000, (val // 100) % 100, val % 100)
+                else:
+                    days = <int32_t>val
+                if (<DateColumn>col_obj).get_is_2d_c():
+                    _nr2 = (<DateColumn>col_obj).get_rows_c()
+                    _nc2 = (<DateColumn>col_obj).get_cols_c()
+                    for _j2 in range(_nc2):
+                        (<DateColumn>col_obj).data_c[_j2 * _nr2 + pos] = days
+                else:
+                    (<DateColumn>col_obj).data_c[pos] = days
+            elif dtype == TYPE_DATETIME:
+                if isinstance(val, int) and val > 10000000:
+                    days = _ymd_to_days(val // 10000, (val // 100) % 100, val % 100)
+                    tmp_dt = <int64_t>days * 86400000000LL
+                else:
+                    tmp_dt = <int64_t>val * 1000000LL
+
+                if (<DateTimeColumn>col_obj).get_is_2d_c():
+                    _nr2 = (<DateTimeColumn>col_obj).get_rows_c()
+                    _nc2 = (<DateTimeColumn>col_obj).get_cols_c()
+                    for _j2 in range(_nc2):
+                        (<DateTimeColumn>col_obj).data_c[_j2 * _nr2 + pos] = tmp_dt
+                else:
+                    (<DateTimeColumn>col_obj).data_c[pos] = tmp_dt
+
+            elif dtype == TYPE_TIME:
+                if not isinstance(val, int):
+                    raise TypeError(f"Time column expects int, got {type(val)}")
+                if (<TimeColumn>col_obj).get_is_2d_c():
+                    _nr2 = (<TimeColumn>col_obj).get_rows_c()
+                    _nc2 = (<TimeColumn>col_obj).get_cols_c()
+                    for _j2 in range(_nc2):
+                        (<TimeColumn>col_obj).data_c[_j2 * _nr2 + pos] = <int32_t>val
+                else:
+                    (<TimeColumn>col_obj).data_c[pos] = <int32_t>val
+
+            elif dtype == TYPE_CHAR256:
+                if isinstance(val, bytes):
+                    bval = val
+                elif isinstance(val, str):
+                    bval = val.encode('utf-8')
+                else:
+                    bval = str(val).encode('utf-8')
+
                 memset((<AsciiColumn>col_obj).data_c + (pos * 256), 0, 256)
-                memcpy((<AsciiColumn>col_obj).data_c + (pos * 256), <char*>bval, len(bval))
-            elif col_obj.dtype == TYPE_UCS2:
-                ucs2_val = <str>val if isinstance(val, str) else str(val)
+                memcpy((<AsciiColumn>col_obj).data_c + (pos * 256), <char*>bval, len(bval) if len(bval) < 256 else 255)
+            elif dtype == TYPE_UCS2:
+                ucs2_val = val if isinstance(val, str) else str(val)
                 ucs2_obj = <UCS2Column>col_obj
                 ucs2_val_len = len(ucs2_val)
                 ucs2_start = ucs2_obj.offsets_c[pos]
@@ -303,22 +366,19 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
                     for _oi in range(pos + 1, ucs2_obj.length + 1):
                         ucs2_obj.offsets_c[_oi] += ucs2_val_len
                     ucs2_obj.char_length += ucs2_val_len
-            elif col_obj.dtype == TYPE_DATE:
-                (<DateColumn>col_obj).data_c[pos] = <int32_t>val
-            elif col_obj.dtype == TYPE_BOOL:
+
+            elif dtype == TYPE_BOOL:
                 (<BoolColumn>col_obj).data_c[pos] = 1 if val else 0
-            elif col_obj.dtype == TYPE_CATEGORY:
-                (<CategoryColumn>col_obj).codes_c[pos] = (<CategoryColumn>col_obj)._get_or_add_code(str(val) if val is not None else '')
-            elif col_obj.dtype == TYPE_DATETIME:
-                (<DateTimeColumn>col_obj).data_c[pos] = 0
-            elif col_obj.dtype == TYPE_TIME:
-                (<TimeColumn>col_obj).data_c[pos] = <int>val if isinstance(val, int) else 0
+            elif dtype == TYPE_CATEGORY:
+                if val is None:
+                    (<CategoryColumn>col_obj).codes_c[pos] = (<CategoryColumn>col_obj)._get_or_add_code('')
+                else:
+                    (<CategoryColumn>col_obj).codes_c[pos] = (<CategoryColumn>col_obj)._get_or_add_code(str(val))
         self.df_length += 1
         if self.index is not None:
-            if self.index.index_type == INDEX_RANGE:
+            if self.index.index_type == INDEX_RANGE or self.index.index_type == INDEX_INT:
                 self.index.length = self.df_length
-            elif self.index.index_type == INDEX_INT:
-                self.index.length = self.df_length
+
     except Exception:
         self.df_length = orig_len
         for cn in shifted_cols:

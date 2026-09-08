@@ -20,8 +20,9 @@ from fluidframe.core._base cimport (
     _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist,
     _int_double_pearson_corr, _int_double_pearson_cov, _int_double_euclidean_dist,
     _int_double_manhattan_dist, _int_double_cosine_sim, _int_double_jaccard_sim, _int_double_hamming_dist,
-    _c_shift_left, _col_pop_back, _col_pop_front, _col_concat,
-    _col_drop_row, _col_gather
+    _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
+    _col_drop_row, _col_gather,
+    _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d
 )
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -169,6 +170,24 @@ cdef class IntColumn(BaseColumn):
         return res
 
     @staticmethod
+    def from_2d(object values, Py_ssize_t rows, Py_ssize_t cols):
+        """从一维扁平 Python 列表构建可 owns 的 2D（列优先）IntColumn。
+        values 按列优先顺序排列（先 col0 全部行，再 col1 全部行）。"""
+        cdef Py_ssize_t total = rows * cols
+        if len(values) != total:
+            raise ValueError(f"len(values)={len(values)} != rows*cols={total}")
+        cdef IntColumn col = IntColumn(max(total, 1), cols=cols)
+        col.set_meta_c(<int>cols, True, True)
+
+        cdef Py_ssize_t i
+        cdef int* ptr = col.data_c
+
+        col.length = total
+        for i in range(total):
+            ptr[i] = <int>values[i]
+        return col
+
+    @staticmethod
     def load_from_1d_array(object arr):
         cdef int[::1] view
         try:
@@ -231,6 +250,8 @@ cdef class IntColumn(BaseColumn):
     def append(self, int val):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot append to a view/slice column. Copy it first.")
+        if self.get_is_2d_c():
+            raise NotImplementedError("append is not supported for 2D columns (rows*cols layout); convert to 1D first")
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
         self.data_c[self.length] = val
@@ -252,6 +273,16 @@ cdef class IntColumn(BaseColumn):
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r, j
+        cdef list vals
+        if self.get_is_2d_c():
+            r = self.get_rows_c()
+            vals = [None] * c
+            for j in range(c):
+                vals[j] = self.data_c[j * r + (r - 1)]
+            _col_shift_left_2d(self.data_c, &self.length, r, c, r - 1, sizeof(int))
+            return vals
         cdef int* ptr = <int*>_col_pop_back(
             self.data_c, &self.length, sizeof(int))
         return ptr[0]
@@ -263,6 +294,16 @@ cdef class IntColumn(BaseColumn):
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r, j
+        cdef list vals
+        if self.get_is_2d_c():
+            r = self.get_rows_c()
+            vals = [None] * c
+            for j in range(c):
+                vals[j] = self.data_c[j * r]
+            _col_shift_left_2d(self.data_c, &self.length, r, c, 0, sizeof(int))
+            return vals
         cdef int val = self.data_c[0]
         _col_pop_front(self.data_c, &self.length, sizeof(int))
         return val
@@ -272,6 +313,8 @@ cdef class IntColumn(BaseColumn):
     def concat(self, IntColumn other):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
+        if self.get_is_2d_c() or other.get_is_2d_c():
+            raise NotImplementedError("concat is not supported for 2D columns (rows*cols layout)")
         if other.length == 0: return
         self._reserve(self.length + other.length)
         _col_concat(self.data_c, &self.length, other.data_c, other.length,
@@ -1314,6 +1357,27 @@ cdef class IntColumn(BaseColumn):
     cdef IntColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef IntColumn new_col
         cdef int* new_data
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r = self.get_rows_c()
+
+        if self.get_is_2d_c():
+            if not inplace:
+                new_col = IntColumn(max(n * c, 1), cols=c)
+                new_col.length = n * c
+                _col_gather_2d(new_col.data_c, self.data_c, indices, n, r, c, sizeof(int))
+                return new_col
+            else:
+                new_data = <int*>aligned_malloc(max(n * c, 1) * sizeof(int))
+                if not new_data: raise MemoryError()
+                _col_gather_2d(new_data, self.data_c, indices, n, r, c, sizeof(int))
+                if self.get_owns_data_c() and self.data_c != NULL:
+                    os_aligned_free(self.data_c)
+                self.data_c = new_data
+                self.capacity = n * c
+                self.length = n * c
+                self.set_meta_c(<int>c, True, True)
+                self._base_obj = None
+                return self
 
         if not inplace:
             new_col = IntColumn(max(n, 1))
@@ -1420,24 +1484,59 @@ cdef class IntColumn(BaseColumn):
     def drop_row(self, Py_ssize_t row_idx):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r = self.get_rows_c()
         if row_idx < 0:
-            row_idx += self.length
-        if row_idx < 0 or row_idx >= self.length:
+            row_idx += r
+        if row_idx < 0 or row_idx >= r:
             raise IndexError("Row index out of bounds")
-        _col_drop_row(self.data_c, &self.length, row_idx, sizeof(int))
+        if self.get_is_2d_c():
+            _col_shift_left_2d(self.data_c, &self.length, r, c, row_idx, sizeof(int))
+        else:
+            _col_drop_row(self.data_c, &self.length, row_idx, sizeof(int))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_left(self, Py_ssize_t pos):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t col_len
         if pos < 0:
-            pos += self.length
-        if pos < 0 or pos >= self.length:
+            pos += r
+        if pos < 0 or pos >= r:
             raise IndexError("Index out of bounds")
-        cdef Py_ssize_t col_len = self.length
-        _c_shift_left(self.data_c, pos, col_len, sizeof(int))
-        self.length = col_len - 1
+        if self.get_is_2d_c():
+            _col_shift_left_2d(self.data_c, &self.length, r, c, pos, sizeof(int))
+        else:
+            col_len = self.length
+            _c_shift_left(self.data_c, pos, col_len, sizeof(int))
+            self.length = col_len - 1
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def shift_right(self, Py_ssize_t pos):
+        """Insert a blank slot at logical position pos (any sub-column).
+        For 1D columns this mirrors the historical flat shift_right."""
+        if not self.get_owns_data_c():
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r = self.get_rows_c()
+        if pos < 0:
+            pos += r
+        if pos < 0 or pos > r:
+            raise IndexError("Index out of bounds")
+        if self.get_is_2d_c():
+            if self.length + c > self.capacity:
+                self._reserve(max(16, max(self.capacity * 2, self.length + c)))
+            _col_shift_right_2d_int(self.data_c, &self.length, r, c, pos, sizeof(int))
+        else:
+            if self.length >= self.capacity:
+                self._reserve(max(16, self.capacity * 2))
+            _c_shift_right(self.data_c, pos, self.length, sizeof(int))
+            self.length += 1
+            (<int*>self.data_c)[pos] = 0
 
     cdef void to_double_buffer(self, double* out, Py_ssize_t n):
         cdef int* ptr = self.data_c

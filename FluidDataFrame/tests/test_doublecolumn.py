@@ -431,11 +431,8 @@ def _make_2d(rows, cols_vals):
     """创建 2D 列优先 DoubleColumn。cols_vals = [[col0 vals], [col1 vals], ...]"""
     c = len(cols_vals)
     total = rows * c
-    col = DoubleColumn(max(total, 1), cols=c)
-    for col_idx, vals in enumerate(cols_vals):
-        for row_idx, v in enumerate(vals):
-            col.append(float(v))
-    return col
+    flat = [float(v) for sub in cols_vals for v in sub]
+    return DoubleColumn.from_2d(flat, rows, c)
 
 def test_roll_mean_2d():
     # 2D: 4 rows x 2 cols, col-major
@@ -1208,11 +1205,16 @@ def test_2d_describe():
 def test_2d_drop_row():
     col = _make_2d(4, [[1, 2, 3, 4], [10, 20, 30, 40]])
     col.drop_row(1)
-    check('2d drop_row len', col.length == 7)  # 8-1=7
-    # flat 原: [1,2,3,4,10,20,30,40], drop index 1 -> [1,3,4,10,20,30,40]
+    check('2d drop_row len', col.length == 6)  # 8-2=6
+    check('2d drop_row rows', col.rows == 3)
+    check('2d drop_row cols', col.cols == 2)
+    # 列优先: col0[1,3,4], col1[10,30,40] -> flat [1,3,4,10,30,40]
     check('2d drop_row [0]', col[0] == 1.0)
     check('2d drop_row [1]', col[1] == 3.0)
     check('2d drop_row [2]', col[2] == 4.0)
+    check('2d drop_row [3]', col[3] == 10.0)
+    check('2d drop_row [4]', col[4] == 30.0)
+    check('2d drop_row [5]', col[5] == 40.0)
 
 # ============================================================
 #  pop_back / pop_front 对 2D 列操作
@@ -1220,14 +1222,16 @@ def test_2d_drop_row():
 def test_2d_pop_back():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     val = col.pop_back()
-    check('2d pop_back val', val == 30.0)
-    check('2d pop_back len', col.length == 5)
+    check('2d pop_back val', val == [3.0, 30.0])
+    check('2d pop_back len', col.length == 4)
+    check('2d pop_back rows', col.rows == 2)
 
 def test_2d_pop_front():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     val = col.pop_front()
-    check('2d pop_front val', val == 1.0)
-    check('2d pop_front len', col.length == 5)
+    check('2d pop_front val', val == [1.0, 10.0])
+    check('2d pop_front len', col.length == 4)
+    check('2d pop_front rows', col.rows == 2)
 
 def run_all():
     print('=== DoubleColumn Tests ===')

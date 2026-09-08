@@ -600,11 +600,8 @@ def test_roll_single_element_window_2d():
 def _make_2d(rows, cols_vals):
     c = len(cols_vals)
     total = rows * c
-    col = IntColumn(max(total, 1), cols=c)
-    for col_idx, vals in enumerate(cols_vals):
-        for row_idx, v in enumerate(vals):
-            col.append(int(v))
-    return col
+    flat = [int(v) for sub in cols_vals for v in sub]
+    return IntColumn.from_2d(flat, rows, c)
 
 def _approx(a, b, tol=1e-9):
     if math.isnan(a) and math.isnan(b): return True
@@ -715,31 +712,34 @@ def test_2d_drop_row():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     col2 = col.copy()
     col2.drop_row(1)
-    check('2d drop_row len', col2.length == 5)
+    check('2d drop_row len', col2.length == 4)
+    check('2d drop_row rows', col2.rows == 2)
+    # col0[1,3], col1[10,30] -> flat [1,3,10,30]
+    check('2d drop_row [0]', col2[0] == 1)
+    check('2d drop_row [1]', col2[1] == 3)
+    check('2d drop_row [2]', col2[2] == 10)
+    check('2d drop_row [3]', col2[3] == 30)
 
 def test_2d_pop_back():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     v = col.pop_back()
-    check('2d pop_back val', v == 30)
-    check('2d pop_back len', col.length == 5)
+    check('2d pop_back val', v == [3, 30])
+    check('2d pop_back len', col.length == 4)
 
 def test_2d_pop_front():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     v = col.pop_front()
-    check('2d pop_front val', v == 1)
-    check('2d pop_front len', col.length == 5)
+    check('2d pop_front val', v == [1, 10])
+    check('2d pop_front len', col.length == 4)
 
 def test_2d_append():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
-    col.append(40)
-    check('2d append len', col.length == 7)
-    check('2d append val', col[6] == 40)
+    check('2d append raises', expect_exception(NotImplementedError, col.append, 40))
 
 def test_2d_concat():
     col1 = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     col2 = _make_2d(2, [[4, 5], [40, 50]])
-    col1.concat(col2)
-    check('2d concat len', col1.length == 10)
+    check('2d concat raises', expect_exception(NotImplementedError, col1.concat, col2))
 
 def test_add_val():
     col = IntColumn(5)

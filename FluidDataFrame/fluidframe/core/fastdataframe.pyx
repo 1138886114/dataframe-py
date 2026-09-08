@@ -739,6 +739,22 @@ cdef class FastDataFrame:
         return acc
 
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos):
+        if col.dtype == TYPE_INT:
+            (<IntColumn>col).shift_right(pos)
+            return
+        elif col.dtype == TYPE_DOUBLE:
+            (<DoubleColumn>col).shift_right(pos)
+            return
+        elif col.dtype == TYPE_DATE:
+            (<DateColumn>col).shift_right(pos)
+            return
+        elif col.dtype == TYPE_DATETIME:
+            (<DateTimeColumn>col).shift_right(pos)
+            return
+        elif col.dtype == TYPE_TIME:
+            (<TimeColumn>col).shift_right(pos)
+            return
+
         cdef Py_ssize_t col_len
         cdef UCS2Column ucs2_col
         cdef IntColumn ic

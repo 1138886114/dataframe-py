@@ -15,8 +15,9 @@ from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     TYPE_DATETIME, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
     TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_TIME, _resolve_astype_target,
-    _c_shift_left, _col_pop_back, _col_pop_front, _col_concat,
-    _col_drop_row, _col_gather
+    _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
+    _col_drop_row, _col_gather,
+    _col_shift_right_2d, _col_shift_left_2d, _col_gather_2d
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -251,10 +252,12 @@ cdef class DateTimeColumn(BaseColumn):
     def append(self, val):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot append to a view/slice column. Copy it first.")
+        if self.get_is_2d_c():
+            raise NotImplementedError("append is not supported for 2D columns (rows*cols layout); convert to 1D first")
         cdef int64_t v = _parse_datetime_str(<str>val) if isinstance(val, str) else <int64_t>val
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
-        (<int64_t*>self.data_c)[self.length] = v
+        self.data_c[self.length] = v
         self.length += 1
 
     @cython.binding(False)
@@ -273,6 +276,16 @@ cdef class DateTimeColumn(BaseColumn):
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r, j
+        cdef list vals
+        if self.get_is_2d_c():
+            r = self.get_rows_c()
+            vals = [None] * c
+            for j in range(c):
+                vals[j] = self.data_c[j * r + (r - 1)]
+            _col_shift_left_2d(self.data_c, &self.length, r, c, r - 1, sizeof(int64_t))
+            return vals
         cdef int64_t* ptr = <int64_t*>_col_pop_back(
             self.data_c, &self.length, sizeof(int64_t))
         return ptr[0]
@@ -284,6 +297,16 @@ cdef class DateTimeColumn(BaseColumn):
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r, j
+        cdef list vals
+        if self.get_is_2d_c():
+            r = self.get_rows_c()
+            vals = [None] * c
+            for j in range(c):
+                vals[j] = self.data_c[j * r]
+            _col_shift_left_2d(self.data_c, &self.length, r, c, 0, sizeof(int64_t))
+            return vals
         cdef int64_t val = (<int64_t*>self.data_c)[0]
         _col_pop_front(self.data_c, &self.length, sizeof(int64_t))
         return val
@@ -293,6 +316,8 @@ cdef class DateTimeColumn(BaseColumn):
     def concat(self, DateTimeColumn other):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
+        if self.get_is_2d_c() or other.get_is_2d_c():
+            raise NotImplementedError("concat is not supported for 2D columns (rows*cols layout)")
         if other.length == 0: return
         self._reserve(self.length + other.length)
         _col_concat(self.data_c, &self.length, other.data_c, other.length,
@@ -558,28 +583,82 @@ cdef class DateTimeColumn(BaseColumn):
     def drop_row(self, Py_ssize_t row_idx):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r = self.get_rows_c()
         if row_idx < 0:
-            row_idx += self.length
-        if row_idx < 0 or row_idx >= self.length:
+            row_idx += r
+        if row_idx < 0 or row_idx >= r:
             raise IndexError("Index out of bounds")
-        _col_drop_row(self.data_c, &self.length, row_idx, sizeof(int64_t))
+        if self.get_is_2d_c():
+            _col_shift_left_2d(self.data_c, &self.length, r, c, row_idx, sizeof(int64_t))
+        else:
+            _col_drop_row(self.data_c, &self.length, row_idx, sizeof(int64_t))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_left(self, Py_ssize_t pos):
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t col_len
         if pos < 0:
-            pos += self.length
-        if pos < 0 or pos >= self.length:
+            pos += r
+        if pos < 0 or pos >= r:
             raise IndexError("Index out of bounds")
-        cdef Py_ssize_t col_len = self.length
-        _c_shift_left(self.data_c, pos, col_len, sizeof(int64_t))
-        self.length = col_len - 1
+        if self.get_is_2d_c():
+            _col_shift_left_2d(self.data_c, &self.length, r, c, pos, sizeof(int64_t))
+        else:
+            col_len = self.length
+            _c_shift_left(self.data_c, pos, col_len, sizeof(int64_t))
+            self.length = col_len - 1
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def shift_right(self, Py_ssize_t pos):
+        if not self.get_owns_data_c():
+            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r = self.get_rows_c()
+        if pos < 0:
+            pos += r
+        if pos < 0 or pos > r:
+            raise IndexError("Index out of bounds")
+        if self.get_is_2d_c():
+            if self.length + c > self.capacity:
+                self._reserve(max(16, max(self.capacity * 2, self.length + c)))
+            _col_shift_right_2d_int(self.data_c, &self.length, r, c, pos, sizeof(int64_t))
+        else:
+            if self.length >= self.capacity:
+                self._reserve(max(16, self.capacity * 2))
+            _c_shift_right(self.data_c, pos, self.length, sizeof(int64_t))
+            self.length += 1
+            (<int64_t*>self.data_c)[pos] = 0
 
     cdef DateTimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef DateTimeColumn new_col
         cdef int64_t* new_data
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r = self.get_rows_c()
+
+        if self.get_is_2d_c():
+            if not inplace:
+                new_col = DateTimeColumn(max(n * c, 1), cols=c)
+                new_col.length = n * c
+                _col_gather_2d(new_col.data_c, self.data_c, indices, n, r, c, sizeof(int64_t))
+                return new_col
+            else:
+                new_data = <int64_t*>aligned_malloc(max(n * c, 1) * sizeof(int64_t))
+                if not new_data: raise MemoryError()
+                _col_gather_2d(new_data, self.data_c, indices, n, r, c, sizeof(int64_t))
+                if self.get_owns_data_c() and self.data_c != NULL:
+                    os_aligned_free(self.data_c)
+                self.data_c = new_data
+                self.capacity = n * c
+                self.length = n * c
+                self.set_meta_c(<int>c, True, True)
+                self._base_obj = None
+                return self
 
         if not inplace:
             new_col = DateTimeColumn(max(n, 1), cols=self.cols)
