@@ -21,7 +21,10 @@ cdef list _col_to_list(BaseColumn col):
         is2d = (<DateTimeColumn>col).get_is_2d_c(); c = (<DateTimeColumn>col).get_cols_c(); r = (<DateTimeColumn>col).get_rows_c()
     elif dtype == TYPE_TIME:
         is2d = (<TimeColumn>col).get_is_2d_c(); c = (<TimeColumn>col).get_cols_c(); r = (<TimeColumn>col).get_rows_c()
-    # TODO Ascii, UCS2, Bool, Category 自动 fallback 到 is2d=False, c=1, r=length
+    elif dtype == TYPE_CHAR256 or dtype == TYPE_UCS2 or dtype == TYPE_BOOL or dtype == TYPE_CATEGORY:
+        is2d = False; c = 1; r = col.length
+    else:
+        raise TypeError(f"_col_to_list: unsupported column dtype {dtype}")
 
     if r == 0:
         return []
