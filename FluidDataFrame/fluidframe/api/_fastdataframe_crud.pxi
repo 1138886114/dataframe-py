@@ -281,12 +281,12 @@ cdef _reindex_impl(FastDataFrame self, list new_index):
         os_aligned_free(index_map)
 
 cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_ssize_t new_len):
-    """按 index_map 重新索引单列（-1 表示缺失标签，用 dtype 默认填充）。
-    2D 列保持 cols 维，整行重排，语义与 _take 一致。"""
+    """按 index_map 重新索引单列。2D 列保持 cols 维，缺失标签用 dtype 默认填充。"""
     cdef int dtype = col.dtype
     cdef Py_ssize_t cols = 1
     cdef Py_ssize_t rows = col.length
     cdef bint is2d = False
+
     if dtype == TYPE_INT:
         cols = (<IntColumn>col).get_cols_c(); rows = (<IntColumn>col).get_rows_c(); is2d = (<IntColumn>col).get_is_2d_c()
     elif dtype == TYPE_DOUBLE:
@@ -318,12 +318,12 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
     cdef DateTimeColumn rdtc
     cdef TimeColumn rtmc
 
-    # 非 2D 的布尔/类别/字符串列：保持旧的逐元素重建语义（1D）
+    # 1. 离散非连续对象列 (布尔、类别、字符串)
     if dtype == TYPE_BOOL:
         new_col = BoolColumn(max(new_len, 1))
         for i in range(new_len):
             old_idx = index_map[i]
-            if old_idx >= 0:
+            if old_idx != -1:
                 new_col.append((<BoolColumn>col)[old_idx])
             else:
                 new_col.append(False)
@@ -332,7 +332,7 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
         new_col = CategoryColumn(max(new_len, 1))
         for i in range(new_len):
             old_idx = index_map[i]
-            if old_idx >= 0:
+            if old_idx != -1:
                 new_col.append((<CategoryColumn>col)[old_idx])
             else:
                 new_col.append(None)
@@ -341,7 +341,7 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
         new_col = AsciiColumn(max(new_len, 1))
         for i in range(new_len):
             old_idx = index_map[i]
-            if old_idx >= 0:
+            if old_idx != -1:
                 new_col.append((<AsciiColumn>col)[old_idx])
             else:
                 new_col.append('')
@@ -350,7 +350,7 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
         new_col = UCS2Column(max(new_len, 1))
         for i in range(new_len):
             old_idx = index_map[i]
-            if old_idx >= 0:
+            if old_idx != -1:
                 new_col.append((<UCS2Column>col)[old_idx])
             else:
                 new_col.append('')
@@ -362,65 +362,80 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
         if is2d: ric.set_meta_c(<int>c, True, True)
         nd = ric.data_c
         sd = (<IntColumn>col).data_c
-        for i in range(total): nd[i] = 0
-        for i in range(new_len):
-            old_idx = index_map[i]
-            if old_idx >= 0:
-                for j in range(c):
-                    nd[j * new_len + i] = sd[j * rows + old_idx]
+
+        memset(nd, 0, total * sizeof(int))
+        with nogil:
+            for j in range(c):
+                for i in range(new_len):
+                    old_idx = index_map[i]
+                    if old_idx != -1:
+                        nd[j * new_len + i] = sd[j * rows + old_idx]
         return ric
+
     elif dtype == TYPE_DOUBLE:
         rdc = DoubleColumn(max(total, 1), cols=c)
         rdc.length = total
         if is2d: rdc.set_meta_c(<int>c, True, True)
         ndd = rdc.data_c
         sdd = (<DoubleColumn>col).data_c
-        for i in range(total): ndd[i] = NAN
-        for i in range(new_len):
-            old_idx = index_map[i]
-            if old_idx >= 0:
-                for j in range(c):
-                    ndd[j * new_len + i] = sdd[j * rows + old_idx]
+
+        with nogil:
+            for i in range(total): ndd[i] = NAN
+            for j in range(c):
+                for i in range(new_len):
+                    old_idx = index_map[i]
+                    if old_idx != -1:
+                        ndd[j * new_len + i] = sdd[j * rows + old_idx]
         return rdc
+
     elif dtype == TYPE_DATE:
         rdc2 = DateColumn(max(total, 1), cols=c)
         rdc2.length = total
         if is2d: rdc2.set_meta_c(<int>c, True, True)
         nda = rdc2.data_c
         sda = (<DateColumn>col).data_c
-        for i in range(total): nda[i] = 0
-        for i in range(new_len):
-            old_idx = index_map[i]
-            if old_idx >= 0:
-                for j in range(c):
-                    nda[j * new_len + i] = sda[j * rows + old_idx]
+
+        memset(nda, 0, total * sizeof(int32_t))
+        with nogil:
+            for j in range(c):
+                for i in range(new_len):
+                    old_idx = index_map[i]
+                    if old_idx != -1:
+                        nda[j * new_len + i] = sda[j * rows + old_idx]
         return rdc2
+
     elif dtype == TYPE_DATETIME:
         rdtc = DateTimeColumn(max(total, 1), cols=c)
         rdtc.length = total
         if is2d: rdtc.set_meta_c(<int>c, True, True)
         ndt = rdtc.data_c
         sdt = (<DateTimeColumn>col).data_c
-        for i in range(total): ndt[i] = 0
-        for i in range(new_len):
-            old_idx = index_map[i]
-            if old_idx >= 0:
-                for j in range(c):
-                    ndt[j * new_len + i] = sdt[j * rows + old_idx]
+
+        memset(ndt, 0, total * sizeof(int64_t))
+        with nogil:
+            for j in range(c):
+                for i in range(new_len):
+                    old_idx = index_map[i]
+                    if old_idx != -1:
+                        ndt[j * new_len + i] = sdt[j * rows + old_idx]
         return rdtc
+
     elif dtype == TYPE_TIME:
         rtmc = TimeColumn(max(total, 1), cols=c)
         rtmc.length = total
         if is2d: rtmc.set_meta_c(<int>c, True, True)
         ntm = rtmc.data_c
         stm = (<TimeColumn>col).data_c
-        for i in range(total): ntm[i] = 0
-        for i in range(new_len):
-            old_idx = index_map[i]
-            if old_idx >= 0:
-                for j in range(c):
-                    ntm[j * new_len + i] = stm[j * rows + old_idx]
+
+        memset(ntm, 0, total * sizeof(int32_t))
+        with nogil:
+            for j in range(c):
+                for i in range(new_len):
+                    old_idx = index_map[i]
+                    if old_idx != -1:
+                        ntm[j * new_len + i] = stm[j * rows + old_idx]
         return rtmc
+
     raise TypeError(f"Unsupported column dtype: {dtype}")
 
 cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
