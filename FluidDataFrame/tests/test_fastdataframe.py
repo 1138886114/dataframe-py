@@ -1002,6 +1002,61 @@ def test_display_export_2d():
     check('exp 2d nan null', '[1.5, null]' in ds)
 
 
+def test_elementwise_2d():
+    df = FastDataFrame({'a': int, 's': str})
+    for a, s in [(1, 'w'), (-2, 'x'), (-3, 'y'), (4, 'z')]:
+        df.append_row(a=a, s=s)
+    df['a2d'] = IntColumn.from_2d([1, -2, -3, 4, -10, 20, 30, -40], 4, 2)
+    df['d2d'] = DoubleColumn.from_2d([1.5, -2.4, -3.6, 4.2, -10.7, 20.1, 30.9, -40.5], 4, 2)
+
+    # abs：保形 2D，全 flat 逐元素
+    o = df.abs()
+    c = o['a2d']
+    check('elem2d abs int shape', c.cols == 2 and c.rows == 4 and c.length == 8)
+    check('elem2d abs int flat', [c[i] for i in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
+    c = o['d2d']
+    check('elem2d abs dbl flat', [c[i] for i in range(8)] == [1.5, 2.4, 3.6, 4.2, 10.7, 20.1, 30.9, 40.5])
+
+    # round：保形 2D
+    o = df.round()
+    c = o['d2d']
+    check('elem2d round shape', c.cols == 2 and c.rows == 4)
+    check('elem2d round flat', [c[i] for i in range(8)] == [2, -2, -4, 4, -11, 20, 31, -40])
+
+    # replace：数字遍历全 flat（subcol1 的 20 被替换为 -1）
+    o = df.replace(20, -1)
+    c = o['a2d']
+    check('elem2d replace shape', c.cols == 2)
+    check('elem2d replace subcol1', [c[i] for i in range(8)] == [1, -2, -3, 4, -10, -1, 30, -40])
+
+    # isnull：2D 输出保形（subcol1 的 NaN 也要标记）
+    d2 = FastDataFrame({'x': float})
+    for v in [1.0, 2.0, 3.0, 4.0]:
+        d2.append_row(x=v)
+    d2['d2d'] = DoubleColumn.from_2d([0.0, float('nan'), 3.0, 4.0, 5.0, 6.0, float('nan'), 8.0], 4, 2)
+    o = d2.isnull()
+    c = o['d2d']
+    check('elem2d isnull shape', c.cols == 2 and c.rows == 4)
+    check('elem2d isnull flat', [c[i] for i in range(8)] == [0, 1, 0, 0, 0, 0, 1, 0])
+
+    # fillna：填满全 flat（subcol1 的 NaN 也要填）
+    o = d2.fillna(9.0)
+    c = o['d2d']
+    check('elem2d fillna shape', c.cols == 2 and c.rows == 4)
+    check('elem2d fillna subcol1', [c[i] for i in range(8)] == [0.0, 9.0, 3.0, 4.0, 5.0, 6.0, 9.0, 8.0])
+
+    # all/any：扫描全部子列（subcol1 的 0 需参与判定）
+    d3 = FastDataFrame({'a': int})
+    d3.append_row(a=1); d3.append_row(a=2)
+    d3['a2d'] = IntColumn.from_2d([1, 2, 5, 0], 2, 2)
+    check('elem2d all false', not d3.all())
+    check('elem2d any true', d3.any())
+    d4 = FastDataFrame({'a': int})
+    d4.append_row(a=1); d4.append_row(a=2)
+    d4['a2d'] = IntColumn.from_2d([1, 2, 5, 6], 2, 2)
+    check('elem2d all true', d4.all())
+
+
 def test_agg_stats_2d():
     # 2D 列子列0 有重复：行 (1,10)(1,20)(2,30)(2,30)
     df = FastDataFrame({'a': int, 's': str})
@@ -1902,6 +1957,7 @@ def run_all():
     test_drop_duplicates_2d()
     test_duplicated_2d_rowaware()
     test_display_export_2d()
+    test_elementwise_2d()
 
     # Regression: 类别五摘要统计 2D
     test_agg_stats_2d()
