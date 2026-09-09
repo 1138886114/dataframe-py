@@ -181,6 +181,7 @@ cdef _isnull_impl(FastDataFrame self):
     cdef double* d_ptr
     cdef int* out_ptr
     cdef Py_ssize_t* offset_ptr
+    cdef CategoryColumn cat_col
 
     for name, col in self.columns.items():
         is2d, c_out, _ = _col_shape_probe(col)
@@ -206,11 +207,9 @@ cdef _isnull_impl(FastDataFrame self):
                 for i in range(total):
                     out_ptr[i] = 1 if offset_ptr[i + 1] == offset_ptr[i] else 0
         elif col.dtype == TYPE_CATEGORY:
-            # TODO 这个的真实逻辑需要调整
-            c_ptr = (<CategoryColumn>col).codes_c
-            with nogil:
-                for i in range(total):
-                    out_ptr[i] = 1 if c_ptr[i] == 0 else 0
+            cat_col = <CategoryColumn>col
+            for i in range(total):
+                out_ptr[i] = 1 if cat_col._resolve(i) == '' else 0
         else:
             memset(out_ptr, 0, total * sizeof(int))
         result.columns[name] = new_col
@@ -224,6 +223,9 @@ cdef _fillna_impl(FastDataFrame self, object value, col_names):
     cdef Py_ssize_t i, total
     cdef double* d_ptr
     cdef double d_val
+    cdef AsciiColumn ascii_col
+    cdef UCS2Column ucs2_col
+    cdef str s_val
 
     if col_names is None:
         col_names = list(self.columns.keys())
@@ -240,9 +242,18 @@ cdef _fillna_impl(FastDataFrame self, object value, col_names):
                     if isnan(d_ptr[i]):
                         d_ptr[i] = d_val
 
-        # 字符串/离散类型的填充 (可以按需扩展)
-        elif col.dtype in (TYPE_CHAR256, TYPE_UCS2) and isinstance(value, str):
-            # TODO: 审查 AsciiColumn UCS2Column内部是否开放 fill_empty() 接口，若是没有批量填充：""
+        elif col.dtype == TYPE_CHAR256 and isinstance(value, str):
+            ascii_col = <AsciiColumn>col
+            s_val = value
+            for i in range(total):
+                if ascii_col._get_str(i) == '':
+                    ascii_col._set_item(i, s_val)
+        elif col.dtype == TYPE_UCS2 and isinstance(value, str):
+            ucs2_col = <UCS2Column>col
+            s_val = value
+            for i in range(total):
+                if ucs2_col._get_str(i) == '':
+                    ucs2_col._set_item(i, s_val)
     return result
 
 cdef _dropna_impl(FastDataFrame self):
@@ -542,7 +553,8 @@ cdef _abs_impl(FastDataFrame self):
     cdef FastDataFrame result = FastDataFrame()
     result.df_length = self.df_length
     result.index = self.index
-    cdef str name, col
+    cdef str name
+    cdef BaseColumn col
     cdef Py_ssize_t i, total, c_out
     cdef bint is2d
     cdef IntColumn int_col
@@ -584,7 +596,8 @@ cdef _round_impl(FastDataFrame self, int decimals):
     cdef FastDataFrame result = FastDataFrame()
     result.df_length = self.df_length
     result.index = self.index
-    cdef str name, col
+    cdef str name
+    cdef BaseColumn col
     cdef Py_ssize_t i, total, c_out
     cdef bint is2d
     cdef DoubleColumn dbl_col
@@ -605,13 +618,12 @@ cdef _round_impl(FastDataFrame self, int decimals):
             d_in = (<DoubleColumn>col).data_c
             d_out = dbl_col.data_c
 
-            with nogil:
-                if decimals == 0:
-                    for i in range(total):
-                        d_out[i] = round(d_in[i])
-                else:
-                    for i in range(total):
-                        d_out[i] = round(d_in[i] * factor) / factor
+            if decimals == 0:
+                for i in range(total):
+                    d_out[i] = round(d_in[i])
+            else:
+                for i in range(total):
+                    d_out[i] = round(d_in[i] * factor) / factor
             result.columns[name] = dbl_col
         else:
             result.columns[name] = col.copy()
@@ -626,26 +638,34 @@ cdef _all_impl(FastDataFrame self):
 
     cdef int* i_ptr
     cdef double* d_ptr
-    cdef int32_t* bool_ptr
+    cdef unsigned char* bool_ptr
+    cdef bint bad = False
 
     for name, col in self.columns.items():
+        if bad: break
         total = col.length
         if col.dtype == TYPE_INT:
             i_ptr = (<IntColumn>col).data_c
             with nogil:
                 for i in range(total):
-                    if i_ptr[i] == 0: return False
+                    if i_ptr[i] == 0:
+                        bad = True
+                        break
         elif col.dtype == TYPE_DOUBLE:
             d_ptr = (<DoubleColumn>col).data_c
             with nogil:
                 for i in range(total):
-                    if d_ptr[i] == 0.0 or isnan(d_ptr[i]): return False
+                    if d_ptr[i] == 0.0 or isnan(d_ptr[i]):
+                        bad = True
+                        break
         elif col.dtype == TYPE_BOOL:
-            bool_ptr = <int32_t*>((<BoolColumn>col).data_c)
+            bool_ptr = (<BoolColumn>col).data_c
             with nogil:
                 for i in range(total):
-                    if bool_ptr[i] == 0: return False
-    return True
+                    if bool_ptr[i] == 0:
+                        bad = True
+                        break
+    return not bad
 
 cdef _any_impl(FastDataFrame self):
     cdef Py_ssize_t n = self.df_length
@@ -656,26 +676,34 @@ cdef _any_impl(FastDataFrame self):
 
     cdef int* i_ptr
     cdef double* d_ptr
-    cdef int32_t* bool_ptr
+    cdef unsigned char* bool_ptr
+    cdef bint found = False
 
     for name, col in self.columns.items():
+        if found: break
         total = col.length
         if col.dtype == TYPE_INT:
             i_ptr = (<IntColumn>col).data_c
             with nogil:
                 for i in range(total):
-                    if i_ptr[i] != 0: return True
+                    if i_ptr[i] != 0:
+                        found = True
+                        break
         elif col.dtype == TYPE_DOUBLE:
             d_ptr = (<DoubleColumn>col).data_c
             with nogil:
                 for i in range(total):
-                    if d_ptr[i] != 0.0 and not isnan(d_ptr[i]): return True
+                    if d_ptr[i] != 0.0 and not isnan(d_ptr[i]):
+                        found = True
+                        break
         elif col.dtype == TYPE_BOOL:
-            bool_ptr = <int32_t*>((<BoolColumn>col).data_c)
+            bool_ptr = (<BoolColumn>col).data_c
             with nogil:
                 for i in range(total):
-                    if bool_ptr[i] != 0: return True
-    return False
+                    if bool_ptr[i] != 0:
+                        found = True
+                        break
+    return found
 
 cdef _pct_change_impl(FastDataFrame self, int periods=1):
     cdef FastDataFrame result = FastDataFrame()

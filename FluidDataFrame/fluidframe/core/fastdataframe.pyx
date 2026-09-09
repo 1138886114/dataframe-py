@@ -11,6 +11,7 @@ from libc.stdio cimport snprintf
 from libc.stdint cimport uint32_t, int32_t, int64_t, uint64_t
 from libc.time cimport time_t, time
 from libc.math cimport NAN, sqrt, log, cos, isnan
+from libc.stdlib cimport abs as c_abs
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
 from fluidframe.core._base cimport (
     BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free,
