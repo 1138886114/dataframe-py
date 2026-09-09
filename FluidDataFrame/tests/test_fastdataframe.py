@@ -106,6 +106,123 @@ def test_init_complex():
 
 
 # =====================================================================
+#  Reserve capacity — fixed-capacity fast insertion (push_row)
+# =====================================================================
+_RESERVE_ROWS = [
+    (1,  12, 53, 45, 67, 95.0, 'Alice',   'senior', 20230115, 1),
+    (2,  12, 25, 45, 67, 92.3, 'Bob',     'mid',    20230620, 2),
+    (3,  12, 53, 45, 67, 90.1, 'Charlie', 'senior', 20221201, 3),
+    (4,  12, 25, 45, 67, 88.5, 'Diana',   'low',    20240229, 4),
+    (5,  12, 53, 45, 67, 87.0, 'Eve',     'senior', 20230310, 5),
+    (6,  12, 25, 45, 67, 85.5, 'Frank',   'mid',    20220615, 1),
+    (7,  12, 53, 45, 67, 84.2, 'Grace',   'low',    20231225, 2),
+    (8,  12, 25, 45, 67, 83.1, 'Helen',   'senior', 20240101, 3),
+    (9,  12, 53, 45, 67, 82.0, 'Ivan',    'mid',    20230115, 4),
+    (10, 12, 25, 45, 67, 81.5, 'Judy',    'low',    20230620, 5),
+]
+
+def _make_reserved_df():
+    df = FastDataFrame({'id': int, 'x0': int, 'y0': int, 'x1': int, 'y1': int,
+                        'score': float, 'name': str, 'tag': Char256, 'dt': Date,
+                        'flags': int})
+    df.reserve_with_capacity(len(_RESERVE_ROWS) + 16)
+    return df
+
+def test_reserve_with_capacity():
+    # kwargs push path
+    df = _make_reserved_df()
+    for r in _RESERVE_ROWS:
+        df.push_row(id=r[0], x0=r[1], y0=r[2], x1=r[3], y1=r[4], score=r[5],
+                    name=r[6], tag=r[7], dt=r[8], flags=r[9])
+    check('reserve shape', df.shape == (10, 10))
+    check('reserve length', df.df_length == 10)
+    check('reserve id[0]', df['id'][0] == 1)
+    check('reserve id[9]', df['id'][9] == 10)
+    check('reserve y0 alt', [df['y0'][i] for i in [0, 1, 2]] == [53, 25, 53])
+    check('reserve score', abs(df['score'][1] - 92.3) < 1e-9)
+    check('reserve name', df['name'][0] == 'Alice')
+    check('reserve tag', df['tag'][1] == 'mid')
+    check('reserve dt conv', df['dt'][3] == 20240229)
+    check('reserve flags', df['flags'][9] == 5)
+    for col in ['id', 'x0', 'y0', 'x1', 'y1', 'flags', 'score', 'name', 'tag', 'dt']:
+        check(f'reserve col len {col}', df[col].length == 10)
+    check('reserve blocks', len(df._2d_blocks) == 3)
+
+    # positional push path (same data)
+    df2 = _make_reserved_df()
+    for r in _RESERVE_ROWS:
+        df2.push_row(*r)
+    check('reserve pos shape', df2.shape == (10, 10))
+    check('reserve pos id', df2['id'][9] == 10)
+    check('reserve pos dt', df2['dt'][4] == 20230310)
+
+    # 已预留容量后不可再次预留
+    check('reserve twice error', expect_exception(RuntimeError, df.reserve_with_capacity, 100))
+    check('reserve zero error', expect_exception(ValueError, FastDataFrame({'a': int}).reserve_with_capacity, 0))
+    df_nonempty = FastDataFrame({'a': int})
+    df_nonempty.append_row(a=1)
+    check('reserve non-empty error',
+          expect_exception(RuntimeError, df_nonempty.reserve_with_capacity, 10))
+
+    # 缺失列必须报错（防止列长度错位/脏数据）
+    check('reserve missing key error', expect_exception(ValueError, df.push_row, id=99))
+
+    # 达到固定容量后必须拒绝写入
+    df3 = FastDataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
+    df3.reserve_with_capacity(len(_RESERVE_ROWS))
+    for r in _RESERVE_ROWS:
+        df3.push_row(id=r[0], score=r[5], name=r[6], tag=r[7], dt=r[8])
+    check('reserve cap full', df3.df_length == 10)
+    check('reserve overflow error', expect_exception(BufferError, df3.push_row, id=11, score=1.0, name='X', tag='x', dt=20250101))
+
+    # 预留后走普通 append_row（定宽列是 view）应拒绝而不是写坏内存
+    check('reserve append_row blocked', expect_exception(RuntimeError, df.append_row,
+                                                         id=11, x0=99, y0=99, x1=99, y1=99,
+                                                         score=1.0, name='Z', tag='z', dt=20250101, flags=9))
+
+def test_reserve_filters():
+    df = _make_reserved_df()
+    for r in _RESERVE_ROWS:
+        df.push_row(id=r[0], x0=r[1], y0=r[2], x1=r[3], y1=r[4], score=r[5],
+                    name=r[6], tag=r[7], dt=r[8], flags=r[9])
+
+    mask = df['id'] > 5
+    r = df.loc[mask]
+    check('reserve filter int shape', r.shape == (5, 10))
+    check('reserve filter int ids', [r['id'][i] for i in range(5)] == [6, 7, 8, 9, 10])
+
+    mask = df['score'] >= 90.0
+    r = df.loc[mask]
+    check('reserve filter float shape', r.shape == (3, 10))
+    check('reserve filter float names', set(r['name'][i] for i in range(3)) == {'Alice', 'Bob', 'Charlie'})
+
+    mask = df['dt'] == 20230115
+    r = df.loc[mask]
+    check('reserve filter dt shape', r.shape == (2, 10))
+    check('reserve filter dt ids', sorted(r['id'][i] for i in range(2)) == [1, 9])
+
+    mask = (df['id'] >= 3) & (df['score'] <= 87.0) & (df['dt'] < 20240101)
+    r = df.loc[mask]
+    check('reserve filter 3-type shape', r.shape == (5, 10))
+    check('reserve filter 3-type ids', sorted(r['id'][i] for i in range(5)) == [5, 6, 7, 9, 10])
+
+    mask = (df['tag'].len() <= 3) & (df['flags'] >= 3)
+    r = df.loc[mask]
+    check('reserve filter char256 shape', r.shape == (3, 10))
+    check('reserve filter char256 ids', sorted(r['id'][i] for i in range(3)) == [4, 9, 10])
+
+    mask = df['name'].len() <= 4
+    r = df.loc[mask]
+    check('reserve filter ucs2 ids', sorted(r['id'][i] for i in range(r.shape[0])) == [2, 5, 9, 10])
+
+    mask = ((df['id'] >= 3) & (df['score'] < 85.0) & (df['tag'].startswith('se'))
+            & (df['dt'] >= 20230115))
+    r = df.loc[mask]
+    check('reserve filter 4-type shape', r.shape == (1, 10))
+    check('reserve filter 4-type id', r['id'][0] == 8)
+
+
+# =====================================================================
 #  Append & access
 # =====================================================================
 def test_append():
@@ -2017,6 +2134,10 @@ def run_all():
     test_from_list()
     test_from_arrays()
     test_factory_methods()
+
+    # Reserve capacity — fixed-capacity fast insertion
+    test_reserve_with_capacity()
+    test_reserve_filters()
 
     # Append & access
     test_append()

@@ -423,6 +423,50 @@ cdef dict _TYPE_PYCLASSES = {
 }
 
 
+cdef inline void _fast_insert_val(int dtype, void* data_ptr, void* col_obj,
+                                  Py_ssize_t* len_ptr, uint32_t row_idx, object val) except *:
+    cdef int ival
+    cdef int32_t days
+    cdef int64_t tmp_dt
+
+    if dtype == TYPE_INT:
+        (<int*>data_ptr)[row_idx] = <int>val
+        len_ptr[0] += 1
+    elif dtype == TYPE_DOUBLE:
+        (<double*>data_ptr)[row_idx] = <double>val
+        len_ptr[0] += 1
+    elif dtype == TYPE_DATE:
+        if isinstance(val, int) and val > 10000000:
+            ival = <int>val
+            days = _ymd_to_days(ival // 10000, (ival // 100) % 100, ival % 100)
+            (<int32_t*>data_ptr)[row_idx] = days
+        else:
+            (<int32_t*>data_ptr)[row_idx] = <int32_t>val
+        len_ptr[0] += 1
+    elif dtype == TYPE_DATETIME:
+        if isinstance(val, int) and val > 10000000:
+            ival = <int>val
+            days = _ymd_to_days(ival // 10000, (ival // 100) % 100, ival % 100)
+            tmp_dt = <int64_t>days
+            (<int64_t*>data_ptr)[row_idx] = tmp_dt * 86400000000LL
+        else:
+            tmp_dt = <int64_t>val
+            (<int64_t*>data_ptr)[row_idx] = tmp_dt * 1000000LL
+        len_ptr[0] += 1
+    elif dtype == TYPE_TIME:
+        (<int32_t*>data_ptr)[row_idx] = <int32_t>val
+        len_ptr[0] += 1
+    # 变长/复杂类型列交由它们自身的对象方法安全处理
+    elif dtype == TYPE_CHAR256:
+        (<AsciiColumn>col_obj).append(val)
+    elif dtype == TYPE_UCS2:
+        (<UCS2Column>col_obj).append(val)
+    elif dtype == TYPE_BOOL:
+        (<BoolColumn>col_obj).append(val)
+    elif dtype == TYPE_CATEGORY:
+        (<CategoryColumn>col_obj).append(val)
+
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -462,6 +506,15 @@ cdef class FastDataFrame:
     cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx):
         col.drop_row(row_idx)
 
+    def __cinit__(self, *args, **kwargs):
+        self._c_dtypes = NULL
+        self._c_data_ptrs = NULL
+        self._c_len_ptrs = NULL
+        self._c_col_objs = NULL
+        self._fixed_capacity = 0
+        self.df_length = 0
+        self._num_cols = 0
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __init__(self, dict schema=None):
@@ -471,6 +524,10 @@ cdef class FastDataFrame:
         self._metric_cache = None
         self._groupby_cache = None
         self._linalg_cache = None
+
+        self._2d_blocks = []          # 持有巨型2D数据块的强引用，防止被 GC
+        self._ordered_cols = []
+        self._schema_keys = ()
 
         if schema:
             parsed = _parse_schema(schema)
@@ -493,6 +550,15 @@ cdef class FastDataFrame:
                     self.columns[col_name] = DateTimeColumn()
                 elif dtype == TYPE_TIME:
                     self.columns[col_name] = TimeColumn()
+            self._schema = parsed
+            self._schema_keys = tuple(parsed.keys())
+
+    def __dealloc__(self):
+        if self._c_dtypes != NULL: free(self._c_dtypes)
+        if self._c_data_ptrs != NULL: free(self._c_data_ptrs)
+        if self._c_len_ptrs != NULL: free(self._c_len_ptrs)
+        if self._c_col_objs != NULL: free(self._c_col_objs)
+
 
     def __len__(self):
         return self.df_length
@@ -517,6 +583,188 @@ cdef class FastDataFrame:
                 if _col_row_key(col_l, i) != _col_row_key(col_r, i):
                     return False
         return True
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def reserve_with_capacity(self, uint32_t capacity):
+        if self._fixed_capacity > 0:
+            raise RuntimeError("Capacity has already been reserved and cannot be expanded.")
+        if self.df_length > 0:
+            raise RuntimeError("Cannot reserve capacity on a non-empty DataFrame.")
+        if capacity == 0:
+            raise ValueError("Capacity must be strictly positive.")
+
+        cdef dict type_groups = {
+            TYPE_INT: [], TYPE_DOUBLE: [], TYPE_DATE: [],
+            TYPE_DATETIME: [], TYPE_TIME: []
+        }
+        cdef dict other_cols = {}
+
+        # 1. 提取同构类型以备二维内存合并
+        for col_name, dtype in self._schema.items():
+            if dtype in type_groups:
+                type_groups[dtype].append(col_name)
+            else:
+                other_cols[col_name] = dtype
+
+        self.columns = {}
+        self._fixed_capacity = capacity
+
+        cdef uint32_t c, j
+        cdef list names
+
+        # 2. 生成多列二维连续缓存块（Column Vectorization Chunking）
+        if type_groups[TYPE_INT]:
+            names = type_groups[TYPE_INT]
+            c = <uint32_t>len(names)
+            blk_int = IntColumn(capacity * c, cols=c)
+            blk_int.length = capacity * c
+            self._2d_blocks.append(blk_int)
+            for j, name in enumerate(names):
+                self.columns[name] = IntColumn.create_view(blk_int.data_c + j * capacity, 0, blk_int)
+            for j, name in enumerate(names):
+                (<IntColumn>self.columns[name]).capacity = capacity
+
+        if type_groups[TYPE_DOUBLE]:
+            names = type_groups[TYPE_DOUBLE]
+            c = <uint32_t>len(names)
+            blk_dbl = DoubleColumn(capacity * c, cols=c)
+            blk_dbl.length = capacity * c
+            self._2d_blocks.append(blk_dbl)
+            for j, name in enumerate(names):
+                self.columns[name] = DoubleColumn.create_view(blk_dbl.data_c + j * capacity, 0, blk_dbl)
+            for j, name in enumerate(names):
+                (<DoubleColumn>self.columns[name]).capacity = capacity
+
+        if type_groups[TYPE_DATE]:
+            names = type_groups[TYPE_DATE]
+            c = <uint32_t>len(names)
+            blk_date = DateColumn(capacity * c, cols=c)
+            blk_date.length = capacity * c
+            self._2d_blocks.append(blk_date)
+            for j, name in enumerate(names):
+                self.columns[name] = DateColumn.create_view(<int32_t*>blk_date.data_c + j * capacity, 0, blk_date)
+            for j, name in enumerate(names):
+                (<DateColumn>self.columns[name]).capacity = capacity
+
+        if type_groups[TYPE_DATETIME]:
+            names = type_groups[TYPE_DATETIME]
+            c = <uint32_t>len(names)
+            blk_dt = DateTimeColumn(capacity * c, cols=c)
+            blk_dt.length = capacity * c
+            self._2d_blocks.append(blk_dt)
+            for j, name in enumerate(names):
+                self.columns[name] = DateTimeColumn.create_view(<int64_t*>blk_dt.data_c + j * capacity, 0, blk_dt)
+            for j, name in enumerate(names):
+                (<DateTimeColumn>self.columns[name]).capacity = capacity
+
+        if type_groups[TYPE_TIME]:
+            names = type_groups[TYPE_TIME]
+            c = <uint32_t>len(names)
+            blk_time = TimeColumn(capacity * c, cols=c)
+            blk_time.length = capacity * c
+            self._2d_blocks.append(blk_time)
+            for j, name in enumerate(names):
+                self.columns[name] = TimeColumn.create_view(<int32_t*>blk_time.data_c + j * capacity, 0, blk_time)
+            for j, name in enumerate(names):
+                (<TimeColumn>self.columns[name]).capacity = capacity
+
+        # 3. 处理离散的非等宽字段列
+        for name, dtype in other_cols.items():
+            if dtype == TYPE_CHAR256:
+                self.columns[name] = AsciiColumn(capacity)
+            elif dtype == TYPE_UCS2:
+                self.columns[name] = UCS2Column(capacity)
+            elif dtype == TYPE_BOOL:
+                self.columns[name] = BoolColumn(capacity)
+            elif dtype == TYPE_CATEGORY:
+                self.columns[name] = CategoryColumn(capacity)
+
+        # ------------------------------------------------------------
+        # 4. 构建底层的 C Pointer Mapping Arrays（核心硬件加速）
+        # ------------------------------------------------------------
+        self._ordered_cols = [self.columns[k] for k in self._schema_keys]
+        self._num_cols = <uint32_t>len(self._schema_keys)
+
+        self._c_dtypes = <int*>malloc(self._num_cols * sizeof(int))
+        self._c_data_ptrs = <void**>malloc(self._num_cols * sizeof(void*))
+        self._c_col_objs = <void**>malloc(self._num_cols * sizeof(void*))
+        self._c_len_ptrs = <Py_ssize_t**>malloc(self._num_cols * sizeof(Py_ssize_t*))
+
+        if not self._c_dtypes or not self._c_data_ptrs or not self._c_col_objs or not self._c_len_ptrs:
+            raise MemoryError("Failed to allocate C arrays for internal dataframe metadata.")
+
+        cdef BaseColumn col
+        cdef Py_ssize_t i
+
+        for i, key in enumerate(self._schema_keys):
+            col = self._ordered_cols[i]
+            self._c_dtypes[i] = col.dtype
+            self._c_col_objs[i] = <void*>col
+            self._c_len_ptrs[i] = &(col.length)  # 将对象的 length 属性内存地址强行锁定在数组里
+
+            # 将具体类型的内部 data_c 内存地址挖出
+            if col.dtype == TYPE_INT:
+                self._c_data_ptrs[i] = (<IntColumn>col).data_c
+            elif col.dtype == TYPE_DOUBLE:
+                self._c_data_ptrs[i] = (<DoubleColumn>col).data_c
+            elif col.dtype == TYPE_DATE:
+                self._c_data_ptrs[i] = (<DateColumn>col).data_c
+            elif col.dtype == TYPE_DATETIME:
+                self._c_data_ptrs[i] = (<DateTimeColumn>col).data_c
+            elif col.dtype == TYPE_TIME:
+                self._c_data_ptrs[i] = (<TimeColumn>col).data_c
+            else:
+                self._c_data_ptrs[i] = NULL  # 需要走 Python 层方法的复杂类型
+
+    @cython.binding(False)
+    def push_row(self, *args, **kwargs):
+        """
+        极限推流行。因为使用了直接寻址指针 _c_data_ptrs，
+        在执行这段代码时几乎不触发 Python API，直接对内存打数据。
+        """
+        if self._fixed_capacity == 0:
+            raise RuntimeError("push_row can only be used after calling reserve_with_capacity.")
+
+        cdef uint32_t row_idx = self.df_length
+        if row_idx >= self._fixed_capacity:
+            raise BufferError(f"DataFrame maximum capacity ({self._fixed_capacity}) exceeded.")
+
+        cdef uint32_t i
+        cdef uint32_t n_cols = self._num_cols
+
+        if args:
+            if len(args) != n_cols:
+                raise ValueError("Length of positional arguments does not match schema length.")
+            # 极速元组展开: 完全由 C 逻辑接管，循环和注入全被内联和向量化
+            for i in range(n_cols):
+                _fast_insert_val(
+                    self._c_dtypes[i],
+                    self._c_data_ptrs[i],
+                    self._c_col_objs[i],
+                    self._c_len_ptrs[i],
+                    row_idx,
+                    args[i]
+                )
+        elif kwargs:
+            for i in range(n_cols):
+                if self._schema_keys[i] not in kwargs:
+                    raise ValueError(f"Missing value for column: {self._schema_keys[i]}")
+            for i in range(n_cols):
+                val = kwargs[self._schema_keys[i]]
+                _fast_insert_val(
+                    self._c_dtypes[i],
+                    self._c_data_ptrs[i],
+                    self._c_col_objs[i],
+                    self._c_len_ptrs[i],
+                    row_idx,
+                    val
+                )
+        else:
+            raise ValueError("Must provide either positional args or kwargs.")
+
+        self.df_length += 1
+
 
     cdef inline str _fast_type_name(self, int dt):
         if dt == TYPE_INT: return 'i64'

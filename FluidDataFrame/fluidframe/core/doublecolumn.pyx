@@ -1195,7 +1195,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _cmp_op(self, object val, int op):
-        cdef IntColumn res = IntColumn(max(self.capacity, 1), cols=self.cols)
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.cols)
         res.length = self.length
         cdef Py_ssize_t i, n = self.length
         cdef double v

@@ -3,7 +3,7 @@ cimport cython
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport memcpy, memmove, strncmp
 from libc.math cimport NAN
-from libc.stdint cimport uint64_t
+from libc.stdint cimport uint32_t, uint64_t
 from cpython.unicode cimport Py_UCS2
 from fluidframe.core._base cimport BaseColumn, NumericType, DataType
 from fluidframe.core.intcolumn cimport IntColumn
@@ -71,9 +71,22 @@ cdef class _DataFrameLinalgAccessor:
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class FastDataFrame:
+    cdef public dict _schema
+    cdef public tuple _schema_keys
+    cdef public list _ordered_cols
+    cdef public list _2d_blocks
+
     cdef public dict columns
-    cdef public Py_ssize_t df_length
+    cdef public uint32_t _fixed_capacity
+    cdef public uint32_t df_length
     cdef public IndexBase index
+    cdef uint32_t _num_cols
+
+    cdef int* _c_dtypes
+    cdef void** _c_data_ptrs      # 直达底层物理内存块的指针
+    cdef Py_ssize_t** _c_len_ptrs # 跟踪列长度修改的硬指针
+    cdef void** _c_col_objs       # 持有列对象指针，用以安全转换
+
     cdef _DataFrameMetricAccessor _metric_cache
     cdef _DataFrameGroupByAccessor _groupby_cache
     cdef _DataFrameLinalgAccessor _linalg_cache
