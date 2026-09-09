@@ -112,20 +112,23 @@ cdef inline void _probe_shape(BaseColumn col, bint* is2d, Py_ssize_t* c, Py_ssiz
 cdef BaseColumn _column_from_2d_list_impl(list values, Py_ssize_t rows, Py_ssize_t cols):
     """由 2D 列的平铺列表重建列，修复了 NaN 内存残留垃圾值的问题"""
     cdef Py_ssize_t n = len(values)
+    cdef object sample = None
+    cdef Py_ssize_t i
+    cdef DoubleColumn all_nan
+    cdef double* d_ptr
+
     if n == 0:
         return IntColumn(0)
 
-    cdef object sample = None
-    cdef Py_ssize_t i
     for i in range(n):
         if values[i] is not None:
             sample = values[i]
             break
 
     if sample is None:
-        cdef DoubleColumn all_nan = DoubleColumn(max(n, 1), cols=cols)
+        all_nan = DoubleColumn(max(n, 1), cols=cols)
         all_nan.length = n
-        cdef double* d_ptr = all_nan.data_c
+        d_ptr = all_nan.data_c
         with nogil:
             for i in range(n):
                 d_ptr[i] = NAN
@@ -152,6 +155,30 @@ cdef _col_row_key(BaseColumn col, Py_ssize_t row):
     for j in range(c):
         vals[j] = col[j * r + row]
     return tuple(vals)
+
+
+cdef list _col_to_keys(BaseColumn col):
+    """列 → 整行键列表：2D 列每项为子列元组，1D 列每项为标量。"""
+    cdef bint is2d
+    cdef Py_ssize_t c, r, i, j
+    cdef list res, temp_row
+
+    _probe_shape(col, &is2d, &c, &r)
+    if r == 0:
+        return []
+
+    res = [None] * r
+    if is2d and c > 1:
+        for i in range(r):
+            temp_row = [None] * c
+            for j in range(c):
+                temp_row[j] = col[j * r + i]
+            res[i] = tuple(temp_row)
+    else:
+        for i in range(r):
+            res[i] = col[i]
+
+    return res
 
 
 cdef inline bint _col_is_2d(BaseColumn col):

@@ -104,7 +104,8 @@ cdef _apply_impl(FastDataFrame self, object func, str axis):
     cdef str col_name
     cdef BaseColumn col_obj
     cdef Py_ssize_t c_out, r_out, total, i, j
-    cdef list new_vals, result_vals, flat_data
+    cdef list new_vals, result_vals, flat_data, col_names, cols_data
+    cdef Py_ssize_t num_cols, n
     cdef dict row
     cdef FastDataFrame result
     cdef bint is2d
@@ -126,10 +127,10 @@ cdef _apply_impl(FastDataFrame self, object func, str axis):
         return result
 
     elif axis == 'index':
-        cdef list col_names = list(self.columns.keys())
-        cdef Py_ssize_t num_cols = len(col_names)
-        cdef list cols_data = [_col_to_keys(self.columns[name]) for name in col_names]
-        cdef Py_ssize_t n = self.df_length
+        col_names = list(self.columns.keys())
+        num_cols = len(col_names)
+        cols_data = [_col_to_keys(self.columns[name]) for name in col_names]
+        n = self.df_length
         result_vals = [None] * n
         for i in range(n):
             row = {}
@@ -545,7 +546,7 @@ cdef _reshape_impl(FastDataFrame self, Py_ssize_t rows, Py_ssize_t cols):
     result.index = RangeIndex(0, rows)
     cdef list col_names = [chr(65 + i) if i < 26 else f"C{i}" for i in range(cols)]
 
-    cdef list all_cols_keys = [_col_to_keys(col) for col in self.columns.values()]
+    cdef list all_cols_keys = [_col_to_keys(cell) for cell in self.columns.values()]
     cdef list all_cells = [None] * total_elements
     cdef Py_ssize_t i, j, ptr = 0
 
@@ -1033,6 +1034,9 @@ cdef _melt_impl(FastDataFrame self, list id_vars=None, list value_vars=None, str
     cdef bint is2d
     cdef UCS2Column new_col
     cdef DoubleColumn new_val
+    cdef BaseColumn src_val
+    cdef double* d_ptr
+    cdef int* i_ptr
     result.df_length = total
     result.index = RangeIndex(0, total)
 
@@ -1062,13 +1066,12 @@ cdef _melt_impl(FastDataFrame self, list id_vars=None, list value_vars=None, str
         for i in range(total * c_out):
             new_val.data_c[i] = NAN
 
-    cdef BaseColumn src_val
     for vi, vn in enumerate(value_vars):
         src_val = self.columns[vn]
         _probe_shape(src_val, &is2d, &cc, &i)
         if src_val.dtype == TYPE_DOUBLE or src_val.dtype == TYPE_INT:
-            cdef double* d_ptr = (<DoubleColumn>src_val).data_c if src_val.dtype == TYPE_DOUBLE else NULL
-            cdef int* i_ptr = (<IntColumn>src_val).data_c if src_val.dtype == TYPE_INT else NULL
+            d_ptr = (<DoubleColumn>src_val).data_c if src_val.dtype == TYPE_DOUBLE else NULL
+            i_ptr = (<IntColumn>src_val).data_c if src_val.dtype == TYPE_INT else NULL
 
             with nogil:
                 if is2d and cc > 1:

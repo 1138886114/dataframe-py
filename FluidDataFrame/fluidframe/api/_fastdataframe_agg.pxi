@@ -120,27 +120,7 @@ cdef _describe_impl(FastDataFrame self):
 
 cdef list _col_to_keys_tuple(BaseColumn col):
     """返回长度为 rows 的 list，2D 列每项为 hashable 的 tuple 行键，1D 列每项为标量。"""
-    cdef bint is2d
-    cdef Py_ssize_t c, r
-    is2d, c, r = _col_shape_probe(col)
-    if r == 0:
-        return []
-
-    cdef Py_ssize_t i, j
-    cdef list res = [None] * r
-    cdef list temp_row
-
-    if is2d and c > 1:
-        for i in range(r):
-            temp_row = [None] * c
-            for j in range(c):
-                temp_row[j] = col[j * r + i]
-            res[i] = tuple(temp_row)
-    else:
-        for i in range(r):
-            res[i] = col[i]
-
-    return res
+    return _col_to_keys(col)
 
 cdef _value_counts_impl(FastDataFrame self, str col_name):
     if col_name not in self.columns:

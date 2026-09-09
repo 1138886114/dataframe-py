@@ -96,6 +96,53 @@ cdef _shift_bool_column(BoolColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssi
     return new_col
 
 
+cdef void _shift_fixed_zero(void* dst, void* src, Py_ssize_t periods,
+                            Py_ssize_t c, Py_ssize_t r, Py_ssize_t elem) noexcept nogil:
+    """定宽字节列的 memcpy/memset-0 位移（Date/DateTime/Time 共用，语义同 Int）。"""
+    cdef Py_ssize_t p = periods if periods >= 0 else -periods
+    if p > r: p = r
+    cdef Py_ssize_t valid_len = r - p
+    cdef char* d = <char*>dst
+    cdef char* s = <char*>src
+    cdef Py_ssize_t j, row_bytes = r * elem
+    if periods >= 0:
+        for j in range(c):
+            if p > 0:
+                memset(d + j * row_bytes, 0, p * elem)
+            if valid_len > 0:
+                memcpy(d + j * row_bytes + p * elem, s + j * row_bytes, valid_len * elem)
+    else:
+        for j in range(c):
+            if valid_len > 0:
+                memcpy(d + j * row_bytes, s + j * row_bytes + p * elem, valid_len * elem)
+            if p > 0:
+                memset(d + j * row_bytes + valid_len * elem, 0, p * elem)
+
+
+cdef _shift_date_column(DateColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
+    cdef DateColumn new_col = DateColumn(max(n, 1), cols=c)
+    new_col.length = n
+    new_col.set_meta_c(<int>c, True, c > 1)
+    _shift_fixed_zero(<void*>new_col.data_c, <void*>col.data_c, periods, c, r, sizeof(int32_t))
+    return new_col
+
+
+cdef _shift_time_column(TimeColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
+    cdef TimeColumn new_col = TimeColumn(max(n, 1), cols=c)
+    new_col.length = n
+    new_col.set_meta_c(<int>c, True, c > 1)
+    _shift_fixed_zero(<void*>new_col.data_c, <void*>col.data_c, periods, c, r, sizeof(int32_t))
+    return new_col
+
+
+cdef _shift_datetime_column(DateTimeColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
+    cdef DateTimeColumn new_col = DateTimeColumn(max(n, 1), cols=c)
+    new_col.length = n
+    new_col.set_meta_c(<int>c, True, c > 1)
+    _shift_fixed_zero(<void*>new_col.data_c, <void*>col.data_c, periods, c, r, sizeof(int64_t))
+    return new_col
+
+
 cdef _shift_column_impl(BaseColumn col, Py_ssize_t periods, Py_ssize_t n):
     cdef bint is2d
     cdef Py_ssize_t c_out, r_out
@@ -109,8 +156,12 @@ cdef _shift_column_impl(BaseColumn col, Py_ssize_t periods, Py_ssize_t n):
         return _shift_double_column(<DoubleColumn>col, periods, total, c_out, r_out)
     elif col.dtype == TYPE_BOOL:
         return _shift_bool_column(<BoolColumn>col, periods, total, c_out, r_out)
-    # TODO：扩展：所有固定字节大小的时间列（Date/DateTime/Time）和 Int 一样，
-    # 都可以直接调用 memcpy 和 memset 0 搞定，在此处添加支持
+    elif col.dtype == TYPE_DATE:
+        return _shift_date_column(<DateColumn>col, periods, total, c_out, r_out)
+    elif col.dtype == TYPE_TIME:
+        return _shift_time_column(<TimeColumn>col, periods, total, c_out, r_out)
+    elif col.dtype == TYPE_DATETIME:
+        return _shift_datetime_column(<DateTimeColumn>col, periods, total, c_out, r_out)
     else:
         raise TypeError(f"shift not supported for column type {col.dtype}")
 

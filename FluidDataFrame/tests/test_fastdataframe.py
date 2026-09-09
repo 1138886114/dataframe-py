@@ -11,6 +11,8 @@ from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.asciicolumn import AsciiColumn
 from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.datecolumn import DateColumn as DateColumn
+from fluidframe.core.timecolumn import TimeColumn
+from fluidframe.core.datetimecolumn import DateTimeColumn
 from fluidframe._schema_types import Char256, Date
 
 passed = 0
@@ -1192,6 +1194,28 @@ def test_series_row_2d():
     check('sr2d reshape C', [res['C'][i] for i in range(4)] == [3.0, 4.0, 30.0, 40.0])
 
 
+def test_shift_time_cols():
+    # DataFrame.shift 对定宽时间列（Date/DateTime/Time）支持 memcpy/memset-0（TODO 完成）
+    dd = FastDataFrame({'d': 'date'})
+    dd.append_row(d='2024-02-01'); dd.append_row(d='2024-03-01'); dd.append_row(d='2024-04-01')
+    sd = dd.shift(1)
+    check('tcol date shift+1', [sd['d'][i] for i in range(3)] == [19700101, 20240201, 20240301])
+    sd2 = dd.shift(-1)
+    check('tcol date shift-1', [sd2['d'][i] for i in range(3)] == [20240301, 20240401, 19700101])
+
+    dt = FastDataFrame({'t': 'time'})
+    dt.append_row(t='01:00:00'); dt.append_row(t='03:00:00'); dt.append_row(t='05:00:00')
+    st = dt.shift(1)
+    check('tcol time shift+1', [st['t'][i] for i in range(3)] == ['00:00:00', '01:00:00', '03:00:00'])
+
+    dn = FastDataFrame({'dt': 'datetime'})
+    dn.append_row(dt='2023-01-15 10:30:00'); dn.append_row(dt='2023-06-20 14:00:00')
+    zero_col = DateTimeColumn(); zero_col.append(0)
+    zero_str = zero_col[0]
+    sdt = dn.shift(1)
+    check('tcol datetime shift+1', sdt['dt'][0] == zero_str and sdt['dt'][1] == '2023-01-15 10:30:00')
+
+
 def test_agg_stats_2d():
     # 2D 列子列0 有重复：行 (1,10)(1,20)(2,30)(2,30)
     df = FastDataFrame({'a': int, 's': str})
@@ -2094,6 +2118,7 @@ def run_all():
     test_display_export_2d()
     test_elementwise_2d()
     test_series_row_2d()
+    test_shift_time_cols()
 
     # Regression: 类别五摘要统计 2D
     test_agg_stats_2d()
