@@ -87,6 +87,9 @@ cdef _corr_impl(FastDataFrame self):
     cdef Py_ssize_t i, j
     cdef double val
     cdef tuple feat
+    cdef DoubleColumn res_block
+    cdef double* res_ptr = NULL
+    cdef FastDataFrame result
 
     try:
         # 1. 一次性安全萃取所有特征
@@ -96,9 +99,9 @@ cdef _corr_impl(FastDataFrame self):
             self._col_to_double_buffer(<BaseColumn>feat[1], data_matrix + i * n_rows, n_rows, <Py_ssize_t>feat[2])
 
         # 申请统一的 2D 连续块作为结果矩阵
-        cdef DoubleColumn res_block = DoubleColumn(n_feats * n_feats, cols=n_feats)
+        res_block = DoubleColumn(n_feats * n_feats, cols=n_feats)
         res_block.length = n_feats * n_feats
-        cdef double* res_ptr = res_block.data_c
+        res_ptr = res_block.data_c
 
         # 释放 GIL 并在行优先内存地址上并行填充相关性矩阵
         with nogil:
@@ -110,7 +113,7 @@ cdef _corr_impl(FastDataFrame self):
                     res_ptr[i * n_feats + j] = val
 
         # 极速装载 View (零拷贝)
-        cdef FastDataFrame result = FastDataFrame()
+        result = FastDataFrame()
         result.df_length = n_feats
         result.index = RangeIndex(0, n_feats)
         for i in range(n_feats):
@@ -137,15 +140,18 @@ cdef _cov_impl(FastDataFrame self):
     cdef Py_ssize_t i, j
     cdef double val
     cdef tuple feat
+    cdef DoubleColumn res_block
+    cdef double* res_ptr = NULL
+    cdef FastDataFrame result
 
     try:
         for i in range(n_feats):
             feat = feats[i]
             self._col_to_double_buffer(<BaseColumn>feat[1], data_matrix + i * n_rows, n_rows, <Py_ssize_t>feat[2])
 
-        cdef DoubleColumn res_block = DoubleColumn(n_feats * n_feats, cols=n_feats)
+        res_block = DoubleColumn(n_feats * n_feats, cols=n_feats)
         res_block.length = n_feats * n_feats
-        cdef double* res_ptr = res_block.data_c
+        res_ptr = res_block.data_c
 
         with nogil:
             for i in range(n_feats):
@@ -155,7 +161,7 @@ cdef _cov_impl(FastDataFrame self):
                     res_ptr[j * n_feats + i] = val
                     res_ptr[i * n_feats + j] = val
 
-        cdef FastDataFrame result = FastDataFrame()
+        result = FastDataFrame()
         result.df_length = n_feats
         result.index = RangeIndex(0, n_feats)
         for i in range(n_feats):
