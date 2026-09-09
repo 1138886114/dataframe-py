@@ -17,6 +17,20 @@ from fluidframe.core.index cimport RangeIndex
 #  Helper: Check if columns are contiguous in memory
 # ============================================================
 
+cdef inline Py_ssize_t _linalg_logical_cols(FastDataFrame df):
+    """矩阵逻辑列数：2D 列（is_2d 且 cols>1）按子列展开各计 1，1D 列计 1。
+
+    与 corr/cov/_col_row_key 的二维语义一致：2D 列 data_c[sub*rows + i] 是
+    列优先存储，每个子列是 DataFrame 逻辑矩阵的一列。
+    """
+    cdef Py_ssize_t total = 0
+    cdef bint is2d
+    cdef Py_ssize_t c, r
+    for name, col in df.columns.items():
+        is2d, c, r = _col_shape_probe(col)
+        total += c if (is2d and c > 1) else 1
+    return total
+
 cdef bint _linalg_is_contiguous_columns(FastDataFrame df):
     cdef list cols_list = list(df.columns.values())
     cdef Py_ssize_t cols = len(cols_list)
@@ -40,12 +54,16 @@ cdef double* _linalg_to_contiguous_fast(FastDataFrame df, Py_ssize_t* out_rows, 
         out_rows[0] = 0
         out_cols[0] = 0
         return NULL
-    cdef Py_ssize_t num_elements = rows * cols
+    cdef Py_ssize_t logical_cols = _linalg_logical_cols(df)
+    cdef Py_ssize_t num_elements = rows * logical_cols
     if num_elements == 0: num_elements = 1
     cdef double* data = <double*>aligned_malloc(num_elements * sizeof(double))
     if not data: raise MemoryError()
     cdef Py_ssize_t i, j
     cdef BaseColumn col
+    if logical_cols != cols:
+        os_aligned_free(data)
+        return _linalg_to_contiguous(df, out_rows, out_cols)
     try:
         for j in range(cols):
             col = <BaseColumn>cols_list[j]
@@ -54,12 +72,12 @@ cdef double* _linalg_to_contiguous_fast(FastDataFrame df, Py_ssize_t* out_rows, 
                 return _linalg_to_contiguous(df, out_rows, out_cols)
             with nogil:
                 for i in range(rows):
-                    data[i * cols + j] = (<DoubleColumn>col).data_c[i]
+                    data[i * logical_cols + j] = (<DoubleColumn>col).data_c[i]
     except Exception:
         os_aligned_free(data)
         raise
     out_rows[0] = rows
-    out_cols[0] = cols
+    out_cols[0] = logical_cols
     return data
 
 
@@ -67,37 +85,45 @@ cdef double* _linalg_to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ss
     cdef Py_ssize_t rows = df.df_length
     cdef list cols_list = list(df.columns.values())
     cdef list name_list = list(df.columns.keys())
-    cdef Py_ssize_t cols = len(cols_list)
-    cdef Py_ssize_t num_elements = rows * cols
+    cdef Py_ssize_t n_cols_named = len(cols_list)
+    cdef Py_ssize_t logical_cols = _linalg_logical_cols(df)
+    cdef Py_ssize_t num_elements = rows * logical_cols
     if num_elements == 0: num_elements = 1
     cdef double* data = <double*>aligned_malloc(num_elements * sizeof(double))
     if not data: raise MemoryError()
-    cdef Py_ssize_t i, j
+    cdef Py_ssize_t i, j, sub, out_col = 0
     cdef BaseColumn col
     cdef int col_dtype
     cdef int* int_ptr
     cdef double* double_ptr
+    cdef bint is2d
+    cdef Py_ssize_t c_col, r_col, n_sub
     try:
-        for j in range(cols):
+        for j in range(n_cols_named):
             col = <BaseColumn>cols_list[j]
             col_dtype = col.dtype
+            if col_dtype != TYPE_INT and col_dtype != TYPE_DOUBLE:
+                raise TypeError(f"Cannot perform linear algebra on non-numeric column '{name_list[j]}'")
+            is2d, c_col, r_col = _col_shape_probe(col)
+            n_sub = c_col if (is2d and c_col > 1) else 1
             if col_dtype == TYPE_INT:
                 int_ptr = (<IntColumn>col).data_c
                 with nogil:
-                    for i in range(rows):
-                        data[i * cols + j] = <double>int_ptr[i]
-            elif col_dtype == TYPE_DOUBLE:
+                    for sub in range(n_sub):
+                        for i in range(rows):
+                            data[i * logical_cols + out_col + sub] = <double>int_ptr[sub * r_col + i]
+            else:
                 double_ptr = (<DoubleColumn>col).data_c
                 with nogil:
-                    for i in range(rows):
-                        data[i * cols + j] = double_ptr[i]
-            else:
-                raise TypeError(f"Cannot perform linear algebra on non-numeric column '{name_list[j]}'")
+                    for sub in range(n_sub):
+                        for i in range(rows):
+                            data[i * logical_cols + out_col + sub] = double_ptr[sub * r_col + i]
+            out_col += n_sub
     except Exception:
         os_aligned_free(data)
         raise
     out_rows[0] = rows
-    out_cols[0] = cols
+    out_cols[0] = logical_cols
     return data
 
 
@@ -136,9 +162,9 @@ cdef FastDataFrame _linalg_dot(FastDataFrame a, FastDataFrame b):
     cdef double* B = NULL
     cdef double* C = NULL
     a_rows = a.df_length
-    a_cols = len(list(a.columns.keys()))
+    a_cols = _linalg_logical_cols(a)
     b_rows = b.df_length
-    b_cols = len(list(b.columns.keys()))
+    b_cols = _linalg_logical_cols(b)
     if a_cols != b_rows:
         raise ValueError(f"Shape mismatch: ({a_rows}, {a_cols}) x ({b_rows}, {b_cols})")
     try:
@@ -193,7 +219,7 @@ cdef double _linalg_det(FastDataFrame df):
     cdef double det_val = 1.0
     cdef double pivot, temp, max_val, abs_val
     cdef int sign = 1
-    if len(list(df.columns.keys())) != n:
+    if _linalg_logical_cols(df) != n:
         raise ValueError("Matrix must be square")
     try:
         A = _linalg_to_contiguous(df, &rows, &cols)
@@ -244,7 +270,7 @@ cdef FastDataFrame _linalg_inv(FastDataFrame df):
     cdef double* result_data = NULL
     cdef double pivot, temp, max_val, abs_val
     cdef int singular = 0
-    if len(list(df.columns.keys())) != n:
+    if _linalg_logical_cols(df) != n:
         raise ValueError("Matrix must be square")
     try:
         A = _linalg_to_contiguous(df, &rows, &cols)
@@ -307,13 +333,11 @@ cdef FastDataFrame _linalg_solve(FastDataFrame A_df, FastDataFrame b_df):
     cdef double* x = NULL
     cdef double pivot, temp, max_val, abs_val, sum_val
     cdef int sign = 1
-    cdef list b_cols
-    if len(list(A_df.columns.keys())) != n:
+    if _linalg_logical_cols(A_df) != n:
         raise ValueError("Matrix A must be square")
     if n != b_df.df_length:
         raise ValueError("Shape mismatch: A and b must have same number of rows")
-    b_cols = list(b_df.columns.keys())
-    if len(b_cols) != 1:
+    if _linalg_logical_cols(b_df) != 1:
         raise ValueError("b must have exactly one column")
     try:
         a_data = _linalg_to_contiguous(A_df, &rows, &cols)
