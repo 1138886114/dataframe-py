@@ -79,46 +79,98 @@ cdef BaseColumn _column_from_list_impl(FastDataFrame self, str name, list values
 
     raise TypeError(f"Unsupported type: {type(sample)}")
 
-cdef bint _col_is_2d(BaseColumn col):
-    """2D 且多子列（cols>1）时才视为二维语义列。"""
+cdef inline void _probe_shape(BaseColumn col, bint* is2d, Py_ssize_t* c, Py_ssize_t* r):
+    cdef int dtype = col.dtype
+    if dtype == TYPE_INT:
+        is2d[0] = (<IntColumn>col).get_is_2d_c()
+        c[0] = (<IntColumn>col).get_cols_c()
+        r[0] = (<IntColumn>col).get_rows_c()
+    elif dtype == TYPE_DOUBLE:
+        is2d[0] = (<DoubleColumn>col).get_is_2d_c()
+        c[0] = (<DoubleColumn>col).get_cols_c()
+        r[0] = (<DoubleColumn>col).get_rows_c()
+    elif dtype == TYPE_DATE:
+        is2d[0] = (<DateColumn>col).get_is_2d_c()
+        c[0] = (<DateColumn>col).get_cols_c()
+        r[0] = (<DateColumn>col).get_rows_c()
+    elif dtype == TYPE_DATETIME:
+        is2d[0] = (<DateTimeColumn>col).get_is_2d_c()
+        c[0] = (<DateTimeColumn>col).get_cols_c()
+        r[0] = (<DateTimeColumn>col).get_rows_c()
+    elif dtype == TYPE_TIME:
+        is2d[0] = (<TimeColumn>col).get_is_2d_c()
+        c[0] = (<TimeColumn>col).get_cols_c()
+        r[0] = (<TimeColumn>col).get_rows_c()
+    elif dtype == TYPE_CHAR256 or dtype == TYPE_UCS2 or dtype == TYPE_BOOL or dtype == TYPE_CATEGORY:
+        is2d[0] = False
+        c[0] = 1
+        r[0] = col.length
+    else:
+        raise TypeError(f"unsupported column dtype {dtype}")
+
+
+cdef BaseColumn _column_from_2d_list_impl(list values, Py_ssize_t rows, Py_ssize_t cols):
+    """由 2D 列的平铺列表重建列，修复了 NaN 内存残留垃圾值的问题"""
+    cdef Py_ssize_t n = len(values)
+    if n == 0:
+        return IntColumn(0)
+
+    cdef object sample = None
+    cdef Py_ssize_t i
+    for i in range(n):
+        if values[i] is not None:
+            sample = values[i]
+            break
+
+    if sample is None:
+        cdef DoubleColumn all_nan = DoubleColumn(max(n, 1), cols=cols)
+        all_nan.length = n
+        cdef double* d_ptr = all_nan.data_c
+        with nogil:
+            for i in range(n):
+                d_ptr[i] = NAN
+        return all_nan
+
+    if isinstance(sample, bool):
+        raise TypeError("apply() on 2D column: bool results not supported (2D columns are numeric)")
+    elif isinstance(sample, int):
+        return IntColumn.from_2d(values, rows, cols)
+    return DoubleColumn.from_2d(values, rows, cols)
+
+
+cdef _col_row_key(BaseColumn col, Py_ssize_t row):
+    """行感知取值"""
     cdef bint is2d
-    cdef Py_ssize_t c, _r
-    is2d, c, _r = _col_shape_probe(col)
-    return is2d and c > 1
+    cdef Py_ssize_t c, r, j
+
+    _probe_shape(col, &is2d, &c, &r)
+
+    if not is2d or c <= 1:
+        return col[row]
+
+    cdef list vals = [None] * c
+    for j in range(c):
+        vals[j] = col[j * r + row]
+    return tuple(vals)
+
+
+cdef inline bint _col_is_2d(BaseColumn col):
+    """极限布尔探测：C 指针直接栈上抓取，0 对象分配"""
+    cdef bint is2d
+    cdef Py_ssize_t c, r
+    _probe_shape(col, &is2d, &c, &r)
+    return is2d and (c > 1)
 
 cdef tuple _col_shape_probe(BaseColumn col):
     """统一列形状探测：返回 (is2d, cols, rows)。
     is2d 为存储层标志，cols=1 表示 1D（即使 is2d=True 且只有单子列的退化情形）。
-    rows = logical 行数（length // cols）。"""
-    cdef int dtype = col.dtype
-    cdef bint is2d = False
-    cdef Py_ssize_t c = 1
-    cdef Py_ssize_t r = col.length
-    if dtype == TYPE_INT:
-        is2d = (<IntColumn>col).get_is_2d_c()
-        c = (<IntColumn>col).get_cols_c()
-        r = (<IntColumn>col).get_rows_c()
-    elif dtype == TYPE_DOUBLE:
-        is2d = (<DoubleColumn>col).get_is_2d_c()
-        c = (<DoubleColumn>col).get_cols_c()
-        r = (<DoubleColumn>col).get_rows_c()
-    elif dtype == TYPE_DATE:
-        is2d = (<DateColumn>col).get_is_2d_c()
-        c = (<DateColumn>col).get_cols_c()
-        r = (<DateColumn>col).get_rows_c()
-    elif dtype == TYPE_DATETIME:
-        is2d = (<DateTimeColumn>col).get_is_2d_c()
-        c = (<DateTimeColumn>col).get_cols_c()
-        r = (<DateTimeColumn>col).get_rows_c()
-    elif dtype == TYPE_TIME:
-        is2d = (<TimeColumn>col).get_is_2d_c()
-        c = (<TimeColumn>col).get_cols_c()
-        r = (<TimeColumn>col).get_rows_c()
-    elif dtype == TYPE_CHAR256 or dtype == TYPE_UCS2 or dtype == TYPE_BOOL or dtype == TYPE_CATEGORY:
-        is2d = False; c = 1; r = col.length
-    else:
-        raise TypeError(f"_col_shape_probe: unsupported column dtype {dtype}")
+    rows = logical 行数（length // cols）。
+    """
+    cdef bint is2d
+    cdef Py_ssize_t c, r
+    _probe_shape(col, &is2d, &c, &r)
     return (is2d, c, r)
+
 
 cdef BaseColumn _col_from_keys_2d(BaseColumn src, list keys):
     """由整行键（_col_row_key 输出，各为定长子列取值）重建保持 cols 维的 2D 列。
