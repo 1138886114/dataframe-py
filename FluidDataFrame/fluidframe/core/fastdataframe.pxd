@@ -105,7 +105,7 @@ cdef class FastDataFrame:
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos)
     cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos)
     cdef double _get_col_value_as_double(self, BaseColumn col, Py_ssize_t i)
-    cdef void _col_to_double_buffer(self, BaseColumn col, double* out, Py_ssize_t n)
+    cdef void _col_to_double_buffer(self, BaseColumn col, double* out, Py_ssize_t n, Py_ssize_t sub=*)
     cdef inline str _fast_type_name(self, int dt)
     cdef int _display_width(self, str s)
     cdef str _truncate_str(self, str s, int max_display_width=*)

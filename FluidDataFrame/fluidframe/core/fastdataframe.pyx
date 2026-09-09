@@ -1148,11 +1148,26 @@ cdef class FastDataFrame:
     cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos):
         col.shift_left(pos)
 
-    cdef void _col_to_double_buffer(self, BaseColumn col, double* out, Py_ssize_t n):
+    cdef void _col_to_double_buffer(self, BaseColumn col, double* out, Py_ssize_t n, Py_ssize_t sub=0) except *:
+        # sub = 2D 列的子列下标（列优先布局 data_c[sub*rows + i]），1D 列恒为 0
+        cdef Py_ssize_t r, i
+        cdef int* int_ptr
+        cdef double* double_ptr
+
         if col.dtype == TYPE_INT:
-            (<IntColumn>col).to_double_buffer(out, n)
+            int_ptr = (<IntColumn>col).data_c
+            r = (<IntColumn>col).get_rows_c()
+            if n > r: n = r
+
+            with nogil:
+                for i in range(n):
+                    out[i] = <double>int_ptr[sub * r + i]
+
         elif col.dtype == TYPE_DOUBLE:
-            (<DoubleColumn>col).to_double_buffer(out, n)
+            double_ptr = (<DoubleColumn>col).data_c
+            r = (<DoubleColumn>col).get_rows_c()
+            if n > r: n = r
+            memcpy(out, double_ptr + (sub * r), n * sizeof(double))
         else:
             raise TypeError(f"Cannot convert column of type {self._fast_type_name(col.dtype)} to double buffer")
 

@@ -1519,6 +1519,55 @@ def test_corr_cov():
     ps = df.pearson_sim()
     check('pearson_sim', ps['a'][0] == 1.0)
 
+def _make_2d_corr_df():
+    # c 为 2D 列（cols=2，列优先）：子列 c_0=10a，c_1=3a；e 与 a 相关系数为 -0.2
+    df = FastDataFrame()
+    df.df_length = 4
+    df.columns['a'] = DoubleColumn.from_2d([1, 2, 3, 4], 4, 1)
+    df.columns['b'] = DoubleColumn.from_2d([2, 4, 6, 8], 4, 1)
+    df.columns['c'] = DoubleColumn.from_2d([10, 20, 30, 40, 3, 6, 9, 12], 4, 2)
+    df.columns['e'] = DoubleColumn.from_2d([4, 1, 2, 3], 4, 1)
+    return df
+
+def test_corr_cov_2d():
+    # 2D 列按子列展开：c → {c_0, c_1}
+    df = _make_2d_corr_df()
+
+    c = df.corr()
+    check('corr2d shape', c.shape == (5, 5))
+    check('corr2d feats', set(c.columns) == {'a', 'b', 'c_0', 'c_1', 'e'})
+    check('corr2d diag', c['a'][0] == 1.0 and c['c_1'][3] == 1.0)
+    check('corr2d a-b', c['b'][0] == 1.0)
+    check('corr2d a-c0', c['c_0'][0] == 1.0)
+    check('corr2d a-c1', c['c_1'][0] == 1.0)
+    check('corr2d a-e', abs(c['e'][0] + 0.2) < 1e-12)
+
+    cv = df.cov()
+    check('cov2d shape', cv.shape == (5, 5))
+    check('cov2d feats', set(cv.columns) == {'a', 'b', 'c_0', 'c_1', 'e'})
+    check('cov2d var', cv['a'][0] > 0)
+    check('cov2d sym', cv['a'][1] == cv['b'][0])
+    check('cov2d a-c1', abs(cv['c_1'][0] - 5.0) < 1e-9)
+
+    r = df.corrwith(df['a'])
+    check('corrwith2d keys', set(r.keys()) == {'a', 'b', 'c_0', 'c_1', 'e'})
+    check('corrwith2d a', r['a'] == 1.0)
+    check('corrwith2d c1', r['c_1'] == 1.0)
+    check('corrwith2d e', abs(r['e'] + 0.2) < 1e-12)
+
+    # 列-列标量函数：2D 列取主子列（sub=0）
+    r2 = df.corrcoef(df['a'], df['c'])
+    check('corrcoef2d primary', abs(r2 - 1.0) < 1e-9)
+    cv2 = df.cov_withcols(df['a'], df['c'])
+    check('cov_withcols2d', cv2 > 0)
+
+    ps = df.pearson_sim()
+    check('pearson2d shape', ps.shape == (5, 5))
+    check('pearson2d feats', set(ps.columns) == {'a', 'b', 'c_0', 'c_1', 'e'})
+    check('pearson2d diag', ps['a'][0] == 1.0)
+    check('pearson2d a-c1', ps['c_1'][0] == 1.0)
+    check('pearson2d a-e', abs(ps['e'][0] + 0.2) < 1e-12)
+
 def test_distance_functions():
     df = FastDataFrame({'a': float, 'b': float})
     for i in range(5):
@@ -2283,6 +2332,7 @@ def run_all():
 
     # Statistics
     test_corr_cov()
+    test_corr_cov_2d()
     test_distance_functions()
 
     # Column ops

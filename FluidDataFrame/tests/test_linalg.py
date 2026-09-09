@@ -2,6 +2,8 @@ import sys
 import math
 sys.path.insert(0, '.')
 from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.intcolumn import IntColumn
+from fluidframe.core.doublecolumn import DoubleColumn
 
 passed = 0
 failed = 0
@@ -254,11 +256,82 @@ class TestLinalgMatmul:
         check('C[1][1]', C['B'][1] == 46.0)
 
 
+def _make_2d_matrix(kind='double'):
+    # 单个 2D 列（cols=2，列优先 m_ij = data_c[j*rows + i]）表示逻辑矩阵 [[1,2],[3,4]]
+    df = FastDataFrame()
+    col = (IntColumn if kind == 'int' else DoubleColumn).from_2d([1, 3, 2, 4], 2, 2)
+    df.columns['M'] = col
+    df.df_length = 2
+    return df
+
+
+class TestLinalg2D:
+    def test_det_double(self):
+        check('det double 2D', near(_make_2d_matrix().det(), -2.0))
+
+    def test_det_int(self):
+        check('det int 2D', near(_make_2d_matrix('int').det(), -2.0))
+
+    def test_det_nonsquare(self):
+        df = FastDataFrame()
+        df.columns['M'] = DoubleColumn.from_2d([1, 2, 3], 3, 1)
+        df.df_length = 3
+        check('nonsquare raises', expect_exception(ValueError, df.det))
+
+    def test_inv(self):
+        Ai = _make_2d_matrix().inv()
+        check('inv[0][0]', near(Ai['A'][0], -2.0))
+        check('inv[0][1]', near(Ai['B'][0], 1.0))
+        check('inv[1][0]', near(Ai['A'][1], 1.5))
+        check('inv[1][1]', near(Ai['B'][1], -0.5))
+
+    def test_dot_2d_2d(self):
+        A = _make_2d_matrix()
+        C = A.dot(A)
+        check('C[0][0]', near(C['A'][0], 7.0))
+        check('C[1][0]', near(C['A'][1], 15.0))
+        check('C[0][1]', near(C['B'][0], 10.0))
+        check('C[1][1]', near(C['B'][1], 22.0))
+
+    def test_dot_2d_1d(self):
+        A = _make_2d_matrix()
+        B = FastDataFrame.from_dict({'0': [1, 1]}, schema={'0': int})
+        C = A.dot(B)
+        check('C rows', C.df_length == 2)
+        check('C[0]', near(C['A'][0], 3.0))
+        check('C[1]', near(C['A'][1], 7.0))
+
+    def test_transpose(self):
+        T = _make_2d_matrix().transpose()
+        check('T rows', T.df_length == 2)
+        check('T[0][0]', near(T['A'][0], 1.0))
+        check('T[1][0]', near(T['A'][1], 2.0))
+        check('T[0][1]', near(T['B'][0], 3.0))
+        check('T[1][1]', near(T['B'][1], 4.0))
+
+    def test_solve(self):
+        A = _make_2d_matrix()
+        b = FastDataFrame.from_dict({'0': [5, 11]}, schema={'0': int})
+        x = A.solve(b)
+        check('x[0]', near(x['0'][0], 1.0))
+        check('x[1]', near(x['0'][1], 2.0))
+
+    def test_norm(self):
+        check('norm 2D', near(_make_2d_matrix().norm(), math.sqrt(30)))
+
+    def test_inv_dot_identity(self):
+        A = _make_2d_matrix()
+        prod = A.dot(A.inv())
+        check('I[0][0]', near(prod['A'][0], 1.0))
+        check('I[1][1]', near(prod['B'][1], 1.0))
+
+
 def run_all():
     print('=== Linalg Tests ===')
     for cls in [TestFromDict, TestArangeReshape, TestRandomZerosOnes, TestToNumpy,
                 TestLinalgDot, TestLinalgTranspose, TestLinalgDet, TestLinalgInv,
-                TestLinalgSolve, TestLinalgNorm, TestLinalgIntegration, TestLinalgMatmul]:
+                TestLinalgSolve, TestLinalgNorm, TestLinalgIntegration, TestLinalgMatmul,
+                TestLinalg2D]:
         for name in dir(cls):
             if name.startswith('test_'):
                 getattr(cls(), name)()
