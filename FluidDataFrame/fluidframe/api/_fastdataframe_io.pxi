@@ -6,25 +6,9 @@ cdef list _col_to_list(BaseColumn col):
     """
     【核心加速机制】：一次性探测列的 shape（1D 还是 2D），成 Python list 一次性返回。
     """
-    cdef int dtype = col.dtype
-    cdef Py_ssize_t c = 1
-    cdef Py_ssize_t r = col.length
-    cdef bint is2d = False
-
-    if dtype == TYPE_INT:
-        is2d = (<IntColumn>col).get_is_2d_c(); c = (<IntColumn>col).get_cols_c(); r = (<IntColumn>col).get_rows_c()
-    elif dtype == TYPE_DOUBLE:
-        is2d = (<DoubleColumn>col).get_is_2d_c(); c = (<DoubleColumn>col).get_cols_c(); r = (<DoubleColumn>col).get_rows_c()
-    elif dtype == TYPE_DATE:
-        is2d = (<DateColumn>col).get_is_2d_c(); c = (<DateColumn>col).get_cols_c(); r = (<DateColumn>col).get_rows_c()
-    elif dtype == TYPE_DATETIME:
-        is2d = (<DateTimeColumn>col).get_is_2d_c(); c = (<DateTimeColumn>col).get_cols_c(); r = (<DateTimeColumn>col).get_rows_c()
-    elif dtype == TYPE_TIME:
-        is2d = (<TimeColumn>col).get_is_2d_c(); c = (<TimeColumn>col).get_cols_c(); r = (<TimeColumn>col).get_rows_c()
-    elif dtype == TYPE_CHAR256 or dtype == TYPE_UCS2 or dtype == TYPE_BOOL or dtype == TYPE_CATEGORY:
-        is2d = False; c = 1; r = col.length
-    else:
-        raise TypeError(f"_col_to_list: unsupported column dtype {dtype}")
+    cdef bint is2d
+    cdef Py_ssize_t c, r
+    is2d, c, r = _col_shape_probe(col)
 
     if r == 0:
         return []

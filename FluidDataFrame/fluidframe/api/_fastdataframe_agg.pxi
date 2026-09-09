@@ -119,25 +119,10 @@ cdef _describe_impl(FastDataFrame self):
 
 
 cdef list _col_to_keys_tuple(BaseColumn col):
-    cdef int dtype = col.dtype
-    cdef Py_ssize_t c = 1
-    cdef Py_ssize_t r = col.length
-    cdef bint is2d = False
-
-    if dtype == TYPE_INT:
-        is2d = (<IntColumn>col).get_is_2d_c(); c = (<IntColumn>col).get_cols_c(); r = (<IntColumn>col).get_rows_c()
-    elif dtype == TYPE_DOUBLE:
-        is2d = (<DoubleColumn>col).get_is_2d_c(); c = (<DoubleColumn>col).get_cols_c(); r = (<DoubleColumn>col).get_rows_c()
-    elif dtype == TYPE_DATE:
-        is2d = (<DateColumn>col).get_is_2d_c(); c = (<DateColumn>col).get_cols_c(); r = (<DateColumn>col).get_rows_c()
-    elif dtype == TYPE_DATETIME:
-        is2d = (<DateTimeColumn>col).get_is_2d_c(); c = (<DateTimeColumn>col).get_cols_c(); r = (<DateTimeColumn>col).get_rows_c()
-    elif dtype == TYPE_TIME:
-        is2d = (<TimeColumn>col).get_is_2d_c(); c = (<TimeColumn>col).get_cols_c(); r = (<TimeColumn>col).get_rows_c()
-    elif dtype == TYPE_CHAR256 or dtype == TYPE_UCS2 or dtype == TYPE_BOOL or dtype == TYPE_CATEGORY:
-        is2d = False; c = 1; r = col.length
-    else:
-        raise TypeError(f"_col_to_list: unsupported column dtype {dtype}")
+    """返回长度为 rows 的 list，2D 列每项为 hashable 的 tuple 行键，1D 列每项为标量。"""
+    cdef bint is2d
+    cdef Py_ssize_t c, r
+    is2d, c, r = _col_shape_probe(col)
     if r == 0:
         return []
 
@@ -162,7 +147,7 @@ cdef _value_counts_impl(FastDataFrame self, str col_name):
         raise KeyError(f"Column '{col_name}' not found")
     cdef BaseColumn col = self.columns[col_name]
 
-    cdef list keys = _col_to_keys(col)
+    cdef list keys = _col_to_keys_tuple(col)
     cdef Py_ssize_t n = len(keys)
     cdef Py_ssize_t i
 
@@ -177,15 +162,7 @@ cdef _value_counts_impl(FastDataFrame self, str col_name):
     result.index = RangeIndex(0, len(sorted_items))
     cdef list key_list = [k for k, v in sorted_items]
 
-    cdef int dtype = col.dtype
-    cdef bint is2d = False
-    if dtype == TYPE_INT: is2d = (<IntColumn>col).get_is_2d_c()
-    elif dtype == TYPE_DOUBLE: is2d = (<DoubleColumn>col).get_is_2d_c()
-    elif dtype == TYPE_DATE: is2d = (<DateColumn>col).get_is_2d_c()
-    elif dtype == TYPE_DATETIME: is2d = (<DateTimeColumn>col).get_is_2d_c()
-    elif dtype == TYPE_TIME: is2d = (<TimeColumn>col).get_is_2d_c()
-
-    if is2d:
+    if _col_is_2d(col):
         key_col = _col_from_keys_2d(col, key_list)
     else:
         key_col = _column_from_list_impl(result, col_name, key_list)
@@ -211,7 +188,7 @@ cdef _nunique_impl(FastDataFrame self, str col_name=None):
         if col_name not in self.columns:
             raise KeyError(f"Column '{col_name}' not found")
         col = self.columns[col_name]
-        return len(set(_col_to_keys(col)))
+        return len(set(_col_to_keys_tuple(col)))
     for name, col in self.columns.items():
-        result[name] = len(set(_col_to_keys(col)))
+        result[name] = len(set(_col_to_keys_tuple(col)))
     return result

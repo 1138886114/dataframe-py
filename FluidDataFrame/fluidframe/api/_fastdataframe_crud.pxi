@@ -81,18 +81,44 @@ cdef BaseColumn _column_from_list_impl(FastDataFrame self, str name, list values
 
 cdef bint _col_is_2d(BaseColumn col):
     """2D 且多子列（cols>1）时才视为二维语义列。"""
+    cdef bint is2d
+    cdef Py_ssize_t c, _r
+    is2d, c, _r = _col_shape_probe(col)
+    return is2d and c > 1
+
+cdef tuple _col_shape_probe(BaseColumn col):
+    """统一列形状探测：返回 (is2d, cols, rows)。
+    is2d 为存储层标志，cols=1 表示 1D（即使 is2d=True 且只有单子列的退化情形）。
+    rows = logical 行数（length // cols）。"""
     cdef int dtype = col.dtype
+    cdef bint is2d = False
+    cdef Py_ssize_t c = 1
+    cdef Py_ssize_t r = col.length
     if dtype == TYPE_INT:
-        return (<IntColumn>col).get_is_2d_c() and (<IntColumn>col).get_cols_c() > 1
+        is2d = (<IntColumn>col).get_is_2d_c()
+        c = (<IntColumn>col).get_cols_c()
+        r = (<IntColumn>col).get_rows_c()
     elif dtype == TYPE_DOUBLE:
-        return (<DoubleColumn>col).get_is_2d_c() and (<DoubleColumn>col).get_cols_c() > 1
+        is2d = (<DoubleColumn>col).get_is_2d_c()
+        c = (<DoubleColumn>col).get_cols_c()
+        r = (<DoubleColumn>col).get_rows_c()
     elif dtype == TYPE_DATE:
-        return (<DateColumn>col).get_is_2d_c() and (<DateColumn>col).get_cols_c() > 1
+        is2d = (<DateColumn>col).get_is_2d_c()
+        c = (<DateColumn>col).get_cols_c()
+        r = (<DateColumn>col).get_rows_c()
     elif dtype == TYPE_DATETIME:
-        return (<DateTimeColumn>col).get_is_2d_c() and (<DateTimeColumn>col).get_cols_c() > 1
+        is2d = (<DateTimeColumn>col).get_is_2d_c()
+        c = (<DateTimeColumn>col).get_cols_c()
+        r = (<DateTimeColumn>col).get_rows_c()
     elif dtype == TYPE_TIME:
-        return (<TimeColumn>col).get_is_2d_c() and (<TimeColumn>col).get_cols_c() > 1
-    return False
+        is2d = (<TimeColumn>col).get_is_2d_c()
+        c = (<TimeColumn>col).get_cols_c()
+        r = (<TimeColumn>col).get_rows_c()
+    elif dtype == TYPE_CHAR256 or dtype == TYPE_UCS2 or dtype == TYPE_BOOL or dtype == TYPE_CATEGORY:
+        is2d = False; c = 1; r = col.length
+    else:
+        raise TypeError(f"_col_shape_probe: unsupported column dtype {dtype}")
+    return (is2d, c, r)
 
 cdef BaseColumn _col_from_keys_2d(BaseColumn src, list keys):
     """由整行键（_col_row_key 输出，各为定长子列取值）重建保持 cols 维的 2D 列。
