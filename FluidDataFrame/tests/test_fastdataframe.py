@@ -1057,6 +1057,141 @@ def test_elementwise_2d():
     check('elem2d all true', d4.all())
 
 
+def test_series_row_2d():
+    # 基帧：a2d 子列0=[1,2,3,4] 子列1=[10,20,30,40]；d2d 子列0=[1,NAN,3,NAN] 子列1=[10,20,NAN,40]
+    df = FastDataFrame({'a': int, 's': str})
+    for a, s in [(1, 'w'), (2, 'x'), (3, 'y'), (4, 'z')]:
+        df.append_row(a=a, s=s)
+    df['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    df['d2d'] = DoubleColumn.from_2d([1.0, float('nan'), 3.0, float('nan'), 10.0, 20.0, float('nan'), 40.0], 4, 2)
+
+    # pct_change：逐子列独立序列，输出保形 2D
+    pc = df.pct_change()
+    c = pc['a2d']
+    check('sr2d pct shape', c.cols == 2 and c.rows == 4 and c.length == 8)
+    check('sr2d pct nan0', math.isnan(c[0]) and math.isnan(c[4]))
+    check('sr2d pct sub0 r1', abs(c[1] - 1.0) < 1e-9)
+    check('sr2d pct sub1 r1', abs(c[5] - 1.0) < 1e-9)
+    check('sr2d pct sub1 r2', abs(c[6] - 0.5) < 1e-9)  # (30-20)/20
+    c0 = pc['a'][0]
+    check('sr2d pct 1d untouched', c0 is not None)  # int col 也给 Double 序列（此处仅保形检查）
+
+    # ffill/bfill：逐子列独立（NaN 不跨子列）
+    ff = df.ffill()
+    c = ff['d2d']
+    check('sr2d ffill sub0', [c[i] for i in range(4)] == [1.0, 1.0, 3.0, 3.0])
+    check('sr2d ffill sub1', [c[i] for i in range(4, 8)] == [10.0, 20.0, 20.0, 40.0])
+    bf = df.bfill()
+    c = bf['d2d']
+    check('sr2d bfill sub0', [c[i] for i in range(4)] == [1.0, 3.0, 3.0, float('nan')] or
+                             ([c[i] for i in range(3)] == [1.0, 3.0, 3.0] and math.isnan(c[3])))
+    check('sr2d bfill sub1', [c[i] for i in range(4, 8)] == [10.0, 20.0, 40.0, 40.0])
+
+    # shift：逐子列独立位移（仅数值列，避免 str 报错）
+    dsh = FastDataFrame({'a': int})
+    dsh.append_row(a=1); dsh.append_row(a=2); dsh.append_row(a=3); dsh.append_row(a=4)
+    dsh['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    sh = dsh.shift(1)
+    c = sh['a2d']
+    check('sr2d shift shape', c.cols == 2 and c.rows == 4)
+    check('sr2d shift +1', [c[i] for i in range(8)] == [0, 1, 2, 3, 0, 10, 20, 30])
+    sh2 = dsh.shift(-1)
+    c = sh2['a2d']
+    check('sr2d shift -1', [c[i] for i in range(8)] == [2, 3, 4, 0, 20, 30, 40, 0])
+
+    # dropna：任一子列该行 NaN 即整行丢弃
+    dq = FastDataFrame({'v': float})
+    for v in [1.0, 2.0, 3.0, 4.0]:
+        dq.append_row(v=v)
+    dq['x2d'] = DoubleColumn.from_2d([1.0, float('nan'), 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], 4, 2)
+    r = dq.dropna()
+    check('sr2d dropna rows', r.shape[0] == 3)
+    c = r['x2d']
+    check('sr2d dropna 2d', c.cols == 2 and c.rows == 3)
+    check('sr2d dropna flat', [c[i] for i in range(6)] == [1.0, 3.0, 4.0, 5.0, 7.0, 8.0])
+
+    # pivot：values 为 2D 时单元为向量 → 输出透视列保形 2D
+    dfp = FastDataFrame({'idx': int, 'col': str})
+    for t in [(1, 'A'), (1, 'B'), (2, 'A'), (2, 'B')]:
+        dfp.append_row(idx=t[0], col=t[1])
+    dfp['val2d'] = DoubleColumn.from_2d([1.0, 3.0, 5.0, 7.0, 2.0, 4.0, 6.0, 8.0], 4, 2)
+    p = dfp.pivot(index='idx', columns='col', values='val2d')
+    check('sr2d pivot shape', p.shape == (2, 3))
+    ca = p['A']
+    check('sr2d pivot A 2d', ca.cols == 2 and ca.rows == 2)
+    check('sr2d pivot A flat', [ca[i] for i in range(4)] == [1.0, 5.0, 2.0, 6.0])
+    cb = p['B']
+    check('sr2d pivot B flat', [cb[i] for i in range(4)] == [3.0, 7.0, 4.0, 8.0])
+
+    # melt：values 为 2D → value 输出列保形 2D
+    dfm = FastDataFrame({'id': str})
+    dfm.append_row(id='r1'); dfm.append_row(id='r2')
+    dfm['x2d'] = DoubleColumn.from_2d([1.0, 2.0, 10.0, 20.0], 2, 2)
+    m = dfm.melt(id_vars=['id'], value_vars=['x2d'])
+    check('sr2d melt shape', m.shape[0] == 2)
+    check('sr2d melt var', m['variable'][0] == 'x2d')
+    check('sr2d melt id', m['id'][0] == 'r1')
+    check('sr2d melt value 2d', m['value'].cols == 2 and m['value'].rows == 2)
+    check('sr2d melt value flat', [m['value'][i] for i in range(4)] == [1.0, 2.0, 10.0, 20.0])
+
+    # expanding_sum / ewm_mean：逐子列独立
+    ex = df.expanding_sum('a2d')
+    check('sr2d exp shape', ex.cols == 2 and ex.rows == 4)
+    check('sr2d exp flat', [ex[i] for i in range(8)] == [1.0, 3.0, 6.0, 10.0, 10.0, 30.0, 60.0, 100.0])
+    ew = df.ewm_mean('a2d', span=3)
+    check('sr2d ewm shape', ew.cols == 2 and ew.rows == 4)
+    check('sr2d ewm sub0', abs(ew[0] - 0.5) < 1e-9 and abs(ew[1] - 1.25) < 1e-9)
+    check('sr2d ewm sub1', abs(ew[4] - 5.0) < 1e-9 and abs(ew[5] - 12.5) < 1e-9)
+
+    # apply axis='columns'：func 逐子列标量（n*c 个），输出保形
+    o = df.apply(lambda v: v * 2)
+    c = o['a2d']
+    check('sr2d apply cols 2d', c.cols == 2 and c.rows == 4)
+    check('sr2d apply cols flat', [c[i] for i in range(8)] == [2, 4, 6, 8, 20, 40, 60, 80])
+    check('sr2d apply 1d len', o['a'].length == 4)
+    check('sr2d apply str 1d', o['s'].length == 4)
+
+    # 纯数值帧：apply 返回浮点 → 2D 输出转 Double
+    dn = FastDataFrame({'x': int})
+    dn.append_row(x=1); dn.append_row(x=2); dn.append_row(x=3); dn.append_row(x=4)
+    dn['x2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    of = dn.apply(lambda v: v + 0.5)
+    cf = of['x2d']
+    check('sr2d apply float2d', cf.cols == 2 and cf.rows == 4)
+    check('sr2d apply float flat', [cf[i] for i in range(8)] == [1.5, 2.5, 3.5, 4.5, 10.5, 20.5, 30.5, 40.5])
+
+    # apply axis='index'：2D 单元为整行向量
+    rows = df.apply(lambda r: (r['a2d'][0], r['a2d'][1], r['s']), axis='index')
+    check('sr2d apply idx r0', rows[0] == (1, 10, 'w'))
+    check('sr2d apply idx r3', rows[3] == (4, 40, 'z'))
+
+    # T：cell 保持行向量转置（保形 2D）
+    dt = FastDataFrame({'a': int})
+    dt.append_row(a=5); dt.append_row(a=6)
+    dt['p2d'] = DoubleColumn.from_2d([1.0, 2.0, 10.0, 20.0], 2, 2)
+    dt['q2d'] = DoubleColumn.from_2d([100.0, 200.0, 300.0, 400.0], 2, 2)
+    t = dt.T
+    check('sr2d T len', t.df_length == 3)
+    ta = t['a']
+    check('sr2d T a 2d', ta.cols == 2 and ta.rows == 3)
+    check('sr2d T a flat', [ta[i] for i in range(6)] == [5.0, 1.0, 100.0, float('nan'), 10.0, 300.0] or
+                           ([ta[0], ta[1], ta[2], ta[4], ta[5]] == [5.0, 1.0, 100.0, 10.0, 300.0] and math.isnan(ta[3])))
+    tp = t['p2d']
+    check('sr2d T p2d flat', [tp[i] for i in range(6)] == [6.0, 2.0, 200.0, float('nan'), 20.0, 400.0] or
+                            ([tp[0], tp[1], tp[2], tp[4], tp[5]] == [6.0, 2.0, 200.0, 20.0, 400.0] and math.isnan(tp[3])))
+
+    # reshape：元素 = 整行单元（子列向量），输出保形
+    dr = FastDataFrame({'x': int})
+    dr.append_row(x=1); dr.append_row(x=2)
+    dr['r1'] = IntColumn.from_2d([1, 2, 10, 20], 2, 2)
+    dr['r2'] = IntColumn.from_2d([3, 4, 30, 40], 2, 2)
+    res = dr.reshape(2, 3)
+    check('sr2d reshape shape', res.shape == (2, 3))
+    check('sr2d reshape A', [res['A'][i] for i in range(2)] == [1.0, 2.0])
+    check('sr2d reshape B', [res['B'][i] for i in range(4)] == [1.0, 2.0, 10.0, 20.0])
+    check('sr2d reshape C', [res['C'][i] for i in range(4)] == [3.0, 4.0, 30.0, 40.0])
+
+
 def test_agg_stats_2d():
     # 2D 列子列0 有重复：行 (1,10)(1,20)(2,30)(2,30)
     df = FastDataFrame({'a': int, 's': str})
@@ -1958,6 +2093,7 @@ def run_all():
     test_duplicated_2d_rowaware()
     test_display_export_2d()
     test_elementwise_2d()
+    test_series_row_2d()
 
     # Regression: 类别五摘要统计 2D
     test_agg_stats_2d()
