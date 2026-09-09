@@ -41,6 +41,13 @@ cdef struct _GroupRows:
     Py_ssize_t* row_capacities
     Py_ssize_t count
 
+cdef struct ColMeta:
+    int dtype
+    void* data_ptr
+    void* col_obj
+    Py_ssize_t* len_ptr
+
+
 cdef void _c_argsort_char256(char* data, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil
 cdef void _c_argsort_numeric(NumericType* data, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil
 cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil
@@ -75,17 +82,15 @@ cdef class FastDataFrame:
     cdef public tuple _schema_keys
     cdef public list _ordered_cols
     cdef public list _2d_blocks
-
     cdef public dict columns
+
     cdef public uint32_t _fixed_capacity
     cdef public uint32_t df_length
-    cdef public IndexBase index
+    cdef bint _is_sealed         # 明确标识是否已锁定内存
     cdef uint32_t _num_cols
+    cdef ColMeta* _c_cols
 
-    cdef int* _c_dtypes
-    cdef void** _c_data_ptrs      # 直达底层物理内存块的指针
-    cdef Py_ssize_t** _c_len_ptrs # 跟踪列长度修改的硬指针
-    cdef void** _c_col_objs       # 持有列对象指针，用以安全转换
+    cdef public IndexBase index
 
     cdef _DataFrameMetricAccessor _metric_cache
     cdef _DataFrameGroupByAccessor _groupby_cache
