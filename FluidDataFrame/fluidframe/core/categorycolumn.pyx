@@ -105,6 +105,13 @@ cdef class CategoryColumn(BaseColumn):
         self.codes_c[self.length] = self._get_or_add_code(s)
         self.length += 1
 
+    cdef void append_nolen(self, object val) except *:
+        """写入当前行(length)位置的值，但不推进 length（由 add_row 统一提交）。"""
+        if self.length >= self.capacity:
+            raise BufferError("CategoryColumn row capacity (%d) reached." % self.capacity)
+        cdef str s = str(val) if val is not None else ''
+        self.codes_c[self.length] = self._get_or_add_code(s)
+
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def pop_back(self):

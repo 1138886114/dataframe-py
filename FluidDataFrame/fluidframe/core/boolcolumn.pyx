@@ -96,6 +96,12 @@ cdef class BoolColumn(BaseColumn):
         self.data_c[self.length] = 1 if val else 0
         self.length += 1
 
+    cdef void append_nolen(self, object val) except *:
+        """写入当前行(length)位置的值，但不推进 length（由 add_row 统一提交）。"""
+        if self.length >= self.capacity:
+            raise BufferError("BoolColumn row capacity (%d) reached." % self.capacity)
+        self.data_c[self.length] = 1 if val else 0
+
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def pop_back(self):

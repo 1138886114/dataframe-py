@@ -106,7 +106,7 @@ def test_init_complex():
 
 
 # =====================================================================
-#  Reserve capacity — fixed-capacity fast insertion (push_row)
+#  Reserve capacity — fixed-capacity fast insertion (add_row)
 # =====================================================================
 _RESERVE_ROWS = [
     (1,  12, 53, 45, 67, 95.0, 'Alice',   'senior', 20230115, 1),
@@ -132,7 +132,7 @@ def test_reserve_with_capacity():
     # kwargs push path
     df = _make_reserved_df()
     for r in _RESERVE_ROWS:
-        df.push_row(id=r[0], x0=r[1], y0=r[2], x1=r[3], y1=r[4], score=r[5],
+        df.add_row(id=r[0], x0=r[1], y0=r[2], x1=r[3], y1=r[4], score=r[5],
                     name=r[6], tag=r[7], dt=r[8], flags=r[9])
     check('reserve shape', df.shape == (10, 10))
     check('reserve length', df.df_length == 10)
@@ -151,7 +151,7 @@ def test_reserve_with_capacity():
     # positional push path (same data)
     df2 = _make_reserved_df()
     for r in _RESERVE_ROWS:
-        df2.push_row(*r)
+        df2.add_row(*r)
     check('reserve pos shape', df2.shape == (10, 10))
     check('reserve pos id', df2['id'][9] == 10)
     check('reserve pos dt', df2['dt'][4] == 20230310)
@@ -165,15 +165,15 @@ def test_reserve_with_capacity():
           expect_exception(RuntimeError, df_nonempty.reserve_with_capacity, 10))
 
     # 缺失列必须报错（防止列长度错位/脏数据）
-    check('reserve missing key error', expect_exception(ValueError, df.push_row, id=99))
+    check('reserve missing key error', expect_exception(ValueError, df.add_row, id=99))
 
     # 达到固定容量后必须拒绝写入
     df3 = FastDataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
     df3.reserve_with_capacity(len(_RESERVE_ROWS))
     for r in _RESERVE_ROWS:
-        df3.push_row(id=r[0], score=r[5], name=r[6], tag=r[7], dt=r[8])
+        df3.add_row(id=r[0], score=r[5], name=r[6], tag=r[7], dt=r[8])
     check('reserve cap full', df3.df_length == 10)
-    check('reserve overflow error', expect_exception(BufferError, df3.push_row, id=11, score=1.0, name='X', tag='x', dt=20250101))
+    check('reserve overflow error', expect_exception(BufferError, df3.add_row, id=11, score=1.0, name='X', tag='x', dt=20250101))
 
     # 预留后走普通 append_row（定宽列是 view）应拒绝而不是写坏内存
     check('reserve append_row blocked', expect_exception(RuntimeError, df.append_row,
@@ -183,7 +183,7 @@ def test_reserve_with_capacity():
 def test_reserve_filters():
     df = _make_reserved_df()
     for r in _RESERVE_ROWS:
-        df.push_row(id=r[0], x0=r[1], y0=r[2], x1=r[3], y1=r[4], score=r[5],
+        df.add_row(id=r[0], x0=r[1], y0=r[2], x1=r[3], y1=r[4], score=r[5],
                     name=r[6], tag=r[7], dt=r[8], flags=r[9])
 
     mask = df['id'] > 5
@@ -220,6 +220,32 @@ def test_reserve_filters():
     r = df.loc[mask]
     check('reserve filter 4-type shape', r.shape == (1, 10))
     check('reserve filter 4-type id', r['id'][0] == 8)
+
+
+def test_add_row_failure_rollback():
+    # 中途失败（flags 位于 name/tag 之后）：UCS2/CHAR256 已写入但未提交 → 必须整体回滚
+    df = _make_reserved_df()
+    for r in _RESERVE_ROWS:
+        df.add_row(id=r[0], x0=r[1], y0=r[2], x1=r[3], y1=r[4], score=r[5],
+                   name=r[6], tag=r[7], dt=r[8], flags=r[9])
+
+    check('rollback raises', expect_exception(TypeError, df.add_row,
+                                              id=11, x0=12, y0=25, x1=45, y1=67,
+                                              score=99.0, name='Zulu', tag='low',
+                                              dt=20250101, flags='boom'))
+    check('rollback keeps df_length', df.df_length == 10)
+    for col in ['id', 'x0', 'y0', 'x1', 'y1', 'flags', 'score', 'name', 'tag', 'dt']:
+        check(f'rollback col len {col}', df[col].length == 10)
+    check('rollback name intact', df['name'][9] == 'Judy')
+    check('rollback tag intact', df['tag'][9] == 'low')
+
+    # 回滚后写入合法行仍成功，且各列长度一致
+    df.add_row(id=11, x0=12, y0=25, x1=45, y1=67, score=99.0,
+               name='Zulu', tag='low', dt=20250101, flags=9)
+    check('rollback re-add ok', df.df_length == 11)
+    check('rollback re-add name', df['name'][10] == 'Zulu')
+    check('rollback re-add tag', df['tag'][10] == 'low')
+    check('rollback all lens equal', all(df[c].length == 11 for c in df.col_names))
 
 
 # =====================================================================
@@ -2138,6 +2164,7 @@ def run_all():
     # Reserve capacity — fixed-capacity fast insertion
     test_reserve_with_capacity()
     test_reserve_filters()
+    test_add_row_failure_rollback()
 
     # Append & access
     test_append()

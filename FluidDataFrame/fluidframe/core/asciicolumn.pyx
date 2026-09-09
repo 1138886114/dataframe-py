@@ -219,6 +219,26 @@ cdef class AsciiColumn(BaseColumn):
         self.length += 1
         self.offsets_c[self.length] = self.byte_length
 
+    cdef void append_nolen(self, str val) except *:
+        """写入当前行(length)位置的值，但不推进 length（由 add_row 统一提交）。"""
+        if self.length >= self.capacity:
+            raise BufferError("AsciiColumn row capacity (%d) reached." % self.capacity)
+        cdef bytes b_val = val.encode('ascii', errors='ignore') if val is not None else b''
+        cdef Py_ssize_t slen = len(b_val)
+        cdef Py_ssize_t need_bytes = slen + 1
+        if self.byte_length + need_bytes > self.byte_capacity:
+            self._reserve_bytes(max(self.byte_capacity * 2, self.byte_length + need_bytes + 4096))
+        if slen > 0:
+            memcpy(self.data_c + self.byte_length, <const char*>b_val, slen)
+        self.data_c[self.byte_length + slen] = 0
+        self.byte_length += need_bytes
+        self.offsets_c[self.length + 1] = self.byte_length
+
+    cdef void undo_nolen(self) noexcept:
+        """回滚一次未提交(未推进 length)的写入，保证重试时不会产生残留字节。"""
+        self.byte_length = self.offsets_c[self.length]
+        self.offsets_c[self.length + 1] = self.byte_length
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):

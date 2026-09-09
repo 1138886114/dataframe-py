@@ -180,6 +180,23 @@ cdef class UCS2Column(BaseColumn):
         self.length += 1
         self.offsets_c[self.length] = self.char_length
 
+    cdef void append_nolen(self, str val) except *:
+        """写入当前行(length)位置的值，但不推进 length（由 add_row 统一提交）。"""
+        if self.length >= self.capacity:
+            raise BufferError("UCS2Column row capacity (%d) reached." % self.capacity)
+        cdef Py_ssize_t str_len = PyUnicode_GET_LENGTH(val)
+        if self.char_length + str_len > self.char_capacity:
+            self._reserve_chars(max(self.char_capacity * 2, self.char_length + str_len + 1024))
+        if str_len > 0:
+            _copy_py_str_to_ucs2(val, self.chars_c + self.char_length, str_len)
+        self.char_length += str_len
+        self.offsets_c[self.length + 1] = self.char_length
+
+    cdef void undo_nolen(self) noexcept:
+        """回滚一次未提交(未推进 length)的写入，保证重试时不会产生残留字符。"""
+        self.char_length = self.offsets_c[self.length]
+        self.offsets_c[self.length + 1] = self.char_length
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):

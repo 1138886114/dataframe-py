@@ -11,6 +11,7 @@ cdef class CategoryColumn(BaseColumn):
     cdef list categories
     cdef dict _cat_to_code
     cdef void _reserve(self, Py_ssize_t new_cap)
+    cdef void append_nolen(self, object val) except *
     cdef int _get_or_add_code(self, str val)
     cdef str _resolve(self, Py_ssize_t i)
     cdef CategoryColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)

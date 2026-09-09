@@ -16,6 +16,8 @@ cdef class AsciiColumn(BaseColumn):
     cdef public Py_ssize_t byte_length    # data_c 已使用的字节总数
     cdef void _reserve_rows(self, Py_ssize_t new_cap)
     cdef void _reserve_bytes(self, Py_ssize_t new_byte_cap)
+    cdef void append_nolen(self, str val) except *
+    cdef void undo_nolen(self) noexcept
     cdef inline str _get_str(self, Py_ssize_t idx)
     cdef void _set_item(self, Py_ssize_t idx, str val) except *
     cdef AsciiColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)

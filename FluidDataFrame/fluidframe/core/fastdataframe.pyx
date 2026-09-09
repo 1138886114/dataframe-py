@@ -451,13 +451,13 @@ cdef inline void _fast_insert_val(int dtype, void* data_ptr, void* col_obj,
     elif dtype == TYPE_TIME:
         (<int32_t*>data_ptr)[row_idx] = <int32_t>val
     elif dtype == TYPE_CHAR256:
-        (<AsciiColumn>col_obj).append(val) # TODO：我删除了上面的长度自增，所以需要新增append_not_add_length（或者改更好的名），避免中间添加值失败导致长度不一
+        (<AsciiColumn>col_obj).append_nolen(val)
     elif dtype == TYPE_UCS2:
-        (<UCS2Column>col_obj).append(val)
+        (<UCS2Column>col_obj).append_nolen(val)
     elif dtype == TYPE_BOOL:
-        (<BoolColumn>col_obj).append(val)
+        (<BoolColumn>col_obj).append_nolen(val)
     elif dtype == TYPE_CATEGORY:
-        (<CategoryColumn>col_obj).append(val)
+        (<CategoryColumn>col_obj).append_nolen(val)
 
 
 @cython.final
@@ -707,8 +707,13 @@ cdef class FastDataFrame:
     @cython.binding(False)
     def add_row(self, *args, **kwargs):
         """
-        极限推流行。因为使用了直接寻址指针 _c_data_ptrs，
+        极限推流行。因为使用了直接寻址指针 _c_cols[i].data_ptr，
         在执行这段代码时几乎不触发 Python API，直接对内存打数据。
+
+        支持两种调用方式：
+          df.add_row(1, 12, 53, 45, 67, 95.0, 'Alice', 'senior', 20230115, 1)
+          df.add_row(id=1, x0=12, ..., flags=1)
+        任一行写入中途失败都会被回滚，保证各列 length 始终与 df_length 一致。
         """
         if not self._is_sealed:
             raise RuntimeError("Must call reserve_with_capacity before pushing rows.")
@@ -717,24 +722,54 @@ cdef class FastDataFrame:
         if row_idx >= self._fixed_capacity:
             raise BufferError(f"DataFrame maximum capacity ({self._fixed_capacity}) exceeded.")
 
-        cdef uint32_t n_cols = self._num_cols
-        if len(args) != n_cols:
-            raise ValueError(f"Expected {n_cols} elements, got {len(args)}.")
-
         cdef uint32_t i
-        for i in range(n_cols):
-            _fast_insert_val(
-                self._c_cols[i].dtype,
-                self._c_cols[i].data_ptr,
-                self._c_cols[i].col_obj,
-                row_idx,
-                args[i]
-            )
+        cdef uint32_t n_cols = self._num_cols
+
+        if kwargs:
+            if args:
+                raise TypeError("Cannot mix positional args and keyword args in add_row.")
+            for i in range(n_cols):
+                if self._schema_keys[i] not in kwargs:
+                    raise ValueError(f"Missing value for column: {self._schema_keys[i]}")
+            try:
+                for i in range(n_cols):
+                    _fast_insert_val(
+                        self._c_cols[i].dtype,
+                        self._c_cols[i].data_ptr,
+                        self._c_cols[i].col_obj,
+                        row_idx,
+                        kwargs[self._schema_keys[i]]
+                    )
+            except Exception:
+                self._rollback_pending_writes(n_cols)
+                raise
+        else:
+            if len(args) != n_cols:
+                raise ValueError(f"Expected {n_cols} elements, got {len(args)}.")
+            try:
+                for i in range(n_cols):
+                    _fast_insert_val(
+                        self._c_cols[i].dtype,
+                        self._c_cols[i].data_ptr,
+                        self._c_cols[i].col_obj,
+                        row_idx,
+                        args[i]
+                    )
+            except Exception:
+                self._rollback_pending_writes(n_cols)
+                raise
 
         self.df_length += 1
         for i in range(n_cols):
-            if self._c_cols[i].dtype <= TYPE_TIME:
-                self._c_cols[i].len_ptr[0] = self.df_length
+            self._c_cols[i].len_ptr[0] = self.df_length
+
+    cdef void _rollback_pending_writes(self, uint32_t n_cols) noexcept:
+        cdef uint32_t i
+        for i in range(n_cols):
+            if self._c_cols[i].dtype == TYPE_CHAR256:
+                (<AsciiColumn>self._c_cols[i].col_obj).undo_nolen()
+            elif self._c_cols[i].dtype == TYPE_UCS2:
+                (<UCS2Column>self._c_cols[i].col_obj).undo_nolen()
 
     def add_rows_from_list(self, list rows):
         """
@@ -742,7 +777,7 @@ cdef class FastDataFrame:
         """
         cdef tuple r
         for r in rows:
-            self.push_row(*r)
+            self.add_row(*r)
 
     cdef inline str _fast_type_name(self, int dt):
         if dt == TYPE_INT: return 'i64'
