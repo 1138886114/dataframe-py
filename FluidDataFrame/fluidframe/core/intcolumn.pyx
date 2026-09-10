@@ -1416,19 +1416,39 @@ cdef class IntColumn(BaseColumn):
 
     cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=False):
         cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t ccols = self.get_cols_c()
         cdef char err_buf[128]
+        cdef IntColumn col
+        cdef Py_ssize_t i, j, base
+        cdef int* col_ptr
+        cdef int* self_ptr = self.data_c
+        cdef int* cond_ptr = cond.data_c
+        cdef int m
+
+        # 2D 列：掩码按逻辑行判定（每行一个 cond[i]），行内全部子列同取舍，结果保持源维度
+        if self.get_is_2d_c() and ccols > 1:
+            if cond.length != r:
+                snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
+                raise ValueError(err_buf.decode('ascii'))
+            col = self if inplace else IntColumn(max(n, 1), cols=ccols)
+            if not inplace: col.length = n
+            col_ptr = col.data_c
+            with nogil:
+                for j in range(ccols):
+                    base = j * r
+                    for i in range(r):
+                        col_ptr[base + i] = self_ptr[base + i] if cond_ptr[i] != 0 else other
+            return col
+
         if cond.length != n:
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        cdef IntColumn col = self if inplace else IntColumn(max(n, 1), cols=self.cols)
+        col = self if inplace else IntColumn(max(n, 1), cols=self.cols)
         if not inplace: col.length = n
 
-        cdef int* col_ptr = col.data_c
-        cdef int* self_ptr = self.data_c
-        cdef int* cond_ptr = cond.data_c
-        cdef Py_ssize_t i
-        cdef int m
+        col_ptr = col.data_c
         with nogil:
             for i in range(n):
                 m = -<int>(cond_ptr[i] != 0)
@@ -1439,19 +1459,40 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t ccols = self.get_cols_c()
         cdef char err_buf[128]
+        cdef IntColumn col
+        cdef Py_ssize_t i, j, base
+        cdef int* col_ptr
+        cdef int* self_ptr = self.data_c
+        cdef int* mask_ptr = mask.data_c
+        cdef int m
+        cdef int fill_val = <int>fill
+
+        # 2D 列：掩码按逻辑行判定，行内全部子列同取舍，结果保持源维度
+        if self.get_is_2d_c() and ccols > 1:
+            if mask.length != r:
+                snprintf(err_buf, sizeof(err_buf), "Mask length %zd must match column rows %zd", mask.length, r)
+                raise ValueError(err_buf.decode('ascii'))
+            col = IntColumn(max(n, 1), cols=ccols)
+            col.length = n
+            col_ptr = col.data_c
+            with nogil:
+                for j in range(ccols):
+                    base = j * r
+                    for i in range(r):
+                        col_ptr[base + i] = self_ptr[base + i] if mask_ptr[i] != 0 else fill_val
+            return col
+
         if mask.length != n:
             snprintf(err_buf, sizeof(err_buf), "Mask length %zd != column length %zd", mask.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        cdef IntColumn col = IntColumn(max(n, 1), cols=self.cols)
+        col = IntColumn(max(n, 1), cols=self.cols)
         col.length = n
-        cdef int fill_val = <int>fill
-        cdef int* col_ptr = col.data_c
-        cdef int* self_ptr = self.data_c
-        cdef int* mask_ptr = mask.data_c
-        cdef Py_ssize_t i
-        cdef int m
+        col_ptr = col.data_c
+
         with nogil:
             for i in range(n):
                 m = -<int>(mask_ptr[i] != 0)
@@ -1460,19 +1501,39 @@ cdef class IntColumn(BaseColumn):
 
     cpdef IntColumn mask(self, IntColumn cond, int other, bint inplace=False):
         cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t ccols = self.get_cols_c()
         cdef char err_buf[128]
+        cdef IntColumn col
+        cdef Py_ssize_t i, j, base
+        cdef int* col_ptr
+        cdef int* self_ptr = self.data_c
+        cdef int* cond_ptr = cond.data_c
+        cdef int m
+
+        # 2D 列：掩码按逻辑行判定（每行一个 cond[i]），行内全部子列同取舍，结果保持源维度
+        if self.get_is_2d_c() and ccols > 1:
+            if cond.length != r:
+                snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
+                raise ValueError(err_buf.decode('ascii'))
+            col = self if inplace else IntColumn(max(n, 1), cols=ccols)
+            if not inplace: col.length = n
+            col_ptr = col.data_c
+            with nogil:
+                for j in range(ccols):
+                    base = j * r
+                    for i in range(r):
+                        col_ptr[base + i] = other if cond_ptr[i] != 0 else self_ptr[base + i]
+            return col
+
         if cond.length != n:
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        cdef IntColumn col = self if inplace else IntColumn(max(n, 1), cols=self.cols)
+        col = self if inplace else IntColumn(max(n, 1), cols=self.cols)
         if not inplace: col.length = n
 
-        cdef int* col_ptr = col.data_c
-        cdef int* self_ptr = self.data_c
-        cdef int* cond_ptr = cond.data_c
-        cdef Py_ssize_t i
-        cdef int m
+        col_ptr = col.data_c
         with nogil:
             for i in range(n):
                 m = -<int>(cond_ptr[i] != 0)

@@ -887,7 +887,7 @@ cdef _insert_column_impl(FastDataFrame self, str col_name, object col_data, Py_s
 
     if self.df_length == 0 and r_col > 0:
         self.df_length = <uint32_t>r_col
-    elif self.df_length > 0 and r_col != self.df_length:
+    elif self.df_length > 0 and r_col > self.df_length:
         raise ValueError(f"Shape mismatch: DataFrame has {self.df_length} rows, incoming column has {r_col} logical rows.")
 
     cdef list names = list(self.columns.keys())

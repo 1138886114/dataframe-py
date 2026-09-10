@@ -1664,6 +1664,42 @@ def test_where_row():
     check('where_row a', [r['a'][i] for i in range(3)] == [1, -1, 3])
     check('where_row b', [r['b'][i] for i in range(3)] == [10, -1, 30])
 
+def test_where_mask_row_2d():
+    """2D 列：where/mask 掩码按逻辑行判定（每行一个 cond），where_row 按行掩码，结果保持源维度"""
+    df = FastDataFrame()
+    df.df_length = 4
+    df.columns['v'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
+    df.columns['iv'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    cond = IntColumn()
+    for c in [1, 0, 1, 0]: cond.append(c)
+    df.columns['cond'] = cond
+
+    r = df.where_column('v', 'cond', 99.0)
+    check('2d where dims', r.rows == 4 and r.is_2d and r.cols == 2)
+    check('2d where flat', [r[i] for i in range(8)] == [1.0, 99.0, 3.0, 99.0, 10.0, 99.0, 30.0, 99.0])
+
+    ri = df.where_column('iv', 'cond', 77)
+    check('2d where int', [ri[i] for i in range(8)] == [1, 77, 3, 77, 10, 77, 30, 77])
+
+    m = df.mask_column('v', 'cond', 5.0)
+    check('2d mask flat', [m[i] for i in range(8)] == [5.0, 2.0, 5.0, 4.0, 5.0, 20.0, 5.0, 40.0])
+
+    mask = IntColumn()
+    for c in [1, 0, 1, 0]: mask.append(c)
+    rr = df.where_row(mask, fill=-1)
+    check('2d where_row shape', rr.shape == (4, 3))
+    check('2d where_row double', [rr['v'][i] for i in range(8)] == [1.0, -1.0, 3.0, -1.0, 10.0, -1.0, 30.0, -1.0])
+    check('2d where_row int', [rr['iv'][i] for i in range(8)] == [1, -1, 3, -1, 10, -1, 30, -1])
+
+    bad = IntColumn.from_2d([1]*8, 4, 2)
+    df.columns['badc'] = bad
+    raised = False
+    try:
+        df.where_column('v', 'badc', 0.0)
+    except ValueError:
+        raised = True
+    check('2d cond length uses rows', raised)
+
 
 # =====================================================================
 #  Groupby
@@ -2375,6 +2411,7 @@ def run_all():
     test_where_column()
     test_mask_column()
     test_where_row()
+    test_where_mask_row_2d()
 
     # Groupby
     test_groupby()
