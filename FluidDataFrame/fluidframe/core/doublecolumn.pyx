@@ -1473,7 +1473,6 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* self_ptr = self.data_c
         cdef int* cond_ptr = cond.data_c
 
-        # 2D 列：掩码按逻辑行判定（每行一个 cond[i]），行内全部子列同取舍，结果保持源维度
         if self.get_is_2d_c() and ccols > 1:
             if cond.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
@@ -1492,11 +1491,10 @@ cdef class DoubleColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        col = self if inplace else DoubleColumn(max(self.capacity, 1), cols=self.cols)
+        col = self if inplace else DoubleColumn(max(n, 1), cols=self.cols)
         if not inplace: col.length = n
 
         col_ptr = col.data_c
-        # 标准三元运算映射为高效 SIMD Blend 指令 (vblendvpd)
         with nogil:
             for i in range(n):
                 col_ptr[i] = self_ptr[i] if cond_ptr[i] != 0 else other
@@ -1516,7 +1514,6 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* self_ptr = self.data_c
         cdef int* mask_ptr = mask.data_c
 
-        # 2D 列：掩码按逻辑行判定，行内全部子列同取舍，结果保持源维度
         if self.get_is_2d_c() and ccols > 1:
             if mask.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Mask length %zd must match column rows %zd", mask.length, r)
@@ -1535,7 +1532,7 @@ cdef class DoubleColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Mask length %zd != column length %zd", mask.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        col = DoubleColumn(max(self.capacity, 1), cols=self.cols)
+        col = DoubleColumn(max(n, 1), cols=self.cols)
         col.length = n
         col_ptr = col.data_c
 
@@ -1555,7 +1552,6 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* self_ptr = self.data_c
         cdef int* cond_ptr = cond.data_c
 
-        # 2D 列：掩码按逻辑行判定（每行一个 cond[i]），行内全部子列同取舍，结果保持源维度
         if self.get_is_2d_c() and ccols > 1:
             if cond.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
@@ -1574,7 +1570,7 @@ cdef class DoubleColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        col = self if inplace else DoubleColumn(max(self.capacity, 1), cols=self.cols)
+        col = self if inplace else DoubleColumn(max(n, 1), cols=self.cols)
         if not inplace: col.length = n
 
         col_ptr = col.data_c

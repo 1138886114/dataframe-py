@@ -1426,7 +1426,6 @@ cdef class IntColumn(BaseColumn):
         cdef int* cond_ptr = cond.data_c
         cdef int m
 
-        # 2D 列：掩码按逻辑行判定（每行一个 cond[i]），行内全部子列同取舍，结果保持源维度
         if self.get_is_2d_c() and ccols > 1:
             if cond.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
@@ -1438,7 +1437,8 @@ cdef class IntColumn(BaseColumn):
                 for j in range(ccols):
                     base = j * r
                     for i in range(r):
-                        col_ptr[base + i] = self_ptr[base + i] if cond_ptr[i] != 0 else other
+                        m = -<int>(cond_ptr[i] != 0)
+                        col_ptr[base + i] = (self_ptr[base + i] & m) | (other & ~m)
             return col
 
         if cond.length != n:
@@ -1470,7 +1470,6 @@ cdef class IntColumn(BaseColumn):
         cdef int m
         cdef int fill_val = <int>fill
 
-        # 2D 列：掩码按逻辑行判定，行内全部子列同取舍，结果保持源维度
         if self.get_is_2d_c() and ccols > 1:
             if mask.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Mask length %zd must match column rows %zd", mask.length, r)
@@ -1482,7 +1481,8 @@ cdef class IntColumn(BaseColumn):
                 for j in range(ccols):
                     base = j * r
                     for i in range(r):
-                        col_ptr[base + i] = self_ptr[base + i] if mask_ptr[i] != 0 else fill_val
+                        m = -<int>(mask_ptr[i] != 0)
+                        col_ptr[base + i] = (self_ptr[base + i] & m) | (fill_val & ~m)
             return col
 
         if mask.length != n:
@@ -1511,7 +1511,6 @@ cdef class IntColumn(BaseColumn):
         cdef int* cond_ptr = cond.data_c
         cdef int m
 
-        # 2D 列：掩码按逻辑行判定（每行一个 cond[i]），行内全部子列同取舍，结果保持源维度
         if self.get_is_2d_c() and ccols > 1:
             if cond.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
@@ -1523,7 +1522,8 @@ cdef class IntColumn(BaseColumn):
                 for j in range(ccols):
                     base = j * r
                     for i in range(r):
-                        col_ptr[base + i] = other if cond_ptr[i] != 0 else self_ptr[base + i]
+                        m = -<int>(cond_ptr[i] != 0)
+                        col_ptr[base + i] = (other & m) | (self_ptr[base + i] & ~m)
             return col
 
         if cond.length != n:
