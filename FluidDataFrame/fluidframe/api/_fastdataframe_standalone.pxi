@@ -32,20 +32,42 @@ class _SafeUnpickler(_pickle.Unpickler):
 
 
 def from_pickle(filename, bint allow_raw_pickle=False):
-    """从 pickle 文件恢复 FastDataFrame。"""
+    """从 pickle 文件恢复 FastDataFrame。
+    2D 列条目为 (typ, values, rows, cols)，重建后保持二维维度。"""
+    cdef Py_ssize_t rows = 0, cols = 0
+    cdef Py_ssize_t total, i
+    cdef IntColumn icol
+    cdef DoubleColumn fcol
+    cdef DateColumn dcol
+    cdef DateTimeColumn tcol
+    cdef TimeColumn qcol
+    cdef int32_t* dptr
+    cdef int64_t* tptr
     with open(filename, 'rb') as f:
         data = _SafeUnpickler(f, allow_raw_pickle).load()
     df = FastDataFrame()
     df.df_length = data['df_length']
-    for col_name, (typ, values) in data['columns'].items():
+    for col_name, entry in data['columns'].items():
+        if len(entry) == 4:
+            typ, values, rows, cols = entry
+        else:
+            typ, values = entry
+        is_2d = cols > 1
+        total = len(values)
         if typ == 'int':
-            col = IntColumn()
-            for v in values:
-                col.append(v)
+            if is_2d:
+                col = IntColumn.from_2d(<object>values, rows, cols)
+            else:
+                col = IntColumn()
+                for v in values:
+                    col.append(v)
         elif typ == 'float':
-            col = DoubleColumn()
-            for v in values:
-                col.append(v)
+            if is_2d:
+                col = DoubleColumn.from_2d(<object>values, rows, cols)
+            else:
+                col = DoubleColumn()
+                for v in values:
+                    col.append(v)
         elif typ == 'char256':
             col = AsciiColumn()
             for v in values:
@@ -55,9 +77,18 @@ def from_pickle(filename, bint allow_raw_pickle=False):
             for v in values:
                 col.append(v)
         elif typ == 'date':
-            col = DateColumn()
-            for v in values:
-                col.append(v)
+            if is_2d:
+                dcol = DateColumn(max(total, 1), cols=cols)
+                dcol.length = total
+                dcol.set_meta_c(<int>cols, True, True)
+                dptr = <int32_t*>dcol.data_c
+                for i in range(total):
+                    dptr[i] = <int32_t>values[i]
+                col = dcol
+            else:
+                col = DateColumn()
+                for v in values:
+                    col.append(v)
         elif typ == 'bool':
             col = BoolColumn()
             for v in values:
@@ -67,13 +98,31 @@ def from_pickle(filename, bint allow_raw_pickle=False):
             for v in values:
                 col.append(v)
         elif typ == 'datetime':
-            col = DateTimeColumn()
-            for v in values:
-                col.append(v)
+            if is_2d:
+                tcol = DateTimeColumn(max(total, 1), cols=cols)
+                tcol.length = total
+                tcol.set_meta_c(<int>cols, True, True)
+                tptr = <int64_t*>tcol.data_c
+                for i in range(total):
+                    tptr[i] = <int64_t>values[i]
+                col = tcol
+            else:
+                col = DateTimeColumn()
+                for v in values:
+                    col.append(v)
         elif typ == 'time':
-            col = TimeColumn()
-            for v in values:
-                col.append(v)
+            if is_2d:
+                qcol = TimeColumn(max(total, 1), cols=cols)
+                qcol.length = total
+                qcol.set_meta_c(<int>cols, True, True)
+                dptr = <int32_t*>qcol.data_c
+                for i in range(total):
+                    dptr[i] = <int32_t>values[i]
+                col = qcol
+            else:
+                col = TimeColumn()
+                for v in values:
+                    col.append(v)
         df.columns[col_name] = col
     return df
 
@@ -305,9 +354,13 @@ def concat(list dfs, bint ignore_index=False):
 
 
 def to_numeric(column, errors='coerce'):
-    """Convert column to numeric values. Like pd.to_numeric."""
-    n = column.length
-    res = DoubleColumn(n)
+    """Convert column to numeric values. Like pd.to_numeric.
+    2D 输入保持同维度输出（is_2d/rows/cols 不变，逐单元转换）。"""
+    cdef Py_ssize_t n = column.length
+    cdef bint is2d
+    cdef Py_ssize_t c = 1, r
+    is2d, c, r = _col_shape_probe(column)
+    cdef DoubleColumn res = DoubleColumn(n)
     res.length = n
     for i in range(n):
         s = str(column[i])
@@ -321,12 +374,18 @@ def to_numeric(column, errors='coerce'):
             if errors == 'raise':
                 raise ValueError(f"Could not convert '{s}' to numeric")
             res.data_c[i] = NAN
+    if is2d and c > 1:
+        res.set_meta_c(<int>c, True, True)
     return res
 
 
 def to_datetime(column, str fmt='', errors='coerce'):
-    """Convert column to DateTimeColumn. Like pd.to_datetime."""
+    """Convert column to DateTimeColumn. Like pd.to_datetime.
+    2D 输入保持同维度输出。"""
     cdef Py_ssize_t n = column.length
+    cdef bint is2d
+    cdef Py_ssize_t c = 1, r
+    is2d, c, r = _col_shape_probe(column)
     cdef DateTimeColumn res = DateTimeColumn(n)
     for i in range(n):
         s = str(column[i])
@@ -336,12 +395,18 @@ def to_datetime(column, str fmt='', errors='coerce'):
             if errors == 'raise':
                 raise ValueError(f"Could not convert '{s}' to datetime")
             res.append(0)
+    if is2d and c > 1:
+        res.set_meta_c(<int>c, True, True)
     return res
 
 
 def to_date(column, str fmt='', errors='coerce'):
-    """Convert column to DateColumn (YYYYMMDD)."""
+    """Convert column to DateColumn (YYYYMMDD).
+    2D 输入保持同维度输出。"""
     cdef Py_ssize_t n = column.length
+    cdef bint is2d
+    cdef Py_ssize_t c = 1, r
+    is2d, c, r = _col_shape_probe(column)
     cdef DateColumn res = DateColumn(n)
     for i in range(n):
         s = str(column[i])
@@ -351,12 +416,18 @@ def to_date(column, str fmt='', errors='coerce'):
             if errors == 'raise':
                 raise ValueError(f"Could not convert '{s}' to date")
             res.append(0)
+    if is2d and c > 1:
+        res.set_meta_c(<int>c, True, True)
     return res
 
 
 def to_time(column, str fmt='', errors='coerce'):
-    """Convert column to TimeColumn (seconds since midnight)."""
+    """Convert column to TimeColumn (seconds since midnight).
+    2D 输入保持同维度输出。"""
     cdef Py_ssize_t n = column.length
+    cdef bint is2d
+    cdef Py_ssize_t c = 1, r
+    is2d, c, r = _col_shape_probe(column)
     cdef TimeColumn res = TimeColumn(n)
     for i in range(n):
         s = str(column[i])
@@ -366,6 +437,8 @@ def to_time(column, str fmt='', errors='coerce'):
             if errors == 'raise':
                 raise ValueError(f"Could not convert '{s}' to time")
             res.append(0)
+    if is2d and c > 1:
+        res.set_meta_c(<int>c, True, True)
     return res
 
 

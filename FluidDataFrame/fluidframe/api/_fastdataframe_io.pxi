@@ -106,10 +106,35 @@ cdef _to_string_impl(FastDataFrame self, Py_ssize_t max_rows=80):
 cdef _to_pickle_impl(FastDataFrame self, filename):
     import pickle
     cdef dict data = {'df_length': self.df_length, 'columns': {}}
+    cdef bint is2d
+    cdef Py_ssize_t c, r, i
+    cdef Py_ssize_t col_len
+    cdef int dtype
+    cdef list values
+    cdef int32_t* dptr
+    cdef int64_t* tptr
+    cdef BaseColumn col_obj
     for name, col_obj in self.columns.items():
         col_len = col_obj.length
-        values = [col_obj[i] for i in range(col_len)]
-        data['columns'][name] = (self._type_name(col_obj), values)
+        is2d, c, r = _col_shape_probe(col_obj)
+        dtype = col_obj.dtype
+        if is2d and c > 1:
+            # 2D 的 date/datetime/time 列直接落盘原始存储编码（列对象返回包装类型）
+            if dtype == TYPE_DATE:
+                dptr = <int32_t*>(<DateColumn>col_obj).data_c
+                values = [dptr[i] for i in range(col_len)]
+            elif dtype == TYPE_DATETIME:
+                tptr = <int64_t*>(<DateTimeColumn>col_obj).data_c
+                values = [tptr[i] for i in range(col_len)]
+            elif dtype == TYPE_TIME:
+                dptr = <int32_t*>(<TimeColumn>col_obj).data_c
+                values = [dptr[i] for i in range(col_len)]
+            else:
+                values = [col_obj[i] for i in range(col_len)]
+            data['columns'][name] = (self._type_name(col_obj), values, r, c)
+        else:
+            values = [col_obj[i] for i in range(col_len)]
+            data['columns'][name] = (self._type_name(col_obj), values)
     with open(filename, 'wb') as f:
         pickle.dump(data, f)
 

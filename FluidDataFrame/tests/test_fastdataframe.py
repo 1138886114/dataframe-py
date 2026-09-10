@@ -5,7 +5,7 @@ import sys
 import tempfile
 import time
 sys.path.insert(0, '..')
-from fluidframe.core.fastdataframe import FastDataFrame, read_json
+from fluidframe.core.fastdataframe import FastDataFrame, read_json, from_pickle, to_numeric, to_date, to_time, to_datetime
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.asciicolumn import AsciiColumn
@@ -532,6 +532,57 @@ def test_tsv():
         check('tsv exists', os.path.exists(fname))
     finally:
         os.unlink(fname)
+
+def test_pickle_2d_roundtrip():
+    """2D 列 to_pickle/from_pickle 往返保持 is_2d/rows/cols"""
+    df = FastDataFrame()
+    df.df_length = 4
+    df.columns['a'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    df.columns['d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
+    date_codes = IntColumn.from_2d([
+        20230101, 20230102, 20230103, 20230104,
+        20240101, 20240102, 20240103, 20240104], 4, 2)
+    df.columns['dd'] = to_date(date_codes)
+    df.columns['dt'] = to_datetime(date_codes)
+    df.columns['s'] = UCS2Column()
+    for v in ['x', 'y', 'z', 'w']:
+        df.columns['s'].append(v)
+    with tempfile.NamedTemporaryFile(suffix='.pkl', delete=False) as f:
+        fname = f.name
+    try:
+        df.to_pickle(fname)
+        df2 = from_pickle(fname)
+        check('pkl2d shape', df2.shape == (4, 5))
+        check('pkl2d a 2d', df2['a'].is_2d and df2['a'].cols == 2 and df2['a'].rows == 4)
+        check('pkl2d a flat', [df2['a'][i] for i in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
+        check('pkl2d d 2d', df2['d'].is_2d and df2['d'].cols == 2 and df2['d'].rows == 4)
+        check('pkl2d d flat', [df2['d'][i] for i in range(8)] == [1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0])
+        check('pkl2d dd 2d', df2['dd'].is_2d and df2['dd'].cols == 2 and df2['dd'].rows == 4)
+        check('pkl2d dd flat', [df2['dd'][i] for i in range(8)][:4] == [20230101, 20230102, 20230103, 20230104])
+        check('pkl2d dt 2d', df2['dt'].is_2d and df2['dt'].cols == 2 and df2['dt'].rows == 4)
+        check('pkl2d s 1d', [df2['s'][i] for i in range(4)] == ['x', 'y', 'z', 'w'])
+    finally:
+        os.unlink(fname)
+
+def test_standalone_convert_2d():
+    """standalone to_numeric/to_date/to_time/to_datetime 对 2D 输入保持同维度"""
+    a = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    r = to_numeric(a)
+    check('conv to_numeric 2d', r.is_2d and r.cols == 2 and r.rows == 4)
+    check('conv to_numeric flat', [r[i] for i in range(8)] == [1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0])
+
+    d = to_date(a)
+    check('conv to_date 2d', d.is_2d and d.cols == 2 and d.rows == 4)
+    t = to_time(a)
+    check('conv to_time 2d', t.is_2d and t.cols == 2 and t.rows == 4)
+    dt = to_datetime(a)
+    check('conv to_datetime 2d', dt.is_2d and dt.cols == 2 and dt.rows == 4)
+
+    one = IntColumn()
+    for v in [1, 2, 3]:
+        one.append(v)
+    r1 = to_numeric(one)
+    check('conv 1d unchanged', not r1.is_2d and [r1[i] for i in range(3)] == [1.0, 2.0, 3.0])
 
 def test_read_csv_auto():
     from fluidframe.core.fastdataframe import read_csv
@@ -2324,6 +2375,8 @@ def run_all():
     # I/O
     test_csv()
     test_pickle()
+    test_pickle_2d_roundtrip()
+    test_standalone_convert_2d()
     test_tsv()
     test_read_csv_auto()
 
