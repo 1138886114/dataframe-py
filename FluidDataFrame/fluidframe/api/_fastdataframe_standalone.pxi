@@ -80,8 +80,8 @@ def from_pickle(filename, bint allow_raw_pickle=False):
             if is_2d:
                 if total != rows * cols:
                     raise ValueError(f"DateColumn 2D size mismatch: expected {rows * cols}, got {total}")
-                dcol = DateColumn(max(rows, 1), cols=cols)
-                dcol.length = rows
+                dcol = DateColumn(max(total, 1), cols=cols)
+                dcol.length = total
                 dcol.set_meta_c(<int>cols, True, True)
                 dptr = <int32_t*>dcol.data_c
                 val_list = <list>values if type(values) is list else list(values)
@@ -104,8 +104,8 @@ def from_pickle(filename, bint allow_raw_pickle=False):
             if is_2d:
                 if total != rows * cols:
                     raise ValueError(f"DateTimeColumn 2D size mismatch: expected {rows * cols}, got {total}")
-                tcol = DateTimeColumn(max(rows, 1), cols=cols)
-                tcol.length = rows
+                tcol = DateTimeColumn(max(total, 1), cols=cols)
+                tcol.length = total
                 tcol.set_meta_c(<int>cols, True, True)
                 tptr = <int64_t*>tcol.data_c
                 val_list = <list>values if type(values) is list else list(values)
@@ -120,8 +120,8 @@ def from_pickle(filename, bint allow_raw_pickle=False):
             if is_2d:
                 if total != rows * cols:
                     raise ValueError(f"TimeColumn 2D size mismatch: expected {rows * cols}, got {total}")
-                qcol = TimeColumn(max(rows, 1), cols=cols)
-                qcol.length = rows
+                qcol = TimeColumn(max(total, 1), cols=cols)
+                qcol.length = total
                 qcol.set_meta_c(<int>cols, True, True)
                 dptr = <int32_t*>qcol.data_c
                 val_list = <list>values if type(values) is list else list(values)
@@ -373,7 +373,7 @@ def to_numeric(column, errors='coerce'):
     cdef bint is_2d_c = is2d and c > 1
     cdef Py_ssize_t alloc_size = (r * c) if is_2d_c else r
     cdef DoubleColumn res = DoubleColumn(max(alloc_size, 1))
-    res.length = r
+    res.length = alloc_size
     if is_2d_c:
         res.set_meta_c(<int>c, True, True)
 
@@ -381,10 +381,11 @@ def to_numeric(column, errors='coerce'):
     cdef bint raise_err = (errors == 'raise')
 
     if is_2d_c:
-        for i in range(r):
-            row = column[i]
-            for j in range(c):
-                s = str(row[j])
+        # 2D 扁平缓冲为列主序（先 col0 全部行，再 col1…）：cell = column[j * r + i]
+        for j in range(c):
+            for i in range(r):
+                idx = j * r + i
+                s = str(column[idx])
                 try:
                     res.data_c[idx] = float(s)
                 except (ValueError, TypeError):
@@ -417,17 +418,16 @@ def to_datetime(column, str fmt='', errors='coerce'):
     cdef Py_ssize_t i, j
 
     if is_2d_c:
-        for i in range(r):
-            row = column[i]
-            for j in range(c):
-                s = str(row[j])
+        # 2D 扁平缓冲为列主序：追加顺序须为 col0 全部行 → col1 全部行…
+        for j in range(c):
+            for i in range(r):
+                s = str(column[j * r + i])
                 try:
                     res.append(s)
                 except (ValueError, TypeError):
                     if raise_err:
                         raise ValueError(f"Could not convert '{s}' to datetime")
                     res.append(0)
-        res.length = r
         res.set_meta_c(<int>c, True, True)
     else:
         for i in range(r):
@@ -454,17 +454,16 @@ def to_date(column, str fmt='', errors='coerce'):
     cdef Py_ssize_t i, j
 
     if is_2d_c:
-        for i in range(r):
-            row = column[i]
-            for j in range(c):
-                s = str(row[j])
+        # 2D 扁平缓冲为列主序：追加顺序须为 col0 全部行 → col1 全部行…
+        for j in range(c):
+            for i in range(r):
+                s = str(column[j * r + i])
                 try:
                     res.append(s)
                 except (ValueError, TypeError):
                     if raise_err:
                         raise ValueError(f"Could not convert '{s}' to date")
                     res.append(0)
-        res.length = r
         res.set_meta_c(<int>c, True, True)
     else:
         for i in range(r):
@@ -491,17 +490,16 @@ def to_time(column, str fmt='', errors='coerce'):
     cdef Py_ssize_t i, j
 
     if is_2d_c:
-        for i in range(r):
-            row = column[i]
-            for j in range(c):
-                s = str(row[j])
+        # 2D 扁平缓冲为列主序：追加顺序须为 col0 全部行 → col1 全部行…
+        for j in range(c):
+            for i in range(r):
+                s = str(column[j * r + i])
                 try:
                     res.append(s)
                 except (ValueError, TypeError):
                     if raise_err:
                         raise ValueError(f"Could not convert '{s}' to time")
                     res.append(0)
-        res.length = r
         res.set_meta_c(<int>c, True, True)
     else:
         for i in range(r):

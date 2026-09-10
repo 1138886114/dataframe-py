@@ -130,7 +130,7 @@ cdef _to_pickle_impl(FastDataFrame self, filename):
                 dptr32 = <int32_t*>(<TimeColumn>col_obj).data_c
                 values = [dptr32[i] for i in range(total_cells)]
             else:
-                values = [col_obj[i] for i in range(r)]
+                values = [col_obj[i] for i in range(total_cells)]
             data['columns'][name] = (self._type_name(col_obj), values, r, c)
         else:
             values = [col_obj[i] for i in range(r)]
