@@ -1263,6 +1263,37 @@ cdef class FastDataFrame:
     def mode(self, col_names=None):
         return _mode_impl(self, col_names)
 
+    # 逐子列聚合（2D 列每个子列独立聚合，1D 列与普通聚合一致）
+    def mean_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'mean', col_names)
+
+    def sum_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'sum', col_names)
+
+    def min_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'min', col_names)
+
+    def max_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'max', col_names)
+
+    def std_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'std', col_names)
+
+    def var_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'var', col_names)
+
+    def median_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'median', col_names)
+
+    def quantile_withcol(self, q=0.5, col_names=None):
+        return _numeric_agg_arg_withcol_impl(self, 'quantile', col_names, q)
+
+    def mode_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'mode', col_names)
+
+    def describe_withcol(self):
+        return _describe_withcol_impl(self)
+
     def count(self, col_names=None):
         return _count_impl(self, col_names)
 

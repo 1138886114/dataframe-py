@@ -40,6 +40,196 @@ cdef _mode_impl(FastDataFrame self, col_names=None):
             result[name] = col.mode()
     return result
 
+
+cdef _numeric_agg_withcol_impl(FastDataFrame self, str method, col_names=None):
+    cdef dict result = {}
+    cdef str name
+    cdef object col
+    cdef bint is2d
+    cdef Py_ssize_t c, r, k, i, offset
+    cdef DoubleColumn buf
+    cdef int dtype
+    cdef int32_t* i_ptr
+    cdef double* d_ptr
+    cdef double* buf_ptr
+    cdef object meth
+    cdef list res_list
+
+    if col_names is None:
+        col_names = list(self.columns.keys())
+
+    for name in col_names:
+        if name not in self.columns:
+            continue
+        col = self.columns[name]
+        dtype = col.dtype
+
+        if dtype == TYPE_INT or dtype == TYPE_DOUBLE:
+            is2d, c, r = _col_shape_probe(col)
+            if is2d and c > 1:
+                res_list = []
+                if r > 0:
+                    buf = DoubleColumn(r)
+                    buf.length = r
+                    buf_ptr = buf.data_c
+                    meth = getattr(buf, method)
+
+                    if dtype == TYPE_INT:
+                        i_ptr = <int32_t*>(<IntColumn>col).data_c
+                        for k in range(c):
+                            offset = k * r
+                            for i in range(r):
+                                buf_ptr[i] = <double>i_ptr[offset + i]
+                            res_list.append(meth())
+                    else:
+                        d_ptr = <double*>(<DoubleColumn>col).data_c
+                        for k in range(c):
+                            offset = k * r
+                            for i in range(r):
+                                buf_ptr[i] = d_ptr[offset + i]
+                            res_list.append(meth())
+                else:
+                    # 空列边界情况保护：避免 r=0 且 2D 时返回单标量，破坏维度结构
+                    for k in range(c):
+                        res_list.append(getattr(col, method)())
+                result[name] = res_list
+            else:
+                result[name] = getattr(col, method)()
+
+    return result
+
+
+cdef _numeric_agg_arg_withcol_impl(FastDataFrame self, str method, col_names, arg):
+    cdef dict result = {}
+    cdef str name
+    cdef object col
+    cdef bint is2d
+    cdef Py_ssize_t c, r, k, i, offset
+    cdef DoubleColumn buf
+    cdef int dtype
+    cdef int32_t* i_ptr
+    cdef double* d_ptr
+    cdef double* buf_ptr
+    cdef object meth
+    cdef list res_list
+
+    if col_names is None:
+        col_names = list(self.columns.keys())
+
+    for name in col_names:
+        if name not in self.columns:
+            continue
+        col = self.columns[name]
+        dtype = col.dtype
+
+        if dtype == TYPE_INT or dtype == TYPE_DOUBLE:
+            is2d, c, r = _col_shape_probe(col)
+            if is2d and c > 1:
+                res_list = []
+                if r > 0:
+                    buf = DoubleColumn(r)
+                    buf.length = r
+                    buf_ptr = buf.data_c
+                    meth = getattr(buf, method)
+
+                    if dtype == TYPE_INT:
+                        i_ptr = <int32_t*>(<IntColumn>col).data_c
+                        for k in range(c):
+                            offset = k * r
+                            for i in range(r):
+                                buf_ptr[i] = <double>i_ptr[offset + i]
+                            res_list.append(meth(arg))
+                    else:
+                        d_ptr = <double*>(<DoubleColumn>col).data_c
+                        for k in range(c):
+                            offset = k * r
+                            for i in range(r):
+                                buf_ptr[i] = d_ptr[offset + i]
+                            res_list.append(meth(arg))
+                else:
+                    for k in range(c):
+                        res_list.append(getattr(col, method)(arg))
+                result[name] = res_list
+            else:
+                result[name] = getattr(col, method)(arg)
+
+    return result
+
+
+cdef _describe_withcol_impl(FastDataFrame self):
+    cdef dict stats = {}
+    cdef str name
+    cdef object col
+    cdef bint is2d
+    cdef Py_ssize_t c, r, k, i, offset
+    cdef DoubleColumn buf
+    cdef int dtype
+    cdef int32_t* i_ptr
+    cdef double* d_ptr
+    cdef double* buf_ptr
+    cdef list stats_list
+
+    for name, col in self.columns.items():
+        dtype = col.dtype
+        if dtype == TYPE_INT or dtype == TYPE_DOUBLE:
+            is2d, c, r = _col_shape_probe(col)
+            if is2d and c > 1:
+                stats_list = []
+                if r > 0:
+                    buf = DoubleColumn(r)
+                    buf.length = r
+                    buf_ptr = buf.data_c
+
+                    if dtype == TYPE_INT:
+                        i_ptr = <int32_t*>(<IntColumn>col).data_c
+                        for k in range(c):
+                            offset = k * r
+                            for i in range(r):
+                                buf_ptr[i] = <double>i_ptr[offset + i]
+                            stats_list.append({
+                                'count': r,
+                                'mean': buf.mean(),
+                                'std': buf.std(),
+                                'min': buf.min(),
+                                '50%': buf.median(),
+                                'max': buf.max(),
+                            })
+                    else:
+                        d_ptr = <double*>(<DoubleColumn>col).data_c
+                        for k in range(c):
+                            offset = k * r
+                            for i in range(r):
+                                buf_ptr[i] = d_ptr[offset + i]
+                            stats_list.append({
+                                'count': r,
+                                'mean': buf.mean(),
+                                'std': buf.std(),
+                                'min': buf.min(),
+                                '50%': buf.median(),
+                                'max': buf.max(),
+                            })
+                else:
+                    for k in range(c):
+                        stats_list.append({
+                            'count': 0,
+                            'mean': col.mean(),
+                            'std': col.std(),
+                            'min': col.min(),
+                            '50%': col.median(),
+                            'max': col.max(),
+                        })
+                stats[name] = stats_list
+            else:
+                stats[name] = {
+                    'count': r,
+                    'mean': col.mean(),
+                    'std': col.std(),
+                    'min': col.min(),
+                    '50%': col.median(),
+                    'max': col.max(),
+                }
+    return stats
+
 cdef _count_impl(FastDataFrame self, col_names=None):
     cdef dict result = {}
     cdef str name

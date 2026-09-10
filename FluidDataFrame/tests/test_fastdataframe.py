@@ -492,6 +492,42 @@ def test_2d_count_describe_info():
     check('2d info no physical cells', '8' not in info.split('Data columns')[1].split('dtypes')[0])
 
 
+def test_2d_agg_withcol():
+    """_withcol 聚合族：2D 列逐子列独立聚合（不跨子列混合），1D 列与普通聚合一致"""
+    df = FastDataFrame()
+    df.df_length = 4
+    df.columns['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    df.columns['d2d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
+    x = DoubleColumn()
+    for v in [1.0, 2.0, 3.0, 4.0]:
+        x.append(v)
+    df.columns['x'] = x
+
+    m = df.mean_withcol()
+    check('withcol mean 2d', m['a2d'] == [2.5, 25.0] and m['d2d'] == [2.5, 25.0])
+    check('withcol mean 1d', m['x'] == 2.5)
+    check('withcol sum', df.sum_withcol()['a2d'] == [10.0, 100.0])
+    check('withcol min', df.min_withcol()['a2d'] == [1.0, 10.0])
+    check('withcol max', df.max_withcol()['a2d'] == [4.0, 40.0])
+    check('withcol median', df.median_withcol()['a2d'] == [2.5, 25.0])
+    v = df.var_withcol()['a2d']
+    check('withcol var', abs(v[0] - 5.0 / 3.0) < 1e-9 and abs(v[1] - 500.0 / 3.0) < 1e-9)
+    s = df.std_withcol()['a2d']
+    check('withcol std', abs(s[0] - math.sqrt(5.0 / 3.0)) < 1e-9 and abs(s[1] - math.sqrt(500.0 / 3.0)) < 1e-9)
+    check('withcol quantile p25', df.quantile_withcol(0.25)['a2d'] == [1.75, 17.5])
+    check('withcol quantile p75', df.quantile_withcol(0.75)['a2d'] == [3.25, 32.5])
+    check('withcol mode', df.mode_withcol()['a2d'] == [[1.0, 2.0, 3.0, 4.0], [10.0, 20.0, 30.0, 40.0]])
+    check('withcol col_names', set(df.mean_withcol(['a2d']).keys()) == {'a2d'})
+
+    ds = df.describe_withcol()
+    check('withcol describe 2d count', ds['a2d'][0]['count'] == 4 and ds['a2d'][1]['count'] == 4)
+    check('withcol describe 2d mean', ds['a2d'][0]['mean'] == 2.5 and ds['a2d'][1]['mean'] == 25.0)
+    check('withcol describe 2d minmax', ds['a2d'][0]['min'] == 1.0 and ds['a2d'][0]['max'] == 4.0)
+    check('withcol describe 2d med', ds['d2d'][0]['50%'] == 2.5 and ds['d2d'][1]['50%'] == 25.0)
+    check('withcol describe 2d std', abs(ds['a2d'][0]['std'] - math.sqrt(5.0 / 3.0)) < 1e-9)
+    check('withcol describe 1d', ds['x']['mean'] == 2.5 and ds['x']['count'] == 4)
+
+
 # =====================================================================
 #  CSV / Pickle / TSV
 # =====================================================================
@@ -2371,6 +2407,7 @@ def run_all():
     # Describe
     test_describe()
     test_2d_count_describe_info()
+    test_2d_agg_withcol()
 
     # I/O
     test_csv()
