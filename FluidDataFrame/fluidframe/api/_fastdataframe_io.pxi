@@ -196,7 +196,9 @@ cdef _info_impl(FastDataFrame self):
     cdef char bytes_buf[16]
     cdef list lines = []
     cdef Py_ssize_t idx = 0
-    cdef Py_ssize_t col_bytes
+    cdef Py_ssize_t col_bytes, col_rows
+    cdef bint is2d
+    cdef Py_ssize_t c_probe, r_probe
     cdef str type_name, name
     cdef object col
 
@@ -209,8 +211,11 @@ cdef _info_impl(FastDataFrame self):
     for name, col in self.columns.items():
         type_name = self._type_name(col)
         col_bytes = col.get_size()
+        # Non-Null 显示逻辑行数：2D 列 physical length = rows*cols，须按 rows
+        is2d, c_probe, r_probe = _col_shape_probe(col)
+        col_rows = r_probe
         _c_fmt_bytes(bytes_buf, sizeof(bytes_buf), col_bytes)
-        lines.append(f" {idx}   {name:<10}{col.length:<10}{type_name:<10}{bytes_buf.decode('ascii')}")
+        lines.append(f" {idx}   {name:<10}{col_rows:<10}{type_name:<10}{bytes_buf.decode('ascii')}")
         idx += 1
 
     _c_fmt_bytes(bytes_buf, sizeof(bytes_buf), mem)

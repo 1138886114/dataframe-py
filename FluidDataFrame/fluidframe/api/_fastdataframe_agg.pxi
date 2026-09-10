@@ -43,26 +43,31 @@ cdef _mode_impl(FastDataFrame self, col_names=None):
 cdef _count_impl(FastDataFrame self, col_names=None):
     cdef dict result = {}
     cdef str name
-    cdef object col
     if col_names is None:
         col_names = list(self.columns.keys())
     for name in col_names:
         if name not in self.columns: continue
-        col = self.columns[name]
-        result[name] = col.length
+        # 逻辑行数统计：2D 列 physical length = rows*cols，count 须按 df_length（rows）
+        result[name] = self.df_length
     return result
 
 cdef _describe_impl(FastDataFrame self):
     cdef dict stats = {}
     cdef str name, val, top_val
-    cdef Py_ssize_t col_len, i, max_freq, freq_val
+    cdef Py_ssize_t col_len, i, max_freq, freq_val, col_rows
     cdef long long ts_min, ts_max
     cdef dict freq_map
+    cdef bint is2d
+    cdef Py_ssize_t c_probe, r_probe
     for name, col_obj in self.columns.items():
         col_len = col_obj.length
+        # 2D 列 count 取逻辑行数（physical length = rows*cols）；mean/std/... 沿用列级
+        # 扁平化语义（与 df.mean() 等列级聚合一致，全物理缓冲单元上计算）
+        is2d, c_probe, r_probe = _col_shape_probe(col_obj)
+        col_rows = r_probe
         if col_obj.dtype == TYPE_INT or col_obj.dtype == TYPE_DOUBLE:
             stats[name] = {
-                'count': col_len,
+                'count': col_rows,
                 'mean': col_obj.mean(),
                 'std': col_obj.std(),
                 'min': col_obj.min(),
@@ -81,7 +86,7 @@ cdef _describe_impl(FastDataFrame self):
                     max_freq = freq_val
                     top_val = val
             stats[name] = {
-                'count': col_len,
+                'count': col_rows,
                 'unique': len(freq_map),
                 'top': top_val,
                 'freq': max_freq,
@@ -94,7 +99,7 @@ cdef _describe_impl(FastDataFrame self):
             else:
                 ts_min = ts_max = 0
             stats[name] = {
-                'count': col_len,
+                'count': col_rows,
                 'min': ts_min,
                 'max': ts_max,
             }
@@ -110,7 +115,7 @@ cdef _describe_impl(FastDataFrame self):
                     max_freq = freq_val
                     top_val = val
             stats[name] = {
-                'count': col_len,
+                'count': col_rows,
                 'unique': len(freq_map),
                 'top': top_val,
                 'freq': max_freq,

@@ -468,6 +468,29 @@ def test_describe():
     check('describe mean', stats['id']['mean'] == 5.5)
     check('describe str count', stats['name']['count'] == 10)
 
+def test_2d_count_describe_info():
+    """2D 列：count/describe/info 以逻辑行数为准（physical length = rows*cols）"""
+    df = FastDataFrame()
+    df.df_length = 4
+    df.columns['a'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    df.columns['d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
+
+    cnt = df.count()
+    check('2d count logical rows', cnt['a'] == 4 and cnt['d'] == 4)
+    check('2d count matches df_length', cnt['a'] == df.df_length)
+
+    stats = df.describe()
+    check('2d describe count', stats['a']['count'] == 4 and stats['d']['count'] == 4)
+    # 列级统计沿用扁平化语义（与 df.mean() 一致）：a 全缓冲 [1..4,10..40]
+    check('2d describe mean', stats['a']['mean'] == 13.75)
+    check('2d describe min', stats['a']['min'] == 1)
+    check('2d describe max', stats['a']['max'] == 40)
+
+    info = df.info()
+    check('2d info str', isinstance(info, str))
+    check('2d info non-null rows', f' {4:<10}' in info)
+    check('2d info no physical cells', '8' not in info.split('Data columns')[1].split('dtypes')[0])
+
 
 # =====================================================================
 #  CSV / Pickle / TSV
@@ -928,6 +951,15 @@ def test_insert_column():
 
     df.insert_column('c', [100], pos=1)
     check('insert pos 1', list(df.columns.keys()) == ['b', 'c', 'a'])
+
+def test_insert_column_2d():
+    col = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
+    df = FastDataFrame()
+    df.insert_column('v2d', col)
+    check('insert 2d df_length rows', df.df_length == 4)
+    check('insert 2d shape', df.shape == (4, 1))
+    check('insert 2d col preserved', df['v2d'].is_2d and df['v2d'].cols == 2 and df['v2d'].rows == 4)
+    check('insert 2d count', df.count()['v2d'] == 4)
 
 def test_duplicate_column():
     df = make_complex_df().head(3)
@@ -2251,6 +2283,7 @@ def run_all():
 
     # Describe
     test_describe()
+    test_2d_count_describe_info()
 
     # I/O
     test_csv()
@@ -2296,6 +2329,7 @@ def run_all():
     # Column mutations
     test_rename()
     test_insert_column()
+    test_insert_column_2d()
     test_duplicate_column()
     test_assign()
     test_setitem()

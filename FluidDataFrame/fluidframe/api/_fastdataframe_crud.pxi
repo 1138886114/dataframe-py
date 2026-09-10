@@ -873,6 +873,8 @@ cdef _drop_raw_impl(FastDataFrame self, Py_ssize_t row_idx):
 
 cdef _insert_column_impl(FastDataFrame self, str col_name, object col_data, Py_ssize_t pos):
     cdef BaseColumn col
+    cdef bint is2d
+    cdef Py_ssize_t c_col, r_col
     if isinstance(col_data, BaseColumn):
         col = col_data
     elif isinstance(col_data, list):
@@ -880,8 +882,10 @@ cdef _insert_column_impl(FastDataFrame self, str col_name, object col_data, Py_s
     else:
         raise TypeError(f"Cannot create column from {type(col_data)}")
 
-    if self.df_length == 0 and col.length > 0:
-        self.df_length = col.length
+    # df_length 取逻辑行数：2D 列 length = rows*cols，须投影回 rows（1D 列 rows == length）
+    is2d, c_col, r_col = _col_shape_probe(col)
+    if self.df_length == 0 and r_col > 0:
+        self.df_length = <uint32_t>r_col
 
     cdef list names = list(self.columns.keys())
     cdef Py_ssize_t n = len(names)
