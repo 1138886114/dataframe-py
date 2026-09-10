@@ -1700,34 +1700,36 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.get_cols_c()
         cdef Py_ssize_t r = self.get_rows_c()
         cdef Py_ssize_t i, j, idx
+        cdef Py_ssize_t dst_base, src_base
         cdef int* res_ptr
         cdef int* src_ptr
         cdef IntColumn new_col
+
         if self.get_is_2d_c():
             new_col = IntColumn(max(n * c, 1), cols=c)
             new_col.length = n * c
+            new_col.set_meta_c(<int>c, True, True)
             res_ptr = new_col.data_c
             src_ptr = self.data_c
             with nogil:
                 for j in range(c):
+                    dst_base = j * n
+                    src_base = j * r
                     for i in range(n):
                         idx = indices[i]
-                        if 0 <= idx < r:
-                            res_ptr[j * n + i] = src_ptr[j * r + idx]
-                        else:
-                            res_ptr[j * n + i] = sentinel
+                        res_ptr[dst_base + i] = src_ptr[src_base + idx] if (idx >= 0 and idx < r) else sentinel
             return new_col
-        new_col = IntColumn(max(n, 1), cols=self.cols)
+
+        new_col = IntColumn(max(n, 1), cols=c)
         new_col.length = n
         res_ptr = new_col.data_c
         src_ptr = self.data_c
+        cdef Py_ssize_t my_len = self.length
+
         with nogil:
             for i in range(n):
                 idx = indices[i]
-                if 0 <= idx < self.length:
-                    res_ptr[i] = src_ptr[idx]
-                else:
-                    res_ptr[i] = sentinel
+                res_ptr[i] = src_ptr[idx] if (idx >= 0 and idx < my_len) else sentinel
         return new_col
 
     cpdef Py_ssize_t count_nonzero(self):

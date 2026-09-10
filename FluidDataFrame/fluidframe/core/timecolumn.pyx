@@ -313,22 +313,29 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, TimeColumn other):
-        cdef Py_ssize_t other_rows
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
+
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t other_c = other.get_cols_c()
+        cdef Py_ssize_t other_rows
+
         if self.get_is_2d_c() or other.get_is_2d_c():
-            if self.get_cols_c() != other.get_cols_c():
-                raise ValueError("Cannot concat 2D columns with different column counts")
+            if c != other_c:
+                if self.length == 0:
+                    c = other_c
+                else:
+                    raise ValueError(f"Cannot concat 2D columns with different column counts: {c} vs {other_c}")
             other_rows = other.get_rows_c()
             if other_rows == 0: return
-            self._reserve(self.length + other_rows * self.get_cols_c())
-            _col_concat_2d(self.data_c, &self.length, other.data_c, other_rows,
-                           self.get_cols_c(), sizeof(int32_t))
+
+            self._reserve(self.length + other_rows * c)
+            _col_concat_2d(self.data_c, &self.length, other.data_c, other_rows, c, sizeof(int32_t))
+            self.set_meta_c(<int>c, True, True)
             return
         if other.length == 0: return
         self._reserve(self.length + other.length)
-        _col_concat(self.data_c, &self.length, other.data_c, other.length,
-                     sizeof(int32_t))
+        _col_concat(self.data_c, &self.length, other.data_c, other.length, sizeof(int32_t))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

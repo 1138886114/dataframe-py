@@ -609,8 +609,11 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
         raise IndexError(f"Position {pos} out of range [0, {self.df_length}]")
 
     cdef Py_ssize_t orig_len = self.df_length
-    cdef Py_ssize_t ucs2_val_len, ucs2_start, _ci, _oi, _j2, _nr2, _nc2
+    cdef Py_ssize_t ucs2_val_len, ucs2_start, _ci, _oi, _j2
     cdef Py_ssize_t _ac_len, _ac_start, _ac_vlen, _ac_span, _ac_tail, _bc_len
+    cdef bint is2d
+    cdef Py_ssize_t c_out, r_out
+
     cdef int dtype
     cdef int32_t days
     cdef int64_t tmp_dt
@@ -620,93 +623,98 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
     cdef CategoryColumn catc_obj
     cdef str ucs2_val
     cdef bytes bval
-    cdef list shifted_cols = []
 
+    cdef list shifted_cols = []
+    cdef dict row_vals = {}
+
+    # 1. 预先抓取并验证，消除内层哈希消耗
     for col_name in self.columns:
         if col_name not in kwargs:
             raise ValueError(f"Missing value for column '{col_name}'")
+        row_vals[col_name] = kwargs[col_name]
+
     try:
         for col_name, col_obj in self.columns.items():
-            val = kwargs[col_name]
+            val = row_vals[col_name]
             dtype = col_obj.dtype
-            if (dtype == TYPE_INT or dtype == TYPE_DOUBLE or dtype == TYPE_DATE
-                    or dtype == TYPE_DATETIME or dtype == TYPE_TIME):
-                # 2D 可承载的定宽列：shift_right 负责给每个子列拉开空槽
+
+            # -------------------------------------------------------------
+            # 定宽列组：底层使用快速 1D/2D 平移宏
+            # -------------------------------------------------------------
+            if dtype in (TYPE_INT, TYPE_DOUBLE, TYPE_DATE, TYPE_DATETIME, TYPE_TIME):
                 self._shift_right(col_obj, pos)
-            # 变长列 (CHAR256/UCS2) 与 BOOL/CATEGORY 不走 shift：其分支直接完成
-            # “腾位 + 写入”一体的插入（变长列无固定跨步，shift 无意义）。
-            shifted_cols.append(col_name)
+                shifted_cols.append(col_name) # 此时 length 已经成功 +1，安全入列
 
-            if dtype == TYPE_INT:
-                if isinstance(val, int) and (val > 2147483647 or val < -2147483648):
-                    raise OverflowError(f"Value {val} out of range for int32")
-                if (<IntColumn>col_obj).get_is_2d_c():
-                    _nr2 = (<IntColumn>col_obj).get_rows_c()
-                    _nc2 = (<IntColumn>col_obj).get_cols_c()
-                    for _j2 in range(_nc2):
-                        (<IntColumn>col_obj).data_c[_j2 * _nr2 + pos] = <int>val[_j2]
-                else:
-                    (<IntColumn>col_obj).data_c[pos] = <int>val
+                _probe_shape(col_obj, &is2d, &c_out, &r_out) # 获取新分配好的维度
 
-            elif dtype == TYPE_DOUBLE:
-                if (<DoubleColumn>col_obj).get_is_2d_c():
-                    _nr2 = (<DoubleColumn>col_obj).get_rows_c()
-                    _nc2 = (<DoubleColumn>col_obj).get_cols_c()
-                    for _j2 in range(_nc2):
-                        (<DoubleColumn>col_obj).data_c[_j2 * _nr2 + pos] = <double>val[_j2]
-                else:
-                    (<DoubleColumn>col_obj).data_c[pos] = <double>val
+                if dtype == TYPE_INT:
+                    if isinstance(val, int) and (val > 2147483647 or val < -2147483648):
+                        raise OverflowError(f"Value {val} out of range for int32")
+                    if is2d and c_out > 1:
+                        for _j2 in range(c_out):
+                            (<IntColumn>col_obj).data_c[_j2 * r_out + pos] = <int>val[_j2]
+                    else:
+                        (<IntColumn>col_obj).data_c[pos] = <int>val
 
-            elif dtype == TYPE_DATE:
-                if isinstance(val, int) and val > 10000000:
-                    days = _ymd_to_days(val // 10000, (val // 100) % 100, val % 100)
-                else:
-                    days = <int32_t>val
-                if (<DateColumn>col_obj).get_is_2d_c():
-                    _nr2 = (<DateColumn>col_obj).get_rows_c()
-                    _nc2 = (<DateColumn>col_obj).get_cols_c()
-                    for _j2 in range(_nc2):
-                        (<DateColumn>col_obj).data_c[_j2 * _nr2 + pos] = days
-                else:
-                    (<DateColumn>col_obj).data_c[pos] = days
-            elif dtype == TYPE_DATETIME:
-                if isinstance(val, int) and val > 10000000:
-                    days = _ymd_to_days(val // 10000, (val // 100) % 100, val % 100)
-                    tmp_dt = <int64_t>days * 86400000000LL
-                else:
-                    tmp_dt = <int64_t>val * 1000000LL
+                elif dtype == TYPE_DOUBLE:
+                    if is2d and c_out > 1:
+                        for _j2 in range(c_out):
+                            (<DoubleColumn>col_obj).data_c[_j2 * r_out + pos] = <double>val[_j2]
+                    else:
+                        (<DoubleColumn>col_obj).data_c[pos] = <double>val
 
-                if (<DateTimeColumn>col_obj).get_is_2d_c():
-                    _nr2 = (<DateTimeColumn>col_obj).get_rows_c()
-                    _nc2 = (<DateTimeColumn>col_obj).get_cols_c()
-                    for _j2 in range(_nc2):
-                        (<DateTimeColumn>col_obj).data_c[_j2 * _nr2 + pos] = tmp_dt
-                else:
-                    (<DateTimeColumn>col_obj).data_c[pos] = tmp_dt
+                elif dtype == TYPE_DATE:
+                    if isinstance(val, int) and val > 10000000:
+                        days = _ymd_to_days(val // 10000, (val // 100) % 100, val % 100)
+                    else:
+                        days = <int32_t>val
+                    if is2d and c_out > 1:
+                        for _j2 in range(c_out):
+                            (<DateColumn>col_obj).data_c[_j2 * r_out + pos] = days
+                    else:
+                        (<DateColumn>col_obj).data_c[pos] = days
 
-            elif dtype == TYPE_TIME:
-                if not isinstance(val, int):
-                    raise TypeError(f"Time column expects int, got {type(val)}")
-                if (<TimeColumn>col_obj).get_is_2d_c():
-                    _nr2 = (<TimeColumn>col_obj).get_rows_c()
-                    _nc2 = (<TimeColumn>col_obj).get_cols_c()
-                    for _j2 in range(_nc2):
-                        (<TimeColumn>col_obj).data_c[_j2 * _nr2 + pos] = <int32_t>val
-                else:
-                    (<TimeColumn>col_obj).data_c[pos] = <int32_t>val
+                elif dtype == TYPE_DATETIME:
+                    if isinstance(val, int) and val > 10000000:
+                        days = _ymd_to_days(val // 10000, (val // 100) % 100, val % 100)
+                        tmp_dt = <int64_t>days * 86400000000LL
+                    else:
+                        tmp_dt = <int64_t>val * 1000000LL
+                    if is2d and c_out > 1:
+                        for _j2 in range(c_out):
+                            (<DateTimeColumn>col_obj).data_c[_j2 * r_out + pos] = tmp_dt
+                    else:
+                        (<DateTimeColumn>col_obj).data_c[pos] = tmp_dt
 
+                elif dtype == TYPE_TIME:
+                    if not isinstance(val, int):
+                        raise TypeError(f"Time column expects int, got {type(val)}")
+                    if is2d and c_out > 1:
+                        for _j2 in range(c_out):
+                            (<TimeColumn>col_obj).data_c[_j2 * r_out + pos] = <int32_t>val
+                    else:
+                        (<TimeColumn>col_obj).data_c[pos] = <int32_t>val
+
+            # -------------------------------------------------------------
+            # 变长列组：ASCII / UCS2 (平移 + 写入 一体化处理)
+            # -------------------------------------------------------------
             elif dtype == TYPE_CHAR256:
                 cc_obj = <AsciiColumn>col_obj
                 if cc_obj.length >= cc_obj.capacity:
                     cc_obj._reserve_rows(max(16, cc_obj.capacity * 2))
-                bval = ('' if val is None else str(val)).encode('ascii', errors='ignore')
+
+                if isinstance(val, bytes): bval = val
+                elif isinstance(val, str): bval = val.encode('ascii', errors='ignore')
+                else: bval = ('' if val is None else str(val)).encode('ascii', errors='ignore')
+
                 _ac_len = cc_obj.length
                 _ac_start = cc_obj.offsets_c[pos]
                 _ac_vlen = len(bval)
                 _ac_span = _ac_vlen + 1
+
                 if cc_obj.byte_length + _ac_span > cc_obj.byte_capacity:
-                    cc_obj._reserve_bytes(max(cc_obj.byte_capacity * 2,
-                                              cc_obj.byte_length + _ac_span + 4096))
+                    cc_obj._reserve_bytes(max(cc_obj.byte_capacity * 2, cc_obj.byte_length + _ac_span + 4096))
+
                 _ac_tail = cc_obj.byte_length - _ac_start
                 if _ac_tail > 0:
                     memmove(cc_obj.data_c + _ac_start + _ac_span,
@@ -716,26 +724,36 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
                     memcpy(cc_obj.data_c + _ac_start, <char*>bval, _ac_vlen)
                 cc_obj.data_c[_ac_start + _ac_vlen] = 0
                 cc_obj.byte_length += _ac_span
-                for _oi in range(_ac_len, pos, -1):
-                    cc_obj.offsets_c[_oi + 1] = cc_obj.offsets_c[_oi] + _ac_span
-                cc_obj.offsets_c[pos] = _ac_start
+
+                if _ac_len > pos:
+                    memmove(cc_obj.offsets_c + pos + 2,
+                            cc_obj.offsets_c + pos + 1,
+                            (_ac_len - pos) * sizeof(Py_ssize_t))
                 cc_obj.offsets_c[pos + 1] = _ac_start + _ac_span
+                for _oi in range(pos + 2, _ac_len + 2):
+                    cc_obj.offsets_c[_oi] += _ac_span
+
                 cc_obj.length = _ac_len + 1
+                shifted_cols.append(col_name)
+
             elif dtype == TYPE_UCS2:
                 ucs2_obj = <UCS2Column>col_obj
                 if ucs2_obj.length >= ucs2_obj.capacity:
                     ucs2_obj._reserve_rows(max(16, ucs2_obj.capacity * 2))
-                ucs2_val = val if isinstance(val, str) else str(val)
+
+                ucs2_val = val if isinstance(val, str) else ('' if val is None else str(val))
                 ucs2_val_len = len(ucs2_val)
                 ucs2_start = ucs2_obj.offsets_c[pos]
+
                 if ucs2_val_len > 0 and ucs2_obj.char_length + ucs2_val_len > ucs2_obj.char_capacity:
-                    ucs2_obj._reserve_chars(max(ucs2_obj.char_capacity * 2,
-                                                ucs2_obj.char_length + ucs2_val_len + 1024))
+                    ucs2_obj._reserve_chars(max(ucs2_obj.char_capacity * 2, ucs2_obj.char_length + ucs2_val_len + 1024))
+
                 if ucs2_val_len > 0:
                     if ucs2_obj.char_length - ucs2_start > 0:
                         memmove(ucs2_obj.chars_c + ucs2_start + ucs2_val_len,
                                 ucs2_obj.chars_c + ucs2_start,
                                 (ucs2_obj.char_length - ucs2_start) * sizeof(Py_UCS2))
+
                     if PyUnicode_KIND(ucs2_val) == PyUnicode_2BYTE_KIND:
                         memcpy(ucs2_obj.chars_c + ucs2_start,
                                PyUnicode_DATA(ucs2_val),
@@ -744,40 +762,56 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
                         for _ci in range(ucs2_val_len):
                             ucs2_obj.chars_c[ucs2_start + _ci] = <Py_UCS2>PyUnicode_READ_CHAR(ucs2_val, _ci)
                     ucs2_obj.char_length += ucs2_val_len
-                if ucs2_obj.length - pos > 0:
+
+                if ucs2_obj.length > pos:
                     memmove(ucs2_obj.offsets_c + pos + 2,
                             ucs2_obj.offsets_c + pos + 1,
                             (ucs2_obj.length - pos) * sizeof(Py_ssize_t))
                 ucs2_obj.offsets_c[pos + 1] = ucs2_start + ucs2_val_len
                 for _oi in range(pos + 2, ucs2_obj.length + 2):
                     ucs2_obj.offsets_c[_oi] += ucs2_val_len
-                ucs2_obj.length += 1
 
+                ucs2_obj.length += 1
+                shifted_cols.append(col_name)
+
+            # -------------------------------------------------------------
+            # 固定一维结构组：离散类型
+            # -------------------------------------------------------------
             elif dtype == TYPE_BOOL:
                 bc_obj = <BoolColumn>col_obj
                 _bc_len = bc_obj.length
                 if _bc_len >= bc_obj.capacity:
                     bc_obj._reserve(max(16, bc_obj.capacity * 2))
                 _c_shift_right(bc_obj.data_c, pos, _bc_len, sizeof(unsigned char))
-                bc_obj.length = _bc_len + 1
                 bc_obj.data_c[pos] = 1 if val else 0
+                bc_obj.length = _bc_len + 1
+                shifted_cols.append(col_name)
+
             elif dtype == TYPE_CATEGORY:
                 catc_obj = <CategoryColumn>col_obj
                 _bc_len = catc_obj.length
                 if _bc_len >= catc_obj.capacity:
                     catc_obj._reserve(max(16, catc_obj.capacity * 2))
                 _c_shift_right(catc_obj.codes_c, pos, _bc_len, sizeof(int))
-                catc_obj.length = _bc_len + 1
+
                 if val is None:
                     catc_obj.codes_c[pos] = catc_obj._get_or_add_code('')
                 else:
                     catc_obj.codes_c[pos] = catc_obj._get_or_add_code(str(val))
+
+                catc_obj.length = _bc_len + 1
+                shifted_cols.append(col_name)
+
+        # -------------------------------------------------------------
+        # 整体 DataFrame 状态提交
+        # -------------------------------------------------------------
         self.df_length += 1
         if self.index is not None:
             if self.index.index_type == INDEX_RANGE or self.index.index_type == INDEX_INT:
                 self.index.length = self.df_length
 
     except Exception:
+        # 【完美回滚】：由于 shifted_cols 严格遵循了修改后入列的纪律
         self.df_length = orig_len
         for cn in shifted_cols:
             self._shift_left(self.columns[cn], pos)
