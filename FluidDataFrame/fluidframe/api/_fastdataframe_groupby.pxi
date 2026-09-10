@@ -3,7 +3,7 @@
 # Replaces standalone groupby.pyx with accessor pattern like _DataFrameMetricAccessor
 
 from libc.stdint cimport uint64_t, int32_t
-from libc.math cimport NAN, INFINITY
+from libc.math cimport NAN, INFINITY, sqrt
 from cpython.unicode cimport Py_UCS2
 from fluidframe.core._base cimport aligned_malloc, aligned_realloc, os_aligned_free
 
@@ -184,6 +184,8 @@ cdef struct _ByColPtrs:
     void** data
     void** offsets
     int* types
+    int* cols          # 每列子列数：2D 列 = cols，其余 = 1
+    Py_ssize_t* strides  # 每列行步长（2D 列 data_c[sub*stride + row]），1D 列 = length
     int count
 
 cdef _ByColPtrs _extract_by_col_ptrs(FastDataFrame df, list by_cols):
@@ -193,19 +195,33 @@ cdef _ByColPtrs _extract_by_col_ptrs(FastDataFrame df, list by_cols):
     ptrs.data = <void**>aligned_malloc(max(n, 1) * sizeof(void*))
     ptrs.offsets = <void**>aligned_malloc(max(n, 1) * sizeof(void*))
     ptrs.types = <int*>aligned_malloc(max(n, 1) * sizeof(int))
-    if not ptrs.data or not ptrs.offsets or not ptrs.types:
+    ptrs.cols = <int*>aligned_malloc(max(n, 1) * sizeof(int))
+    ptrs.strides = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
+    if not ptrs.data or not ptrs.offsets or not ptrs.types or not ptrs.cols or not ptrs.strides:
         if ptrs.data: os_aligned_free(ptrs.data)
         if ptrs.offsets: os_aligned_free(ptrs.offsets)
         if ptrs.types: os_aligned_free(ptrs.types)
+        if ptrs.cols: os_aligned_free(ptrs.cols)
+        if ptrs.strides: os_aligned_free(ptrs.strides)
         raise MemoryError()
     cdef str col_name
     cdef BaseColumn col
     cdef int idx
+    cdef bint is2d
+    cdef Py_ssize_t c_col, r_col
     for idx in range(n):
         col_name = by_cols[idx]
         col = df.columns[col_name]
         ptrs.types[idx] = col.dtype
         ptrs.offsets[idx] = NULL
+        # 2D 列（is_2d 且 cols>1）：按完整行向量参与分组；其余列子列数=1
+        is2d, c_col, r_col = _col_shape_probe(col)
+        if is2d and c_col > 1 and col.dtype != TYPE_CHAR256 and col.dtype != TYPE_UCS2:
+            ptrs.cols[idx] = <int>c_col
+            ptrs.strides[idx] = r_col
+        else:
+            ptrs.cols[idx] = 1
+            ptrs.strides[idx] = df.df_length
         if col.dtype == TYPE_INT:
             ptrs.data[idx] = <void*>(<IntColumn>col).data_c
         elif col.dtype == TYPE_DOUBLE:
@@ -232,6 +248,8 @@ cdef void _free_by_col_ptrs(_ByColPtrs ptrs) nogil:
     if ptrs.data != NULL: os_aligned_free(ptrs.data)
     if ptrs.offsets != NULL: os_aligned_free(ptrs.offsets)
     if ptrs.types != NULL: os_aligned_free(ptrs.types)
+    if ptrs.cols != NULL: os_aligned_free(ptrs.cols)
+    if ptrs.strides != NULL: os_aligned_free(ptrs.strides)
 
 # ============================================================
 # Fast row hashing and comparison using extracted pointers
@@ -239,7 +257,7 @@ cdef void _free_by_col_ptrs(_ByColPtrs ptrs) nogil:
 
 cdef uint64_t _gb_hash_row(_ByColPtrs ptrs, Py_ssize_t row_idx) nogil:
     cdef uint64_t h = 14695981039346656037ULL
-    cdef int col_idx
+    cdef int col_idx, sub, n_sub
     cdef uint64_t val
     cdef int* i_data
     cdef double* d_data
@@ -247,64 +265,78 @@ cdef uint64_t _gb_hash_row(_ByColPtrs ptrs, Py_ssize_t row_idx) nogil:
     cdef char* c_data
     cdef unsigned char* b_data
     cdef Py_UCS2* u_data
-    cdef Py_ssize_t start, end
+    cdef Py_ssize_t start, end, stride
 
     for col_idx in range(ptrs.count):
+        n_sub = ptrs.cols[col_idx]
+        stride = ptrs.strides[col_idx]
         if ptrs.types[col_idx] == TYPE_INT:
             i_data = <int*>ptrs.data[col_idx]
-            val = <uint64_t>i_data[row_idx]
+            for sub in range(n_sub):
+                h = _gb_mix_hash(h, <uint64_t>i_data[sub * stride + row_idx])
         elif ptrs.types[col_idx] == TYPE_DOUBLE:
             d_data = <double*>ptrs.data[col_idx]
-            val = (<uint64_t*>(&d_data[row_idx]))[0]
+            for sub in range(n_sub):
+                val = (<uint64_t*>(&d_data[sub * stride + row_idx]))[0]
+                h = _gb_mix_hash(h, val)
         elif ptrs.types[col_idx] == TYPE_DATE:
             t_data = <long long*>ptrs.data[col_idx]
-            val = <uint64_t>t_data[row_idx]
+            for sub in range(n_sub):
+                h = _gb_mix_hash(h, <uint64_t>t_data[sub * stride + row_idx])
         elif ptrs.types[col_idx] == TYPE_CHAR256:
             c_data = <char*>ptrs.data[col_idx]
             start = (<Py_ssize_t*>ptrs.offsets[col_idx])[row_idx]
             end = (<Py_ssize_t*>ptrs.offsets[col_idx])[row_idx + 1]
-            val = _gb_fnv1a_bytes(c_data + start, end - start)
+            h = _gb_mix_hash(h, _gb_fnv1a_bytes(c_data + start, end - start))
         elif ptrs.types[col_idx] == TYPE_UCS2:
             u_data = <Py_UCS2*>ptrs.data[col_idx]
             start = (<Py_ssize_t*>ptrs.offsets[col_idx])[row_idx]
             end = (<Py_ssize_t*>ptrs.offsets[col_idx])[row_idx + 1]
-            val = _gb_fnv1a_ucs2(u_data + start, end - start)
+            h = _gb_mix_hash(h, _gb_fnv1a_ucs2(u_data + start, end - start))
         elif ptrs.types[col_idx] == TYPE_BOOL:
             b_data = <unsigned char*>ptrs.data[col_idx]
-            val = <uint64_t>b_data[row_idx]
+            for sub in range(n_sub):
+                h = _gb_mix_hash(h, <uint64_t>b_data[sub * stride + row_idx])
         elif ptrs.types[col_idx] == TYPE_CATEGORY:
             i_data = <int*>ptrs.data[col_idx]
-            val = <uint64_t>i_data[row_idx]
+            for sub in range(n_sub):
+                h = _gb_mix_hash(h, <uint64_t>i_data[sub * stride + row_idx])
         elif ptrs.types[col_idx] == TYPE_DATETIME:
             t_data = <long long*>ptrs.data[col_idx]
-            val = <uint64_t>t_data[row_idx]
+            for sub in range(n_sub):
+                h = _gb_mix_hash(h, <uint64_t>t_data[sub * stride + row_idx])
         elif ptrs.types[col_idx] == TYPE_TIME:
             i_data = <int*>ptrs.data[col_idx]
-            val = <uint64_t>i_data[row_idx]
+            for sub in range(n_sub):
+                h = _gb_mix_hash(h, <uint64_t>i_data[sub * stride + row_idx])
         else:
-            val = 0
-        h = _gb_mix_hash(h, val)
+            h = _gb_mix_hash(h, 0)
     return h
 
 cdef bint _gb_rows_equal(_ByColPtrs ptrs, Py_ssize_t row1, Py_ssize_t row2) noexcept nogil:
-    cdef int col_idx
+    cdef int col_idx, sub, n_sub
     cdef int* i_data
     cdef double* d_data
     cdef long long* t_data
     cdef char* c_data
     cdef unsigned char* b_data
-    cdef Py_ssize_t start1, end1, start2, end2, k
+    cdef Py_ssize_t start1, end1, start2, end2, k, stride
 
     for col_idx in range(ptrs.count):
+        n_sub = ptrs.cols[col_idx]
+        stride = ptrs.strides[col_idx]
         if ptrs.types[col_idx] == TYPE_INT:
             i_data = <int*>ptrs.data[col_idx]
-            if i_data[row1] != i_data[row2]: return False
+            for sub in range(n_sub):
+                if i_data[sub * stride + row1] != i_data[sub * stride + row2]: return False
         elif ptrs.types[col_idx] == TYPE_DOUBLE:
             d_data = <double*>ptrs.data[col_idx]
-            if d_data[row1] != d_data[row2]: return False
+            for sub in range(n_sub):
+                if d_data[sub * stride + row1] != d_data[sub * stride + row2]: return False
         elif ptrs.types[col_idx] == TYPE_DATE:
             t_data = <long long*>ptrs.data[col_idx]
-            if t_data[row1] != t_data[row2]: return False
+            for sub in range(n_sub):
+                if t_data[sub * stride + row1] != t_data[sub * stride + row2]: return False
         elif ptrs.types[col_idx] == TYPE_CHAR256:
             c_data = <char*>ptrs.data[col_idx]
             start1 = (<Py_ssize_t*>ptrs.offsets[col_idx])[row1]
@@ -325,16 +357,20 @@ cdef bint _gb_rows_equal(_ByColPtrs ptrs, Py_ssize_t row1, Py_ssize_t row2) noex
                 if (<Py_UCS2*>i_data)[start1 + k] != (<Py_UCS2*>i_data)[start2 + k]: return False
         elif ptrs.types[col_idx] == TYPE_BOOL:
             b_data = <unsigned char*>ptrs.data[col_idx]
-            if b_data[row1] != b_data[row2]: return False
+            for sub in range(n_sub):
+                if b_data[sub * stride + row1] != b_data[sub * stride + row2]: return False
         elif ptrs.types[col_idx] == TYPE_CATEGORY:
             i_data = <int*>ptrs.data[col_idx]
-            if i_data[row1] != i_data[row2]: return False
+            for sub in range(n_sub):
+                if i_data[sub * stride + row1] != i_data[sub * stride + row2]: return False
         elif ptrs.types[col_idx] == TYPE_DATETIME:
             t_data = <long long*>ptrs.data[col_idx]
-            if t_data[row1] != t_data[row2]: return False
+            for sub in range(n_sub):
+                if t_data[sub * stride + row1] != t_data[sub * stride + row2]: return False
         elif ptrs.types[col_idx] == TYPE_TIME:
             i_data = <int*>ptrs.data[col_idx]
-            if i_data[row1] != i_data[row2]: return False
+            for sub in range(n_sub):
+                if i_data[sub * stride + row1] != i_data[sub * stride + row2]: return False
     return True
 
 # ============================================================
@@ -382,15 +418,114 @@ cdef int _gb_build_groups(FastDataFrame df, list by_cols,
 # Aggregation helpers
 # ============================================================
 
-cdef DoubleColumn _gb_native_agg(FastDataFrame df, _GroupRows* gr, str col_name, str func):
-    cdef DoubleColumn res_col = DoubleColumn(max(gr.count, 1))
-    res_col.length = gr.count
-    cdef BaseColumn orig_col = df.columns[col_name]
-    cdef int g_id
-    cdef Py_ssize_t sz
-    cdef _AggFunc agg_type = _resolve_agg_func(func)
+cdef double _gb_agg_int_sub(int* ptr, Py_ssize_t stride, int sub, Py_ssize_t* idxs, Py_ssize_t sz, _AggFunc agg) noexcept nogil:
+    """2D 列单子列行聚集（语义与 IntColumn._sum_rows/_mean_rows/... 一致）"""
+    cdef double val = 0.0, m = 0.0, ssq = 0.0, d
+    cdef Py_ssize_t i, base = sub * stride
+    if agg == _AGG_SUM:
+        for i in range(sz): val += ptr[base + idxs[i]]
+        return val
+    if agg == _AGG_MEAN:
+        if sz == 0: return NAN
+        for i in range(sz): val += ptr[base + idxs[i]]
+        return val / <double>sz
+    if agg == _AGG_MIN:
+        if sz == 0: return NAN
+        val = <double>ptr[base + idxs[0]]
+        for i in range(1, sz):
+            d = <double>ptr[base + idxs[i]]
+            if d < val: val = d
+        return val
+    if agg == _AGG_MAX:
+        if sz == 0: return NAN
+        val = <double>ptr[base + idxs[0]]
+        for i in range(1, sz):
+            d = <double>ptr[base + idxs[i]]
+            if d > val: val = d
+        return val
+    if agg == _AGG_VAR or agg == _AGG_STD:
+        if sz == 0: return NAN
+        for i in range(sz): val += ptr[base + idxs[i]]
+        m = val / <double>sz
+        for i in range(sz):
+            d = <double>ptr[base + idxs[i]] - m
+            ssq += d * d
+        if agg == _AGG_VAR:
+            return ssq / <double>(sz - 1)
+        return sqrt(ssq / <double>(sz - 1))
+    return NAN
 
-    for g_id in range(gr.count):
+cdef double _gb_agg_double_sub(double* ptr, Py_ssize_t stride, int sub, Py_ssize_t* idxs, Py_ssize_t sz, _AggFunc agg) noexcept nogil:
+    cdef double val = 0.0, m = 0.0, ssq = 0.0, d
+    cdef Py_ssize_t i, base = sub * stride
+    if agg == _AGG_SUM:
+        for i in range(sz): val += ptr[base + idxs[i]]
+        return val
+    if agg == _AGG_MEAN:
+        if sz == 0: return NAN
+        for i in range(sz): val += ptr[base + idxs[i]]
+        return val / <double>sz
+    if agg == _AGG_MIN:
+        if sz == 0: return NAN
+        val = ptr[base + idxs[0]]
+        for i in range(1, sz):
+            d = ptr[base + idxs[i]]
+            if d < val: val = d
+        return val
+    if agg == _AGG_MAX:
+        if sz == 0: return NAN
+        val = ptr[base + idxs[0]]
+        for i in range(1, sz):
+            d = ptr[base + idxs[i]]
+            if d > val: val = d
+        return val
+    if agg == _AGG_VAR or agg == _AGG_STD:
+        if sz == 0: return NAN
+        for i in range(sz): val += ptr[base + idxs[i]]
+        m = val / <double>sz
+        for i in range(sz):
+            d = ptr[base + idxs[i]] - m
+            ssq += d * d
+        if agg == _AGG_VAR:
+            return ssq / <double>(sz - 1)
+        return sqrt(ssq / <double>(sz - 1))
+    return NAN
+
+cdef DoubleColumn _gb_native_agg(FastDataFrame df, _GroupRows* gr, str col_name, str func):
+    cdef BaseColumn orig_col = df.columns[col_name]
+    cdef bint is2d
+    cdef Py_ssize_t c_col, r_col
+    is2d, c_col, r_col = _col_shape_probe(orig_col)
+    cdef Py_ssize_t out_n = gr.count
+    cdef _AggFunc agg_type = _resolve_agg_func(func)
+    cdef int g_id, sub
+    cdef Py_ssize_t sz
+    cdef DoubleColumn res_col
+    cdef int* i_ptr
+    cdef double* d_ptr
+
+    # 2D 列：逐子列独立聚合，输出保持源维度的 2D 结果列（列优先 data_c[sub*out_n + g]）
+    if is2d and c_col > 1:
+        res_col = DoubleColumn(max(out_n * c_col, 1), cols=c_col)
+        res_col.length = out_n * c_col
+        if orig_col.dtype == TYPE_DOUBLE:
+            d_ptr = (<DoubleColumn>orig_col).data_c
+            for sub in range(c_col):
+                for g_id in range(out_n):
+                    sz = gr.row_sizes[g_id]
+                    res_col.data_c[sub * out_n + g_id] = _gb_agg_double_sub(d_ptr, r_col, sub, gr.rows[g_id], sz, agg_type)
+        else:
+            i_ptr = (<IntColumn>orig_col).data_c
+            for sub in range(c_col):
+                for g_id in range(out_n):
+                    sz = gr.row_sizes[g_id]
+                    res_col.data_c[sub * out_n + g_id] = _gb_agg_int_sub(i_ptr, r_col, sub, gr.rows[g_id], sz, agg_type)
+        return res_col
+
+    # 1D 快速路径
+    res_col = DoubleColumn(max(out_n, 1))
+    res_col.length = out_n
+    for g_id in range(out_n):
         sz = gr.row_sizes[g_id]
         if orig_col.dtype == TYPE_DOUBLE:
             if agg_type == _AGG_SUM:
@@ -437,6 +572,17 @@ cdef object _gb_extract_key_column(FastDataFrame df, _GroupRows* gr, str col_nam
     cdef Py_ssize_t* fs
     cdef FastDataFrame tmp
 
+    # 2D 列：整行向量为分组键（_col_row_key 语义），提取每组代表行的完整向量
+    #   走 _take（take_by_indices 保留 2D 结构，子列按列优先复制）
+    if _col_is_2d(orig):
+        fs = <Py_ssize_t*>aligned_malloc(max(gr.count, 1) * sizeof(Py_ssize_t))
+        if not fs: raise MemoryError()
+        for i in range(gr.count):
+            fs[i] = gr.rows[i][0]
+        tmp = df._take(fs, gr.count)
+        os_aligned_free(fs)
+        return tmp.columns[col_name]
+
     if orig.dtype == TYPE_INT:
         res_int = IntColumn(max(gr.count, 1))
         res_int.length = gr.count
@@ -459,6 +605,7 @@ cdef object _gb_extract_key_column(FastDataFrame df, _GroupRows* gr, str col_nam
         return tmp.columns[col_name]
 
 cdef IntColumn _gb_native_idx(FastDataFrame df, _GroupRows* gr, str col_name, bint find_max):
+    # 2D 列取主子列（sub=0）比较：idxmax/idxmin 不确定向量级比较，沿用 _get_col_value_as_double 的 sub0 约定
     cdef IntColumn res_col = IntColumn(max(gr.count, 1))
     res_col.length = gr.count
     cdef BaseColumn orig_col = df.columns[col_name]
@@ -486,56 +633,78 @@ cdef IntColumn _gb_native_idx(FastDataFrame df, _GroupRows* gr, str col_name, bi
         res_col.data_c[g_id] = <int>best_row
     return res_col
 
+cdef object _gb_python_compute(list vals, str func_name):
+    """单子列 Python 级聚合计算（维持原 median/quantile 的语义不变）"""
+    cdef list sorted_vals
+    cdef Py_ssize_t mid
+    if func_name == 'sum':
+        return sum(vals)
+    elif func_name == 'mean':
+        return sum(vals) / len(vals) if vals else NAN
+    elif func_name == 'min':
+        return min(vals) if vals else NAN
+    elif func_name == 'max':
+        return max(vals) if vals else NAN
+    elif func_name == 'count':
+        return len(vals)
+    elif func_name == 'median':
+        if not vals:
+            return NAN
+        sorted_vals = sorted(vals)
+        mid = len(sorted_vals) // 2
+        if len(sorted_vals) % 2 == 0:
+            return (sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0
+        return sorted_vals[mid]
+    elif func_name == 'quantile':
+        if not vals:
+            return NAN
+        sorted_vals = sorted(vals)
+        mid = len(sorted_vals) // 2
+        if len(sorted_vals) % 2 == 0:
+            return (sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0
+        return sorted_vals[mid]
+    else:
+        raise ValueError(f"Unsupported python aggregation function: {func_name}")
+
 cdef object _gb_python_agg(FastDataFrame df, _GroupRows* gr, str col_name, str func_name):
     cdef list results = []
-    cdef int g_id
-    cdef Py_ssize_t sz, row_idx, i, mid
+    cdef int g_id, sub
+    cdef Py_ssize_t sz, row_idx, i, out_n = gr.count
     cdef BaseColumn orig_col = df.columns[col_name]
     cdef list vals
-    cdef list sorted_vals
+    cdef bint is2d
+    cdef Py_ssize_t c_col, r_col
+    cdef DoubleColumn res_col
 
-    for g_id in range(gr.count):
+    is2d, c_col, r_col = _col_shape_probe(orig_col)
+
+    # 2D 列：按整行向量语义逐子列独立 Python 聚合，输出保持源维度的 2D 结果列
+    if is2d and c_col > 1:
+        res_col = DoubleColumn(max(out_n * c_col, 1), cols=c_col)
+        res_col.length = out_n * c_col
+        for sub in range(c_col):
+            results = []
+            for g_id in range(out_n):
+                sz = gr.row_sizes[g_id]
+                vals = []
+                for i in range(sz):
+                    row_idx = gr.rows[g_id][i]
+                    vals.append(_col_row_key(orig_col, row_idx)[sub])
+                results.append(_gb_python_compute(vals, func_name))
+            for g_id in range(out_n):
+                res_col.data_c[sub * out_n + g_id] = <double>results[g_id] if results[g_id] is not None else NAN
+        return res_col
+
+    res_col = DoubleColumn(max(out_n, 1))
+    res_col.length = out_n
+    for g_id in range(out_n):
         sz = gr.row_sizes[g_id]
         vals = []
         for i in range(sz):
             row_idx = gr.rows[g_id][i]
             vals.append(orig_col[row_idx])
-        if func_name == 'sum':
-            results.append(sum(vals))
-        elif func_name == 'mean':
-            results.append(sum(vals) / len(vals) if vals else NAN)
-        elif func_name == 'min':
-            results.append(min(vals) if vals else NAN)
-        elif func_name == 'max':
-            results.append(max(vals) if vals else NAN)
-        elif func_name == 'count':
-            results.append(len(vals))
-        elif func_name == 'median':
-            if not vals:
-                results.append(NAN)
-            else:
-                sorted_vals = sorted(vals)
-                mid = len(sorted_vals) // 2
-                if len(sorted_vals) % 2 == 0:
-                    results.append((sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0)
-                else:
-                    results.append(sorted_vals[mid])
-        elif func_name == 'quantile':
-            if not vals:
-                results.append(NAN)
-            else:
-                sorted_vals = sorted(vals)
-                mid = len(sorted_vals) // 2
-                if len(sorted_vals) % 2 == 0:
-                    results.append((sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0)
-                else:
-                    results.append(sorted_vals[mid])
-        else:
-            raise ValueError(f"Unsupported python aggregation function: {func_name}")
-
-    cdef DoubleColumn res_col = DoubleColumn(max(gr.count, 1))
-    res_col.length = gr.count
-    for g_id in range(gr.count):
+        results.append(_gb_python_compute(vals, func_name))
+    for g_id in range(out_n):
         res_col.data_c[g_id] = <double>results[g_id] if results[g_id] is not None else NAN
     return res_col
 

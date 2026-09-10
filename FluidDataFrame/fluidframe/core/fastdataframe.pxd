@@ -23,6 +23,8 @@ cdef struct _ByColPtrs:
     void** data
     void** offsets
     int* types
+    int* cols
+    Py_ssize_t* strides
     int count
 
 cdef struct _GroupHashEntry:
