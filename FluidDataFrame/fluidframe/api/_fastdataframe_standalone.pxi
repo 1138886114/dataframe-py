@@ -78,12 +78,15 @@ def from_pickle(filename, bint allow_raw_pickle=False):
                 col.append(v)
         elif typ == 'date':
             if is_2d:
-                dcol = DateColumn(max(total, 1), cols=cols)
-                dcol.length = total
+                if total != rows * cols:
+                    raise ValueError(f"DateColumn 2D size mismatch: expected {rows * cols}, got {total}")
+                dcol = DateColumn(max(rows, 1), cols=cols)
+                dcol.length = rows
                 dcol.set_meta_c(<int>cols, True, True)
                 dptr = <int32_t*>dcol.data_c
+                val_list = <list>values if type(values) is list else list(values)
                 for i in range(total):
-                    dptr[i] = <int32_t>values[i]
+                    dptr[i] = <int32_t>val_list[i]
                 col = dcol
             else:
                 col = DateColumn()
@@ -99,12 +102,15 @@ def from_pickle(filename, bint allow_raw_pickle=False):
                 col.append(v)
         elif typ == 'datetime':
             if is_2d:
-                tcol = DateTimeColumn(max(total, 1), cols=cols)
-                tcol.length = total
+                if total != rows * cols:
+                    raise ValueError(f"DateTimeColumn 2D size mismatch: expected {rows * cols}, got {total}")
+                tcol = DateTimeColumn(max(rows, 1), cols=cols)
+                tcol.length = rows
                 tcol.set_meta_c(<int>cols, True, True)
                 tptr = <int64_t*>tcol.data_c
+                val_list = <list>values if type(values) is list else list(values)
                 for i in range(total):
-                    tptr[i] = <int64_t>values[i]
+                    tptr[i] = <int64_t>val_list[i]
                 col = tcol
             else:
                 col = DateTimeColumn()
@@ -112,12 +118,15 @@ def from_pickle(filename, bint allow_raw_pickle=False):
                     col.append(v)
         elif typ == 'time':
             if is_2d:
-                qcol = TimeColumn(max(total, 1), cols=cols)
-                qcol.length = total
+                if total != rows * cols:
+                    raise ValueError(f"TimeColumn 2D size mismatch: expected {rows * cols}, got {total}")
+                qcol = TimeColumn(max(rows, 1), cols=cols)
+                qcol.length = rows
                 qcol.set_meta_c(<int>cols, True, True)
                 dptr = <int32_t*>qcol.data_c
+                val_list = <list>values if type(values) is list else list(values)
                 for i in range(total):
-                    dptr[i] = <int32_t>values[i]
+                    dptr[i] = <int32_t>val_list[i]
                 col = qcol
             else:
                 col = TimeColumn()
@@ -360,85 +369,149 @@ def to_numeric(column, errors='coerce'):
     cdef bint is2d
     cdef Py_ssize_t c = 1, r
     is2d, c, r = _col_shape_probe(column)
-    cdef DoubleColumn res = DoubleColumn(n)
-    res.length = n
-    for i in range(n):
-        s = str(column[i])
-        try:
-            val = float(s)
-            if val == int(val) and '.' not in s:
-                res.data_c[i] = <double>int(s)
-            else:
-                res.data_c[i] = val
-        except (ValueError, TypeError):
-            if errors == 'raise':
-                raise ValueError(f"Could not convert '{s}' to numeric")
-            res.data_c[i] = NAN
-    if is2d and c > 1:
+
+    cdef bint is_2d_c = is2d and c > 1
+    cdef Py_ssize_t alloc_size = (r * c) if is_2d_c else r
+    cdef DoubleColumn res = DoubleColumn(max(alloc_size, 1))
+    res.length = r
+    if is_2d_c:
         res.set_meta_c(<int>c, True, True)
+
+    cdef Py_ssize_t i, j, idx = 0
+    cdef bint raise_err = (errors == 'raise')
+
+    if is_2d_c:
+        for i in range(r):
+            row = column[i]
+            for j in range(c):
+                s = str(row[j])
+                try:
+                    res.data_c[idx] = float(s)
+                except (ValueError, TypeError):
+                    if raise_err:
+                        raise ValueError(f"Could not convert '{s}' to numeric")
+                    res.data_c[idx] = NAN
+                idx += 1
+    else:
+        for i in range(r):
+            s = str(column[i])
+            try:
+                res.data_c[i] = float(s)
+            except (ValueError, TypeError):
+                if raise_err:
+                    raise ValueError(f"Could not convert '{s}' to numeric")
+                res.data_c[i] = NAN
     return res
 
 
 def to_datetime(column, str fmt='', errors='coerce'):
     """Convert column to DateTimeColumn. Like pd.to_datetime.
     2D 输入保持同维度输出。"""
-    cdef Py_ssize_t n = column.length
     cdef bint is2d
     cdef Py_ssize_t c = 1, r
     is2d, c, r = _col_shape_probe(column)
-    cdef DateTimeColumn res = DateTimeColumn(n)
-    for i in range(n):
-        s = str(column[i])
-        try:
-            res.append(s)
-        except (ValueError, TypeError):
-            if errors == 'raise':
-                raise ValueError(f"Could not convert '{s}' to datetime")
-            res.append(0)
-    if is2d and c > 1:
+
+    cdef bint is_2d_c = is2d and c > 1
+    cdef DateTimeColumn res = DateTimeColumn(max(r * c if is_2d_c else r, 1))
+    cdef bint raise_err = (errors == 'raise')
+    cdef Py_ssize_t i, j
+
+    if is_2d_c:
+        for i in range(r):
+            row = column[i]
+            for j in range(c):
+                s = str(row[j])
+                try:
+                    res.append(s)
+                except (ValueError, TypeError):
+                    if raise_err:
+                        raise ValueError(f"Could not convert '{s}' to datetime")
+                    res.append(0)
+        res.length = r
         res.set_meta_c(<int>c, True, True)
+    else:
+        for i in range(r):
+            s = str(column[i])
+            try:
+                res.append(s)
+            except (ValueError, TypeError):
+                if raise_err:
+                    raise ValueError(f"Could not convert '{s}' to datetime")
+                res.append(0)
     return res
 
 
 def to_date(column, str fmt='', errors='coerce'):
     """Convert column to DateColumn (YYYYMMDD).
     2D 输入保持同维度输出。"""
-    cdef Py_ssize_t n = column.length
     cdef bint is2d
     cdef Py_ssize_t c = 1, r
     is2d, c, r = _col_shape_probe(column)
-    cdef DateColumn res = DateColumn(n)
-    for i in range(n):
-        s = str(column[i])
-        try:
-            res.append(s)
-        except (ValueError, TypeError):
-            if errors == 'raise':
-                raise ValueError(f"Could not convert '{s}' to date")
-            res.append(0)
-    if is2d and c > 1:
+
+    cdef bint is_2d_c = is2d and c > 1
+    cdef DateColumn res = DateColumn(max(r * c if is_2d_c else r, 1))
+    cdef bint raise_err = (errors == 'raise')
+    cdef Py_ssize_t i, j
+
+    if is_2d_c:
+        for i in range(r):
+            row = column[i]
+            for j in range(c):
+                s = str(row[j])
+                try:
+                    res.append(s)
+                except (ValueError, TypeError):
+                    if raise_err:
+                        raise ValueError(f"Could not convert '{s}' to date")
+                    res.append(0)
+        res.length = r
         res.set_meta_c(<int>c, True, True)
+    else:
+        for i in range(r):
+            s = str(column[i])
+            try:
+                res.append(s)
+            except (ValueError, TypeError):
+                if raise_err:
+                    raise ValueError(f"Could not convert '{s}' to date")
+                res.append(0)
     return res
 
 
 def to_time(column, str fmt='', errors='coerce'):
     """Convert column to TimeColumn (seconds since midnight).
     2D 输入保持同维度输出。"""
-    cdef Py_ssize_t n = column.length
     cdef bint is2d
     cdef Py_ssize_t c = 1, r
     is2d, c, r = _col_shape_probe(column)
-    cdef TimeColumn res = TimeColumn(n)
-    for i in range(n):
-        s = str(column[i])
-        try:
-            res.append(s)
-        except (ValueError, TypeError):
-            if errors == 'raise':
-                raise ValueError(f"Could not convert '{s}' to time")
-            res.append(0)
-    if is2d and c > 1:
+
+    cdef bint is_2d_c = is2d and c > 1
+    cdef TimeColumn res = TimeColumn(max(r * c if is_2d_c else r, 1))
+    cdef bint raise_err = (errors == 'raise')
+    cdef Py_ssize_t i, j
+
+    if is_2d_c:
+        for i in range(r):
+            row = column[i]
+            for j in range(c):
+                s = str(row[j])
+                try:
+                    res.append(s)
+                except (ValueError, TypeError):
+                    if raise_err:
+                        raise ValueError(f"Could not convert '{s}' to time")
+                    res.append(0)
+        res.length = r
         res.set_meta_c(<int>c, True, True)
+    else:
+        for i in range(r):
+            s = str(column[i])
+            try:
+                res.append(s)
+            except (ValueError, TypeError):
+                if raise_err:
+                    raise ValueError(f"Could not convert '{s}' to time")
+                res.append(0)
     return res
 
 
