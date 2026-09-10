@@ -875,6 +875,7 @@ cdef _insert_column_impl(FastDataFrame self, str col_name, object col_data, Py_s
     cdef BaseColumn col
     cdef bint is2d
     cdef Py_ssize_t c_col, r_col
+
     if isinstance(col_data, BaseColumn):
         col = col_data
     elif isinstance(col_data, list):
@@ -882,10 +883,12 @@ cdef _insert_column_impl(FastDataFrame self, str col_name, object col_data, Py_s
     else:
         raise TypeError(f"Cannot create column from {type(col_data)}")
 
-    # df_length 取逻辑行数：2D 列 length = rows*cols，须投影回 rows（1D 列 rows == length）
     is2d, c_col, r_col = _col_shape_probe(col)
+
     if self.df_length == 0 and r_col > 0:
         self.df_length = <uint32_t>r_col
+    elif self.df_length > 0 and r_col != self.df_length:
+        raise ValueError(f"Shape mismatch: DataFrame has {self.df_length} rows, incoming column has {r_col} logical rows.")
 
     cdef list names = list(self.columns.keys())
     cdef Py_ssize_t n = len(names)
@@ -899,7 +902,6 @@ cdef _insert_column_impl(FastDataFrame self, str col_name, object col_data, Py_s
                 new_cols[col_name] = col
             new_cols[names[i]] = self.columns[names[i]]
         self.columns = new_cols
-
 
 cdef _duplicate_column_impl(FastDataFrame self, str src_name, str new_name):
     if src_name not in self.columns:

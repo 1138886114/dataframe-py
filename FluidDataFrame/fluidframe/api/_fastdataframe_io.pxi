@@ -211,11 +211,10 @@ cdef _info_impl(FastDataFrame self):
     for name, col in self.columns.items():
         type_name = self._type_name(col)
         col_bytes = col.get_size()
-        # Non-Null 显示逻辑行数：2D 列 physical length = rows*cols，须按 rows
         is2d, c_probe, r_probe = _col_shape_probe(col)
-        col_rows = r_probe
+
         _c_fmt_bytes(bytes_buf, sizeof(bytes_buf), col_bytes)
-        lines.append(f" {idx}   {name:<10}{col_rows:<10}{type_name:<10}{bytes_buf.decode('ascii')}")
+        lines.append(f" {idx}   {name:<10}{r_probe:<10}{type_name:<10}{bytes_buf.decode('ascii')}")
         idx += 1
 
     _c_fmt_bytes(bytes_buf, sizeof(bytes_buf), mem)

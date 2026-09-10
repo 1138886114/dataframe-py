@@ -46,25 +46,24 @@ cdef _count_impl(FastDataFrame self, col_names=None):
     if col_names is None:
         col_names = list(self.columns.keys())
     for name in col_names:
-        if name not in self.columns: continue
-        # 逻辑行数统计：2D 列 physical length = rows*cols，count 须按 df_length（rows）
-        result[name] = self.df_length
+        if name in self.columns:
+            result[name] = self.df_length
     return result
 
 cdef _describe_impl(FastDataFrame self):
     cdef dict stats = {}
-    cdef str name, val, top_val
+    cdef str name, top_val
     cdef Py_ssize_t col_len, i, max_freq, freq_val, col_rows
     cdef long long ts_min, ts_max
     cdef dict freq_map
     cdef bint is2d
     cdef Py_ssize_t c_probe, r_probe
+
     for name, col_obj in self.columns.items():
         col_len = col_obj.length
-        # 2D 列 count 取逻辑行数（physical length = rows*cols）；mean/std/... 沿用列级
-        # 扁平化语义（与 df.mean() 等列级聚合一致，全物理缓冲单元上计算）
         is2d, c_probe, r_probe = _col_shape_probe(col_obj)
         col_rows = r_probe
+
         if col_obj.dtype == TYPE_INT or col_obj.dtype == TYPE_DOUBLE:
             stats[name] = {
                 'count': col_rows,
@@ -74,25 +73,25 @@ cdef _describe_impl(FastDataFrame self):
                 '50%': col_obj.median(),
                 'max': col_obj.max(),
             }
-        elif col_obj.dtype == TYPE_CHAR256 or col_obj.dtype == TYPE_UCS2:
+        elif col_obj.dtype in (TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_CATEGORY):
             freq_map = {}
             for i in range(col_len):
-                val = str(col_obj[i])
+                val = col_obj[i]
                 freq_map[val] = freq_map.get(val, 0) + 1
+
             top_val = ''
             max_freq = 0
             for val, freq_val in freq_map.items():
                 if freq_val > max_freq:
                     max_freq = freq_val
-                    top_val = val
+                    top_val = str(val)
             stats[name] = {
                 'count': col_rows,
                 'unique': len(freq_map),
                 'top': top_val,
                 'freq': max_freq,
             }
-        elif (col_obj.dtype == TYPE_DATE or col_obj.dtype == TYPE_DATETIME
-              or col_obj.dtype == TYPE_TIME):
+        elif col_obj.dtype in (TYPE_DATE, TYPE_DATETIME, TYPE_TIME):
             if col_len > 0:
                 ts_min = col_obj.min()
                 ts_max = col_obj.max()
@@ -102,23 +101,6 @@ cdef _describe_impl(FastDataFrame self):
                 'count': col_rows,
                 'min': ts_min,
                 'max': ts_max,
-            }
-        elif col_obj.dtype == TYPE_BOOL or col_obj.dtype == TYPE_CATEGORY:
-            freq_map = {}
-            for i in range(col_len):
-                val = str(col_obj[i])
-                freq_map[val] = freq_map.get(val, 0) + 1
-            top_val = ''
-            max_freq = 0
-            for val, freq_val in freq_map.items():
-                if freq_val > max_freq:
-                    max_freq = freq_val
-                    top_val = val
-            stats[name] = {
-                'count': col_rows,
-                'unique': len(freq_map),
-                'top': top_val,
-                'freq': max_freq,
             }
     return stats
 

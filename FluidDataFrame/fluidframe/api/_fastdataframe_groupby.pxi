@@ -423,7 +423,7 @@ cdef int _gb_build_groups(FastDataFrame df, list by_cols,
 # ============================================================
 
 cdef inline double _gb_agg_int_sub(int* ptr, Py_ssize_t stride, int sub, Py_ssize_t* idxs, Py_ssize_t sz, _AggFunc agg) noexcept nogil:
-    cdef double val = 0.0, d
+    cdef double val = 0.0, d, mean = 0.0, M2 = 0.0, delta, delta2
     cdef Py_ssize_t i, base = sub * stride
 
     if agg == _AGG_SUM:
@@ -450,7 +450,6 @@ cdef inline double _gb_agg_int_sub(int* ptr, Py_ssize_t stride, int sub, Py_ssiz
     if agg == _AGG_VAR or agg == _AGG_STD:
         if sz < 2: return NAN
         # 采用 Welford 算法实现单趟内存访问，省掉一次间接指针查询，速度翻倍
-        cdef double mean = 0.0, M2 = 0.0, delta, delta2
         for i in range(sz):
             val = <double>ptr[base + idxs[i]]
             delta = val - mean
@@ -464,7 +463,7 @@ cdef inline double _gb_agg_int_sub(int* ptr, Py_ssize_t stride, int sub, Py_ssiz
     return NAN
 
 cdef inline double _gb_agg_double_sub(double* ptr, Py_ssize_t stride, int sub, Py_ssize_t* idxs, Py_ssize_t sz, _AggFunc agg) noexcept nogil:
-    cdef double val = 0.0, d
+    cdef double val = 0.0, d, mean = 0.0, M2 = 0.0, delta, delta2
     cdef Py_ssize_t i, base = sub * stride
 
     if agg == _AGG_SUM:
@@ -479,7 +478,6 @@ cdef inline double _gb_agg_double_sub(double* ptr, Py_ssize_t stride, int sub, P
     # 使用 Welford 处理 VAR/STD
     if agg == _AGG_VAR or agg == _AGG_STD:
         if sz < 2: return NAN
-        cdef double mean = 0.0, M2 = 0.0, delta, delta2
         for i in range(sz):
             val = ptr[base + idxs[i]]
             delta = val - mean
