@@ -275,7 +275,7 @@ cdef _describe_impl(FastDataFrame self):
     cdef bint is2d
     cdef Py_ssize_t c_probe, r_probe, base
 
-    cdef double s_sum, s_min, s_max, s_mean, s_m2, s_diff, val
+    cdef double s_sum, s_min, s_max, s_mean, s_m2, s_diff, val, s_med
     cdef double* s_tmp = NULL
     cdef double* d_ptr
     cdef int* i_ptr
@@ -286,6 +286,9 @@ cdef _describe_impl(FastDataFrame self):
     cdef int64_t v64_min, v64_max
 
     cdef list s_means, s_stds, s_mins, s_meds, s_maxs, d_mins, d_maxs
+    cdef list keys
+    cdef dict freq_map
+    cdef Py_ssize_t max_freq, freq_val
 
     for name, col_obj in self.columns.items():
         col_len = col_obj.length
@@ -337,25 +340,28 @@ cdef _describe_impl(FastDataFrame self):
 
                         s_mean = s_sum / <double>valid_cnt
 
-                        if valid_cnt < 2:
-                            s_stds.append(0.0)
-                        else:
+                        if valid_cnt >= 2:
                             s_m2 = 0.0
                             for i in range(valid_cnt):
                                 s_diff = s_tmp[i] - s_mean
                                 s_m2 += s_diff * s_diff
-                            s_stds.append(sqrt(s_m2 / <double>(valid_cnt - 1)))
 
-                        s_mid = valid_cnt // 2
-                        if valid_cnt % 2 == 0:
-                            s_meds.append((_qs_double(s_tmp, valid_cnt, s_mid - 1) +
-                                           _qs_double(s_tmp, valid_cnt, s_mid)) * 0.5)
-                        else:
-                            s_meds.append(_qs_double(s_tmp, valid_cnt, s_mid))
+                    if valid_cnt < 2:
+                        s_stds.append(0.0)
+                    else:
+                        s_stds.append(sqrt(s_m2 / <double>(valid_cnt - 1)))
+
+                    s_mid = valid_cnt // 2
+                    if valid_cnt % 2 == 0:
+                        s_med = (_qs_double(s_tmp, valid_cnt, s_mid - 1) +
+                                 _qs_double(s_tmp, valid_cnt, s_mid)) * 0.5
+                    else:
+                        s_med = _qs_double(s_tmp, valid_cnt, s_mid)
 
                     s_means.append(s_mean)
                     s_mins.append(s_min)
                     s_maxs.append(s_max)
+                    s_meds.append(s_med)
 
             finally:
                 os_aligned_free(s_tmp)
@@ -371,22 +377,19 @@ cdef _describe_impl(FastDataFrame self):
         # 2. 离散类型处理 (String / Category / Bool)
         # =========================================================
         elif col_obj.dtype in (TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_CATEGORY):
-            cdef list keys = _col_to_keys(col_obj)
-            cdef dict freq_map = {}
-            cdef Py_ssize_t max_freq = 0
-            cdef Py_ssize_t freq_val
+            keys = _col_to_keys(col_obj)
+            freq_map = {}
+            max_freq = 0
 
-            for val in keys:
-                if val is not None:
-                    freq_val = freq_map.get(val, 0) + 1
-                    freq_map[val] = freq_val
+            for valk in keys:
+                if valk is not None:
+                    freq_val = freq_map.get(valk, 0) + 1
+                    freq_map[valk] = freq_val
             top_val = ''
-            for val, freq_val in freq_map.items():
-                if freq_val == max_freq:
-                    pass
+            for valk, freq_val in freq_map.items():
                 if freq_val > max_freq:
                     max_freq = freq_val
-                    top_val = str(val)
+                    top_val = str(valk)
 
             stats[name] = {'count': r_probe, 'unique': len(freq_map),
                            'top': top_val, 'freq': max_freq}
