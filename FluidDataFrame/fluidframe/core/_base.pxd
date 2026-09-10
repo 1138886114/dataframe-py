@@ -182,6 +182,29 @@ cdef inline void _col_gather_2d(void* dst, void* src,
                     <char*>src + j * rows * elem_size,
                     indices, n, elem_size)
 
+cdef inline void _col_concat_2d(void* data_c, Py_ssize_t* length,
+                                void* other_data, Py_ssize_t other_rows,
+                                Py_ssize_t cols, Py_ssize_t elem_size) noexcept nogil:
+    """2D column-major concat: each sub-column j has rows = length//cols
+    entries in self and other_rows entries in other. Iterating sub-columns
+    from high to low, shift the existing self block to its new base
+    (j*new_rows) then append other's block. length grows by
+    other_rows*cols (caller must reserve capacity first)."""
+    cdef Py_ssize_t self_rows = length[0] // cols
+    cdef Py_ssize_t new_rows = self_rows + other_rows
+    cdef Py_ssize_t j
+    if other_rows == 0 or cols == 0:
+        return
+    for j in range(cols - 1, -1, -1):
+        if new_rows != self_rows:
+            memmove(<char*>data_c + (j * new_rows) * elem_size,
+                    <char*>data_c + (j * self_rows) * elem_size,
+                    self_rows * elem_size)
+        memcpy(<char*>data_c + (j * new_rows + self_rows) * elem_size,
+               <char*>other_data + (j * other_rows) * elem_size,
+               other_rows * elem_size)
+    length[0] += other_rows * cols
+
 cdef inline Py_ssize_t _col_reserve(void** data_c, Py_ssize_t* capacity,
                                     Py_ssize_t new_cap, Py_ssize_t old_size,
                                     Py_ssize_t elem_size) except -1 nogil:

@@ -610,10 +610,14 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
 
     cdef Py_ssize_t orig_len = self.df_length
     cdef Py_ssize_t ucs2_val_len, ucs2_start, _ci, _oi, _j2, _nr2, _nc2
+    cdef Py_ssize_t _ac_len, _ac_start, _ac_vlen, _ac_span, _ac_tail, _bc_len
     cdef int dtype
     cdef int32_t days
     cdef int64_t tmp_dt
     cdef UCS2Column ucs2_obj
+    cdef AsciiColumn cc_obj
+    cdef BoolColumn bc_obj
+    cdef CategoryColumn catc_obj
     cdef str ucs2_val
     cdef bytes bval
     cdef list shifted_cols = []
@@ -625,7 +629,12 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
         for col_name, col_obj in self.columns.items():
             val = kwargs[col_name]
             dtype = col_obj.dtype
-            self._shift_right(col_obj, pos)
+            if (dtype == TYPE_INT or dtype == TYPE_DOUBLE or dtype == TYPE_DATE
+                    or dtype == TYPE_DATETIME or dtype == TYPE_TIME):
+                # 2D 可承载的定宽列：shift_right 负责给每个子列拉开空槽
+                self._shift_right(col_obj, pos)
+            # 变长列 (CHAR256/UCS2) 与 BOOL/CATEGORY 不走 shift：其分支直接完成
+            # “腾位 + 写入”一体的插入（变长列无固定跨步，shift 无意义）。
             shifted_cols.append(col_name)
 
             if dtype == TYPE_INT:
@@ -687,22 +696,42 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
                     (<TimeColumn>col_obj).data_c[pos] = <int32_t>val
 
             elif dtype == TYPE_CHAR256:
-                if isinstance(val, bytes):
-                    bval = val
-                elif isinstance(val, str):
-                    bval = val.encode('utf-8')
-                else:
-                    bval = str(val).encode('utf-8')
-
-                memset((<AsciiColumn>col_obj).data_c + (pos * 256), 0, 256)
-                memcpy((<AsciiColumn>col_obj).data_c + (pos * 256), <char*>bval, len(bval) if len(bval) < 256 else 255)
+                cc_obj = <AsciiColumn>col_obj
+                if cc_obj.length >= cc_obj.capacity:
+                    cc_obj._reserve_rows(max(16, cc_obj.capacity * 2))
+                bval = ('' if val is None else str(val)).encode('ascii', errors='ignore')
+                _ac_len = cc_obj.length
+                _ac_start = cc_obj.offsets_c[pos]
+                _ac_vlen = len(bval)
+                _ac_span = _ac_vlen + 1
+                if cc_obj.byte_length + _ac_span > cc_obj.byte_capacity:
+                    cc_obj._reserve_bytes(max(cc_obj.byte_capacity * 2,
+                                              cc_obj.byte_length + _ac_span + 4096))
+                _ac_tail = cc_obj.byte_length - _ac_start
+                if _ac_tail > 0:
+                    memmove(cc_obj.data_c + _ac_start + _ac_span,
+                            cc_obj.data_c + _ac_start,
+                            _ac_tail)
+                if _ac_vlen > 0:
+                    memcpy(cc_obj.data_c + _ac_start, <char*>bval, _ac_vlen)
+                cc_obj.data_c[_ac_start + _ac_vlen] = 0
+                cc_obj.byte_length += _ac_span
+                for _oi in range(_ac_len, pos, -1):
+                    cc_obj.offsets_c[_oi + 1] = cc_obj.offsets_c[_oi] + _ac_span
+                cc_obj.offsets_c[pos] = _ac_start
+                cc_obj.offsets_c[pos + 1] = _ac_start + _ac_span
+                cc_obj.length = _ac_len + 1
             elif dtype == TYPE_UCS2:
-                ucs2_val = val if isinstance(val, str) else str(val)
                 ucs2_obj = <UCS2Column>col_obj
+                if ucs2_obj.length >= ucs2_obj.capacity:
+                    ucs2_obj._reserve_rows(max(16, ucs2_obj.capacity * 2))
+                ucs2_val = val if isinstance(val, str) else str(val)
                 ucs2_val_len = len(ucs2_val)
                 ucs2_start = ucs2_obj.offsets_c[pos]
+                if ucs2_val_len > 0 and ucs2_obj.char_length + ucs2_val_len > ucs2_obj.char_capacity:
+                    ucs2_obj._reserve_chars(max(ucs2_obj.char_capacity * 2,
+                                                ucs2_obj.char_length + ucs2_val_len + 1024))
                 if ucs2_val_len > 0:
-                    ucs2_obj._reserve_chars(ucs2_obj.char_capacity + ucs2_val_len)
                     if ucs2_obj.char_length - ucs2_start > 0:
                         memmove(ucs2_obj.chars_c + ucs2_start + ucs2_val_len,
                                 ucs2_obj.chars_c + ucs2_start,
@@ -714,17 +743,35 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
                     else:
                         for _ci in range(ucs2_val_len):
                             ucs2_obj.chars_c[ucs2_start + _ci] = <Py_UCS2>PyUnicode_READ_CHAR(ucs2_val, _ci)
-                    for _oi in range(pos + 1, ucs2_obj.length + 1):
-                        ucs2_obj.offsets_c[_oi] += ucs2_val_len
                     ucs2_obj.char_length += ucs2_val_len
+                if ucs2_obj.length - pos > 0:
+                    memmove(ucs2_obj.offsets_c + pos + 2,
+                            ucs2_obj.offsets_c + pos + 1,
+                            (ucs2_obj.length - pos) * sizeof(Py_ssize_t))
+                ucs2_obj.offsets_c[pos + 1] = ucs2_start + ucs2_val_len
+                for _oi in range(pos + 2, ucs2_obj.length + 2):
+                    ucs2_obj.offsets_c[_oi] += ucs2_val_len
+                ucs2_obj.length += 1
 
             elif dtype == TYPE_BOOL:
-                (<BoolColumn>col_obj).data_c[pos] = 1 if val else 0
+                bc_obj = <BoolColumn>col_obj
+                _bc_len = bc_obj.length
+                if _bc_len >= bc_obj.capacity:
+                    bc_obj._reserve(max(16, bc_obj.capacity * 2))
+                _c_shift_right(bc_obj.data_c, pos, _bc_len, sizeof(unsigned char))
+                bc_obj.length = _bc_len + 1
+                bc_obj.data_c[pos] = 1 if val else 0
             elif dtype == TYPE_CATEGORY:
+                catc_obj = <CategoryColumn>col_obj
+                _bc_len = catc_obj.length
+                if _bc_len >= catc_obj.capacity:
+                    catc_obj._reserve(max(16, catc_obj.capacity * 2))
+                _c_shift_right(catc_obj.codes_c, pos, _bc_len, sizeof(int))
+                catc_obj.length = _bc_len + 1
                 if val is None:
-                    (<CategoryColumn>col_obj).codes_c[pos] = (<CategoryColumn>col_obj)._get_or_add_code('')
+                    catc_obj.codes_c[pos] = catc_obj._get_or_add_code('')
                 else:
-                    (<CategoryColumn>col_obj).codes_c[pos] = (<CategoryColumn>col_obj)._get_or_add_code(str(val))
+                    catc_obj.codes_c[pos] = catc_obj._get_or_add_code(str(val))
         self.df_length += 1
         if self.index is not None:
             if self.index.index_type == INDEX_RANGE or self.index.index_type == INDEX_INT:

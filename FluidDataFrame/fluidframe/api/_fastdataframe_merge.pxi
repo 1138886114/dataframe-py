@@ -8,6 +8,7 @@ cdef _concat_impl(FastDataFrame self, FastDataFrame other):
     for col_name, col_obj in result.columns.items():
         col_obj.concat(other.columns[col_name])
     result.df_length = self.df_length + other.df_length
+    result.index = self.index._concat(other.index)
     return result
 
 cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inner'):
@@ -30,13 +31,13 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
     cdef Py_ssize_t i, j
 
     for i in range(self.df_length):
-        key = tuple(self.columns[jc][i] for jc in join_cols)
+        key = tuple(_col_row_key(self.columns[jc], i) for jc in join_cols)
         if key not in left_map:
             left_map[key] = []
         left_map[key].append(i)
 
     for j in range(other.df_length):
-        key = tuple(other.columns[jc][j] for jc in join_cols)
+        key = tuple(_col_row_key(other.columns[jc], j) for jc in join_cols)
         if key not in right_map:
             right_map[key] = []
         right_map[key].append(j)

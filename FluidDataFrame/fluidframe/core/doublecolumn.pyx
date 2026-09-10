@@ -23,7 +23,7 @@ from fluidframe.core._base cimport (
     _double_int_manhattan_dist, _double_int_cosine_sim, _double_int_jaccard_sim, _double_int_hamming_dist,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
-    _col_shift_right_2d_double, _col_shift_left_2d, _col_gather_2d
+    _col_shift_right_2d_double, _col_shift_left_2d, _col_gather_2d, _col_concat_2d
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -347,10 +347,18 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, DoubleColumn other):
+        cdef Py_ssize_t other_rows
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
         if self.get_is_2d_c() or other.get_is_2d_c():
-            raise NotImplementedError("concat is not supported for 2D columns (rows*cols layout)")
+            if self.get_cols_c() != other.get_cols_c():
+                raise ValueError("Cannot concat 2D columns with different column counts")
+            other_rows = other.get_rows_c()
+            if other_rows == 0: return
+            self._reserve(self.length + other_rows * self.get_cols_c())
+            _col_concat_2d(self.data_c, &self.length, other.data_c, other_rows,
+                           self.get_cols_c(), sizeof(double))
+            return
         if other.length == 0: return
         self._reserve(self.length + other.length)
         _col_concat(self.data_c, &self.length, other.data_c, other.length,
@@ -1727,14 +1735,37 @@ cdef class DoubleColumn(BaseColumn):
         return _vec_hamming_dist(self.data_c, temp.data_c, n)
 
     cdef DoubleColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, double sentinel):
-        cdef DoubleColumn new_col = DoubleColumn(max(n, 1))
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t i, j, idx
+        cdef double* res_ptr
+        cdef double* src_ptr
+        cdef DoubleColumn new_col
+        if self.get_is_2d_c():
+            new_col = DoubleColumn(max(n * c, 1), cols=c)
+            new_col.length = n * c
+            res_ptr = new_col.data_c
+            src_ptr = self.data_c
+            with nogil:
+                for j in range(c):
+                    for i in range(n):
+                        idx = indices[i]
+                        if 0 <= idx < r:
+                            res_ptr[j * n + i] = src_ptr[j * r + idx]
+                        else:
+                            res_ptr[j * n + i] = sentinel
+            return new_col
+        new_col = DoubleColumn(max(n, 1), cols=self.cols)
         new_col.length = n
-        cdef Py_ssize_t i
-        cdef double* res_ptr = new_col.data_c
-        cdef double* src_ptr = self.data_c
+        res_ptr = new_col.data_c
+        src_ptr = self.data_c
         with nogil:
             for i in range(n):
-                res_ptr[i] = src_ptr[indices[i]] if indices[i] >= 0 else sentinel
+                idx = indices[i]
+                if 0 <= idx < self.length:
+                    res_ptr[i] = src_ptr[idx]
+                else:
+                    res_ptr[i] = sentinel
         return new_col
 
     # ------------------------------------------------------------

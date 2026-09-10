@@ -739,7 +739,12 @@ def test_2d_append():
 def test_2d_concat():
     col1 = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
     col2 = _make_2d(2, [[4, 5], [40, 50]])
-    check('2d concat raises', expect_exception(NotImplementedError, col1.concat, col2))
+    col1.concat(col2)
+    exp = [1, 2, 3, 4, 5, 10, 20, 30, 40, 50]
+    check('2d concat len', col1.length == 10)
+    check('2d concat rows', col1.rows == 5)
+    check('2d concat cols', col1.cols == 2)
+    check('2d concat flat', [col1[i] for i in range(10)] == exp)
 
 def test_add_val():
     col = IntColumn(5)

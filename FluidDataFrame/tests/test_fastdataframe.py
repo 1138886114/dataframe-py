@@ -481,10 +481,10 @@ def test_2d_count_describe_info():
 
     stats = df.describe()
     check('2d describe count', stats['a']['count'] == 4 and stats['d']['count'] == 4)
-    # 列级统计沿用扁平化语义（与 df.mean() 一致）：a 全缓冲 [1..4,10..40]
-    check('2d describe mean', stats['a']['mean'] == 13.75)
-    check('2d describe min', stats['a']['min'] == 1)
-    check('2d describe max', stats['a']['max'] == 40)
+    # 2D 列统计沿用逐子列语义（与 mean_withcol 一致）：a 子列0=[1..4]、子列1=[10..40]
+    check('2d describe mean', stats['a']['mean'] == [2.5, 25.0])
+    check('2d describe min', stats['a']['min'] == [1, 10])
+    check('2d describe max', stats['a']['max'] == [4, 40])
 
     info = df.info()
     check('2d info str', isinstance(info, str))
@@ -655,6 +655,33 @@ def test_merge():
     check('merge inner', df1.merge(df2, on='id', how='inner').shape == (1, 3))
     check('merge left', df1.merge(df2, on='id', how='left').shape == (2, 3))
     check('merge outer', df1.merge(df2, on='id', how='outer').shape == (3, 3))
+
+def test_2d_concat_df():
+    df1 = FastDataFrame()
+    df1.df_length = 2
+    df1.columns['a'] = IntColumn.from_2d([1, 2, 3, 4], 2, 2)
+    df2 = FastDataFrame()
+    df2.df_length = 1
+    df2.columns['a'] = IntColumn.from_2d([5, 6], 1, 2)
+    r = df1.concat(df2)
+    a = r.columns['a']
+    check('2d concat df rows', r.df_length == 3)
+    check('2d concat df index', r.index.length == 3)
+    check('2d concat df cols', a.rows == 3 and a.cols == 2)
+    check('2d concat df flat', [a[i] for i in range(a.length)] == [1, 2, 5, 3, 4, 6])
+
+def test_2d_merge_df():
+    df1 = FastDataFrame()
+    df1.df_length = 3
+    df1.columns['k'] = IntColumn.from_2d([1, 2, 7, 5, 6, 8], 3, 2)
+    df2 = FastDataFrame()
+    df2.df_length = 2
+    df2.columns['k'] = IntColumn.from_2d([2, 9, 6, 0], 2, 2)
+    r = df1.merge(df2, on='k', how='inner')
+    k = r.columns['k']
+    check('2d merge inner rows', r.df_length == 1)
+    check('2d merge k 2d', k.rows == 1 and k.cols == 2)
+    check('2d merge k flat', [k[i] for i in range(k.length)] == [2, 6])
 
 
 # =====================================================================
@@ -1999,9 +2026,10 @@ def test_len():
 def test_insert_row():
     df = FastDataFrame({'a': int, 'b': str})
     df.append_row(a=1, b='x'); df.append_row(a=3, b='z')
-    df.insert_row(1, a=2, b='y')
+    df.insert_row(1, a=2, b='yy')
     check('insert_row shape', df.shape == (3, 2))
     check('insert_row val', [df['a'][i] for i in range(3)] == [1, 2, 3])
+    check('insert_row str', [df['b'][i] for i in range(3)] == ['x', 'yy', 'z'])
 
 def test_drop_index():
     df = FastDataFrame({'a': int})

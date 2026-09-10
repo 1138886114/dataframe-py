@@ -17,7 +17,7 @@ from fluidframe.core._base cimport (
     TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, _resolve_astype_target,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
-    _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d
+    _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d, _col_concat_2d
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -313,10 +313,18 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, TimeColumn other):
+        cdef Py_ssize_t other_rows
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
         if self.get_is_2d_c() or other.get_is_2d_c():
-            raise NotImplementedError("concat is not supported for 2D columns (rows*cols layout)")
+            if self.get_cols_c() != other.get_cols_c():
+                raise ValueError("Cannot concat 2D columns with different column counts")
+            other_rows = other.get_rows_c()
+            if other_rows == 0: return
+            self._reserve(self.length + other_rows * self.get_cols_c())
+            _col_concat_2d(self.data_c, &self.length, other.data_c, other_rows,
+                           self.get_cols_c(), sizeof(int32_t))
+            return
         if other.length == 0: return
         self._reserve(self.length + other.length)
         _col_concat(self.data_c, &self.length, other.data_c, other.length,

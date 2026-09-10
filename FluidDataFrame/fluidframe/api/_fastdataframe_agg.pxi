@@ -240,58 +240,198 @@ cdef _count_impl(FastDataFrame self, col_names=None):
             result[name] = self.df_length
     return result
 
+cdef inline double _qs_double(double* a, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
+    cdef Py_ssize_t l = 0
+    cdef Py_ssize_t r = n - 1
+    cdef Py_ssize_t i, lt, gt
+    cdef double pivot, tmp
+    while l <= r:
+        pivot = a[l + (r - l) // 2]
+        lt = l
+        gt = r
+        i = l
+        while i <= gt:
+            if a[i] < pivot:
+                tmp = a[lt]; a[lt] = a[i]; a[i] = tmp
+                lt += 1; i += 1
+            elif a[i] > pivot:
+                tmp = a[i]; a[i] = a[gt]; a[gt] = tmp
+                gt -= 1
+            else:
+                i += 1
+        if k < lt:
+            r = lt - 1
+        elif k > gt:
+            l = gt + 1
+        else:
+            return a[k]
+    return a[k]
+
+
 cdef _describe_impl(FastDataFrame self):
     cdef dict stats = {}
     cdef str name, top_val
-    cdef Py_ssize_t col_len, i, max_freq, freq_val, col_rows
-    cdef long long ts_min, ts_max
-    cdef dict freq_map
+    cdef Py_ssize_t col_len, i, jc, valid_cnt, s_mid
     cdef bint is2d
-    cdef Py_ssize_t c_probe, r_probe
+    cdef Py_ssize_t c_probe, r_probe, base
+
+    cdef double s_sum, s_min, s_max, s_mean, s_m2, s_diff, val
+    cdef double* s_tmp = NULL
+    cdef double* d_ptr
+    cdef int* i_ptr
+
+    cdef int32_t* i32p
+    cdef int64_t* i64p
+    cdef int32_t v32_min, v32_max
+    cdef int64_t v64_min, v64_max
+
+    cdef list s_means, s_stds, s_mins, s_meds, s_maxs, d_mins, d_maxs
 
     for name, col_obj in self.columns.items():
         col_len = col_obj.length
-        is2d, c_probe, r_probe = _col_shape_probe(col_obj)
-        col_rows = r_probe
+        _probe_shape(col_obj, &is2d, &c_probe, &r_probe)
 
+        # =========================================================
+        # 1. 数值类型处理 (Int / Double)
+        # =========================================================
         if col_obj.dtype == TYPE_INT or col_obj.dtype == TYPE_DOUBLE:
-            stats[name] = {
-                'count': col_rows,
-                'mean': col_obj.mean(),
-                'std': col_obj.std(),
-                'min': col_obj.min(),
-                '50%': col_obj.median(),
-                'max': col_obj.max(),
-            }
-        elif col_obj.dtype in (TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_CATEGORY):
-            freq_map = {}
-            for i in range(col_len):
-                val = col_obj[i]
-                freq_map[val] = freq_map.get(val, 0) + 1
+            s_means = []; s_stds = []; s_mins = []; s_meds = []; s_maxs = []
 
+            s_tmp = <double*>aligned_malloc(max(r_probe, 1) * sizeof(double))
+            if not s_tmp: raise MemoryError()
+
+            d_ptr = (<DoubleColumn>col_obj).data_c if col_obj.dtype == TYPE_DOUBLE else NULL
+            i_ptr = (<IntColumn>col_obj).data_c if col_obj.dtype == TYPE_INT else NULL
+
+            try:
+                for jc in range(c_probe):
+                    valid_cnt = 0
+                    base = jc * r_probe
+
+                    with nogil:
+                        for i in range(r_probe):
+                            if d_ptr != NULL:
+                                val = d_ptr[base + i]
+                                if not isnan(val):
+                                    s_tmp[valid_cnt] = val
+                                    valid_cnt += 1
+                            else:
+                                s_tmp[valid_cnt] = <double>i_ptr[base + i]
+                                valid_cnt += 1
+
+                    if valid_cnt == 0:
+                        s_means.append(NAN); s_stds.append(NAN)
+                        s_mins.append(NAN); s_maxs.append(NAN); s_meds.append(NAN)
+                        continue
+
+                    s_sum = s_tmp[0]
+                    s_min = s_tmp[0]
+                    s_max = s_tmp[0]
+
+                    with nogil:
+                        for i in range(1, valid_cnt):
+                            val = s_tmp[i]
+                            s_sum += val
+                            if val < s_min: s_min = val
+                            if val > s_max: s_max = val
+
+                        s_mean = s_sum / <double>valid_cnt
+
+                        if valid_cnt < 2:
+                            s_stds.append(0.0)
+                        else:
+                            s_m2 = 0.0
+                            for i in range(valid_cnt):
+                                s_diff = s_tmp[i] - s_mean
+                                s_m2 += s_diff * s_diff
+                            s_stds.append(sqrt(s_m2 / <double>(valid_cnt - 1)))
+
+                        s_mid = valid_cnt // 2
+                        if valid_cnt % 2 == 0:
+                            s_meds.append((_qs_double(s_tmp, valid_cnt, s_mid - 1) +
+                                           _qs_double(s_tmp, valid_cnt, s_mid)) * 0.5)
+                        else:
+                            s_meds.append(_qs_double(s_tmp, valid_cnt, s_mid))
+
+                    s_means.append(s_mean)
+                    s_mins.append(s_min)
+                    s_maxs.append(s_max)
+
+            finally:
+                os_aligned_free(s_tmp)
+
+            if is2d and c_probe > 1:
+                stats[name] = {'count': r_probe, 'mean': s_means, 'std': s_stds,
+                               'min': s_mins, '50%': s_meds, 'max': s_maxs}
+            else:
+                stats[name] = {'count': r_probe, 'mean': s_means[0], 'std': s_stds[0],
+                               'min': s_mins[0], '50%': s_meds[0], 'max': s_maxs[0]}
+
+        # =========================================================
+        # 2. 离散类型处理 (String / Category / Bool)
+        # =========================================================
+        elif col_obj.dtype in (TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_CATEGORY):
+            cdef list keys = _col_to_keys(col_obj)
+            cdef dict freq_map = {}
+            cdef Py_ssize_t max_freq = 0
+            cdef Py_ssize_t freq_val
+
+            for val in keys:
+                if val is not None:
+                    freq_val = freq_map.get(val, 0) + 1
+                    freq_map[val] = freq_val
             top_val = ''
-            max_freq = 0
             for val, freq_val in freq_map.items():
+                if freq_val == max_freq:
+                    pass
                 if freq_val > max_freq:
                     max_freq = freq_val
                     top_val = str(val)
-            stats[name] = {
-                'count': col_rows,
-                'unique': len(freq_map),
-                'top': top_val,
-                'freq': max_freq,
-            }
+
+            stats[name] = {'count': r_probe, 'unique': len(freq_map),
+                           'top': top_val, 'freq': max_freq}
+
+        # =========================================================
+        # 3. 时间序列类型处理 (Date / DateTime / Time)
+        # =========================================================
         elif col_obj.dtype in (TYPE_DATE, TYPE_DATETIME, TYPE_TIME):
-            if col_len > 0:
-                ts_min = col_obj.min()
-                ts_max = col_obj.max()
+            d_mins = []; d_maxs = []
+
+            if col_obj.dtype == TYPE_DATETIME:
+                i64p = (<DateTimeColumn>col_obj).data_c
+                for jc in range(c_probe):
+                    base = jc * r_probe
+                    if r_probe == 0:
+                        d_mins.append(0); d_maxs.append(0)
+                        continue
+                    v64_min = i64p[base]
+                    v64_max = i64p[base]
+                    with nogil:
+                        for i in range(1, r_probe):
+                            if i64p[base + i] < v64_min: v64_min = i64p[base + i]
+                            if i64p[base + i] > v64_max: v64_max = i64p[base + i]
+                    d_mins.append(v64_min); d_maxs.append(v64_max)
             else:
-                ts_min = ts_max = 0
-            stats[name] = {
-                'count': col_rows,
-                'min': ts_min,
-                'max': ts_max,
-            }
+                # TYPE_DATE 和 TYPE_TIME 都是 int32_t 底层
+                i32p = <int32_t*>((<DateColumn>col_obj).data_c)
+                for jc in range(c_probe):
+                    base = jc * r_probe
+                    if r_probe == 0:
+                        d_mins.append(0); d_maxs.append(0)
+                        continue
+                    v32_min = i32p[base]
+                    v32_max = i32p[base]
+                    with nogil:
+                        for i in range(1, r_probe):
+                            if i32p[base + i] < v32_min: v32_min = i32p[base + i]
+                            if i32p[base + i] > v32_max: v32_max = i32p[base + i]
+                    d_mins.append(v32_min); d_maxs.append(v32_max)
+
+            if is2d and c_probe > 1:
+                stats[name] = {'count': r_probe, 'min': d_mins, 'max': d_maxs}
+            else:
+                stats[name] = {'count': r_probe, 'min': d_mins[0], 'max': d_maxs[0]}
+
     return stats
 
 
