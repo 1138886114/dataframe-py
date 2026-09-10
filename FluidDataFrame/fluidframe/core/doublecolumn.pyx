@@ -23,7 +23,8 @@ from fluidframe.core._base cimport (
     _double_int_manhattan_dist, _double_int_cosine_sim, _double_int_jaccard_sim, _double_int_hamming_dist,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
-    _col_shift_right_2d_double, _col_shift_left_2d, _col_gather_2d, _col_concat_2d
+    _col_shift_right_2d_double, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
+    _col_gather_nan, _col_gather_2d_nan, _col_count_nonzeros, _col_memcpy
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -298,8 +299,7 @@ cdef class DoubleColumn(BaseColumn):
     def copy(self):
         cdef DoubleColumn new_col = DoubleColumn(max(self.length, 1), cols=self.cols)
         new_col.length = self.length
-        if self.length > 0:
-            memcpy(new_col.data_c, self.data_c, self.length * sizeof(double))
+        _col_memcpy(new_col.data_c, self.data_c, self.length)
         return new_col
 
     @cython.binding(False)
@@ -347,17 +347,25 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, DoubleColumn other):
-        cdef Py_ssize_t other_rows
         if not self.get_owns_data_c():
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
+
+        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t other_c = other.get_cols_c()
+        cdef Py_ssize_t other_rows
+
         if self.get_is_2d_c() or other.get_is_2d_c():
-            if self.get_cols_c() != other.get_cols_c():
-                raise ValueError("Cannot concat 2D columns with different column counts")
+            if c != other_c:
+                if self.length == 0:
+                    c = other_c
+                else:
+                    raise ValueError(f"Cannot concat 2D columns with different column counts: {c} vs {other_c}")
             other_rows = other.get_rows_c()
             if other_rows == 0: return
-            self._reserve(self.length + other_rows * self.get_cols_c())
-            _col_concat_2d(self.data_c, &self.length, other.data_c, other_rows,
-                           self.get_cols_c(), sizeof(double))
+
+            self._reserve(self.length + other_rows * c)
+            _col_concat_2d(self.data_c, &self.length, other.data_c, other_rows, c, sizeof(double))
+            self.set_meta_c(<int>c, True, True)
             return
         if other.length == 0: return
         self._reserve(self.length + other.length)
@@ -487,13 +495,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def count_nonzeros(self):
-        cdef Py_ssize_t count = 0
-        cdef Py_ssize_t i, n = self.length
-        cdef double* ptr = self.data_c
-        with nogil:
-            for i in range(n):
-                count += (ptr[i] != 0.0)
-        return count
+        return _col_count_nonzeros(self.data_c, self.length)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1421,12 +1423,12 @@ cdef class DoubleColumn(BaseColumn):
             if not inplace:
                 new_col = DoubleColumn(max(n * c, 1), cols=c)
                 new_col.length = n * c
-                _col_gather_2d(new_col.data_c, self.data_c, indices, n, r, c, sizeof(double))
+                _col_gather_2d_nan(new_col.data_c, self.data_c, indices, n, r, c, sizeof(double))
                 return new_col
             else:
                 new_data = <double*>aligned_malloc(max(n * c, 1) * sizeof(double))
                 if not new_data: raise MemoryError()
-                _col_gather_2d(new_data, self.data_c, indices, n, r, c, sizeof(double))
+                _col_gather_2d_nan(new_data, self.data_c, indices, n, r, c, sizeof(double))
                 if self.get_owns_data_c() and self.data_c != NULL:
                     os_aligned_free(self.data_c)
                 self.data_c = new_data
@@ -1439,12 +1441,12 @@ cdef class DoubleColumn(BaseColumn):
         if not inplace:
             new_col = DoubleColumn(max(n, 1))
             new_col.length = n
-            _col_gather(new_col.data_c, self.data_c, indices, n, sizeof(double))
+            _col_gather_nan(new_col.data_c, self.data_c, indices, n, sizeof(double))
             return new_col
         else:
             new_data = <double*>aligned_malloc(max(n, 1) * sizeof(double))
             if not new_data: raise MemoryError()
-            _col_gather(new_data, self.data_c, indices, n, sizeof(double))
+            _col_gather_nan(new_data, self.data_c, indices, n, sizeof(double))
             if self.get_owns_data_c() and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data

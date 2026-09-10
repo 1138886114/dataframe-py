@@ -17,7 +17,8 @@ from fluidframe.core._base cimport (
     TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, _resolve_astype_target,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
-    _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d, _col_concat_2d
+    _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
+    _col_gather_zero, _col_gather_2d_zero, _col_memcpy
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -264,8 +265,7 @@ cdef class TimeColumn(BaseColumn):
     def copy(self):
         cdef TimeColumn new_col = TimeColumn(max(self.length, 1), cols=self.cols)
         new_col.length = self.length
-        if self.length > 0:
-            memcpy(new_col.data_c, self.data_c, self.length * sizeof(int32_t))
+        _col_memcpy(new_col.data_c, self.data_c, self.length)
         return new_col
 
     @cython.binding(False)
@@ -603,12 +603,12 @@ cdef class TimeColumn(BaseColumn):
             if not inplace:
                 new_col = TimeColumn(max(n * c, 1), cols=c)
                 new_col.length = n * c
-                _col_gather_2d(new_col.data_c, self.data_c, indices, n, r, c, sizeof(int32_t))
+                _col_gather_2d_zero(new_col.data_c, self.data_c, indices, n, r, c, sizeof(int32_t))
                 return new_col
             else:
                 new_data = <int32_t*>aligned_malloc(max(n * c, 1) * sizeof(int32_t))
                 if not new_data: raise MemoryError()
-                _col_gather_2d(new_data, self.data_c, indices, n, r, c, sizeof(int32_t))
+                _col_gather_2d_zero(new_data, self.data_c, indices, n, r, c, sizeof(int32_t))
                 if self.get_owns_data_c() and self.data_c != NULL:
                     os_aligned_free(self.data_c)
                 self.data_c = new_data
@@ -621,12 +621,12 @@ cdef class TimeColumn(BaseColumn):
         if not inplace:
             new_col = TimeColumn(max(n, 1), cols=self.cols)
             new_col.length = n
-            _col_gather(new_col.data_c, self.data_c, indices, n, sizeof(int32_t))
+            _col_gather_zero(new_col.data_c, self.data_c, indices, n, sizeof(int32_t))
             return new_col
         else:
             new_data = <int32_t*>aligned_malloc(max(n, 1) * sizeof(int32_t))
             if not new_data: raise MemoryError()
-            _col_gather(new_data, self.data_c, indices, n, sizeof(int32_t))
+            _col_gather_zero(new_data, self.data_c, indices, n, sizeof(int32_t))
             if self.get_owns_data_c() and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data

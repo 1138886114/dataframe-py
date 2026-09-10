@@ -14,7 +14,7 @@ from fluidframe.core._base cimport (
     TYPE_BOOL, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2,
     TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target,
     _c_shift_left, _col_pop_back, _col_pop_front, _col_concat,
-    _col_drop_row, _col_gather
+    _col_drop_row, _col_gather, _col_gather_zero
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -385,13 +385,13 @@ cdef class BoolColumn(BaseColumn):
         if not inplace:
             new_col = BoolColumn(max(n, 1))
             new_col.length = n
-            _col_gather(new_col.data_c, self.data_c, indices, n, sizeof(unsigned char))
+            _col_gather_zero(new_col.data_c, self.data_c, indices, n, sizeof(unsigned char))
             return new_col
         else:
             new_data = <unsigned char*>aligned_malloc(max(n, 1) * sizeof(unsigned char))
             if not new_data:
                 raise MemoryError()
-            _col_gather(new_data, self.data_c, indices, n, sizeof(unsigned char))
+            _col_gather_zero(new_data, self.data_c, indices, n, sizeof(unsigned char))
             if self._owns_data and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data

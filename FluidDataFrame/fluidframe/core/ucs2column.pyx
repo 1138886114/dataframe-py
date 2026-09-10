@@ -1223,6 +1223,8 @@ cdef class UCS2Column(BaseColumn):
         cdef Py_ssize_t i, idx
         for i in range(n):
             idx = indices[i]
+            if idx < 0:
+                continue
             req_char_len += self.offsets_c[idx + 1] - self.offsets_c[idx]
 
         cdef Py_ssize_t req_char_cap = max(req_char_len, 1024)
@@ -1240,6 +1242,9 @@ cdef class UCS2Column(BaseColumn):
         with nogil:
             for i in range(n):
                 idx = indices[i]
+                if idx < 0:
+                    new_offsets[i + 1] = current_char_len
+                    continue
                 start = self.offsets_c[idx]
                 end = self.offsets_c[idx + 1]
                 str_len = end - start

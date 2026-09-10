@@ -325,14 +325,14 @@ cdef class CategoryColumn(BaseColumn):
             new_col._cat_to_code = dict(self._cat_to_code)
             with nogil:
                 for i in range(n):
-                    new_col.codes_c[i] = old_codes[indices[i]]
+                    new_col.codes_c[i] = old_codes[indices[i]] if indices[i] >= 0 else 0
             return new_col
         else:
             new_codes = <int*>aligned_malloc(max(n, 1) * sizeof(int))
             if not new_codes: raise MemoryError()
             with nogil:
                 for i in range(n):
-                    new_codes[i] = old_codes[indices[i]]
+                    new_codes[i] = old_codes[indices[i]] if indices[i] >= 0 else 0
             if self._owns_data and self.codes_c != NULL:
                 os_aligned_free(self.codes_c)
             self.codes_c = new_codes

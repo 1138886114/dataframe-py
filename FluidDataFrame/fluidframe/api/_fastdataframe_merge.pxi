@@ -11,90 +11,201 @@ cdef _concat_impl(FastDataFrame self, FastDataFrame other):
     result.index = self.index._concat(other.index)
     return result
 
+cdef inline BaseColumn _gather_or_reorder(FastDataFrame df, BaseColumn src_col,
+                                          Py_ssize_t* idx_c, Py_ssize_t result_len):
+    """
+    终极版安全搜集分配器：
+    利用明确的维度约束（只有数字/时间可为 2D），彻底删除了无用的分支探测。
+    完全摒弃动态 append，采用预分配 length 结合底层 C 宏/CMOV 极速搬运！
+    """
+    cdef int dtype = src_col.dtype
+    cdef Py_ssize_t i, idx
+    cdef bint is2d
+    cdef Py_ssize_t c_out, r_out
+
+    # =========================================================================
+    # 第一梯队：原生享有 Gather C 宏 的类型 (自带 2D 识别)
+    # =========================================================================
+    if dtype == TYPE_INT:
+        return (<IntColumn>src_col).gather_with_sentinel(idx_c, result_len, 0)
+    elif dtype == TYPE_DOUBLE:
+        return (<DoubleColumn>src_col).gather_with_sentinel(idx_c, result_len, NAN)
+
+    # =========================================================================
+    # 第二梯队：可能为 2D，利用宏 _col_gather_zero 批量搬运的定宽类型
+    # =========================================================================
+    elif dtype == TYPE_DATE:
+        _probe_shape(src_col, &is2d, &c_out, &r_out)
+        res_dt = DateColumn(max(result_len * c_out, 1), cols=c_out)
+        res_dt.length = result_len * c_out
+        if is2d: res_dt.set_meta_c(<int>c_out, True, True)
+        if is2d and c_out > 1:
+            _col_gather_2d_zero(res_dt.data_c, (<DateColumn>src_col).data_c, idx_c, result_len, r_out, c_out, sizeof(int32_t))
+        else:
+            _col_gather_zero(res_dt.data_c, (<DateColumn>src_col).data_c, idx_c, result_len, sizeof(int32_t))
+        return res_dt
+
+    elif dtype == TYPE_DATETIME:
+        _probe_shape(src_col, &is2d, &c_out, &r_out)
+        res_dtn = DateTimeColumn(max(result_len * c_out, 1), cols=c_out)
+        res_dtn.length = result_len * c_out
+        if is2d: res_dtn.set_meta_c(<int>c_out, True, True)
+        if is2d and c_out > 1:
+            _col_gather_2d_zero(res_dtn.data_c, (<DateTimeColumn>src_col).data_c, idx_c, result_len, r_out, c_out, sizeof(int64_t))
+        else:
+            _col_gather_zero(res_dtn.data_c, (<DateTimeColumn>src_col).data_c, idx_c, result_len, sizeof(int64_t))
+        return res_dtn
+
+    elif dtype == TYPE_TIME:
+        _probe_shape(src_col, &is2d, &c_out, &r_out)
+        res_tm = TimeColumn(max(result_len * c_out, 1), cols=c_out)
+        res_tm.length = result_len * c_out
+        if is2d: res_tm.set_meta_c(<int>c_out, True, True)
+        if is2d and c_out > 1:
+            _col_gather_2d_zero(res_tm.data_c, (<TimeColumn>src_col).data_c, idx_c, result_len, r_out, c_out, sizeof(int32_t))
+        else:
+            _col_gather_zero(res_tm.data_c, (<TimeColumn>src_col).data_c, idx_c, result_len, sizeof(int32_t))
+        return res_tm
+
+    # =========================================================================
+    # 第三梯队：永远为 1D 的离散定宽类型 (无需 _probe_shape，直捣黄龙)
+    # =========================================================================
+    elif dtype == TYPE_BOOL:
+        res_bool = BoolColumn(max(result_len, 1))
+        res_bool.length = result_len
+        # Bool 直接按单字节（unsigned char）调 1D 零分流搬运宏
+        _col_gather_zero(res_bool.data_c, (<BoolColumn>src_col).data_c, idx_c, result_len, sizeof(unsigned char))
+        return res_bool
+
+    elif dtype == TYPE_CATEGORY:
+        res_cat = src_col.copy()
+        res_cat._reserve(max(result_len, 1))
+        res_cat.length = result_len
+
+        cdef int null_code = (<CategoryColumn>res_cat)._get_or_add_code('')
+        cdef int* dst_codes = (<CategoryColumn>res_cat).codes_c
+        cdef int* src_codes = (<CategoryColumn>src_col).codes_c
+
+        with nogil:
+            for i in range(result_len):
+                idx = idx_c[i]
+                dst_codes[i] = src_codes[idx] if idx >= 0 else null_code
+        return res_cat
+
+    # =========================================================================
+    # 第四梯队：永远为 1D 的变长字符串类型
+    # =========================================================================
+    elif dtype == TYPE_CHAR256:
+        res_c256 = AsciiColumn(max(result_len, 1))
+        res_c256._reserve_bytes((<AsciiColumn>src_col).byte_length)
+        for i in range(result_len):
+            idx = idx_c[i]
+            res_c256.append((<AsciiColumn>src_col)[idx] if idx >= 0 else '')
+        return res_c256
+
+    elif dtype == TYPE_UCS2:
+        res_ucs2 = UCS2Column(max(result_len, 1))
+        res_ucs2._reserve_chars((<UCS2Column>src_col).char_length)
+        for i in range(result_len):
+            idx = idx_c[i]
+            res_ucs2.append((<UCS2Column>src_col)[idx] if idx >= 0 else '')
+        return res_ucs2
+
+    raise TypeError(f"Unsupported column dtype for merge gather: {dtype}")
+
 cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inner'):
     cdef list join_cols
     if on is not None:
         join_cols = on if isinstance(on, list) else [on]
         for jc in join_cols:
-            if jc not in self.columns:
-                raise KeyError(f"Column '{jc}' not found in left DataFrame")
-            if jc not in other.columns:
-                raise KeyError(f"Column '{jc}' not found in right DataFrame")
+            if jc not in self.columns: raise KeyError(f"Column '{jc}' not found in left DataFrame")
+            if jc not in other.columns: raise KeyError(f"Column '{jc}' not found in right DataFrame")
     else:
         common = set(self.columns.keys()) & set(other.columns.keys())
-        if not common:
-            raise ValueError("No common columns to merge on")
+        if not common: raise ValueError("No common columns to merge on")
         join_cols = sorted(common)
 
+    cdef Py_ssize_t num_join = len(join_cols)
+    cdef Py_ssize_t i, j, c
+
+    # =========================================================
+    # 批处理提取 Join 键 (O(1) 替代 O(N*C))
+    # =========================================================
+    cdef list l_cols_data = [_col_to_keys(self.columns[jc]) for jc in join_cols]
+    cdef list r_cols_data = [_col_to_keys(other.columns[jc]) for jc in join_cols]
+
+    cdef list left_keys = [None] * self.df_length
+    cdef list right_keys = [None] * other.df_length
+
+    if num_join == 1:
+        left_keys = l_cols_data[0]
+        right_keys = r_cols_data[0]
+    else:
+        for i in range(self.df_length):
+            left_keys[i] = tuple(l_cols_data[c][i] for c in range(num_join))
+        for j in range(other.df_length):
+            right_keys[j] = tuple(r_cols_data[c][j] for c in range(num_join))
+
+    # =========================================================
+    # 高速哈希表构建
+    # =========================================================
     cdef dict left_map = {}
     cdef dict right_map = {}
-    cdef Py_ssize_t i, j
+    cdef object key
+    cdef list l_list, r_list
 
     for i in range(self.df_length):
-        key = tuple(_col_row_key(self.columns[jc], i) for jc in join_cols)
-        if key not in left_map:
-            left_map[key] = []
-        left_map[key].append(i)
+        key = left_keys[i]
+        l_list = left_map.get(key)
+        if l_list is None:
+            left_map[key] = [i]
+        else:
+            l_list.append(i)
 
     for j in range(other.df_length):
-        key = tuple(_col_row_key(other.columns[jc], j) for jc in join_cols)
-        if key not in right_map:
-            right_map[key] = []
-        right_map[key].append(j)
+        key = right_keys[j]
+        r_list = right_map.get(key)
+        if r_list is None:
+            right_map[key] = [j]
+        else:
+            r_list.append(j)
 
+    # =========================================================
+    # 行索引推导 (布尔化简)
+    # =========================================================
     cdef list left_indices = []
     cdef list right_indices = []
+    cdef bint keep_left = (how in ('left', 'outer'))
+    cdef bint keep_right = (how in ('right', 'outer'))
+    cdef list all_keys
 
-    if how == 'inner':
-        for key in left_map:
-            if key in right_map:
-                for li in left_map[key]:
-                    for ri in right_map[key]:
-                        left_indices.append(li)
-                        right_indices.append(ri)
-    elif how == 'left':
-        for key in left_map:
-            rights = right_map.get(key, [])
-            if not rights:
-                for li in left_map[key]:
-                    left_indices.append(li)
-                    right_indices.append(-1)
-            else:
-                for li in left_map[key]:
-                    for ri in rights:
-                        left_indices.append(li)
-                        right_indices.append(ri)
+    if how == 'outer':
+        all_keys = list(set(left_map.keys()) | set(right_map.keys()))
     elif how == 'right':
-        for key in right_map:
-            lefts = left_map.get(key, [])
-            if not lefts:
-                for ri in right_map[key]:
-                    left_indices.append(-1)
-                    right_indices.append(ri)
-            else:
-                for li in lefts:
-                    for ri in right_map[key]:
-                        left_indices.append(li)
-                        right_indices.append(ri)
-    elif how == 'outer':
-        all_keys = set(left_map.keys()) | set(right_map.keys())
-        for key in all_keys:
-            lefts = left_map.get(key, [])
-            rights = right_map.get(key, [])
-            if not lefts:
-                for ri in rights:
-                    left_indices.append(-1)
-                    right_indices.append(ri)
-            elif not rights:
-                for li in lefts:
-                    left_indices.append(li)
-                    right_indices.append(-1)
-            else:
-                for li in lefts:
-                    for ri in rights:
-                        left_indices.append(li)
-                        right_indices.append(ri)
+        all_keys = list(right_map.keys())
+    else:
+        all_keys = list(left_map.keys())
 
+    for key in all_keys:
+        lefts = left_map.get(key, [])
+        rights = right_map.get(key, [])
+        if lefts and rights:
+            for li in lefts:
+                for ri in rights:
+                    left_indices.append(li)
+                    right_indices.append(ri)
+        elif lefts and keep_left:
+            for li in lefts:
+                left_indices.append(li)
+                right_indices.append(-1)
+        elif rights and keep_right:
+            for ri in rights:
+                left_indices.append(-1)
+                right_indices.append(ri)
+
+    # =========================================================
+    # 安全指针分配与底层数据拷贝
+    # =========================================================
     cdef Py_ssize_t result_len = len(left_indices)
     cdef FastDataFrame result = FastDataFrame()
     result.df_length = result_len
@@ -110,41 +221,29 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
         if left_idx_c: os_aligned_free(left_idx_c)
         if right_idx_c: os_aligned_free(right_idx_c)
         raise MemoryError()
+
     cdef BaseColumn src_col
 
     try:
+        # 1. 数组赋值 (消灭内层寻址消耗)
         for i in range(result_len):
             left_idx_c[i] = left_indices[i]
             right_idx_c[i] = right_indices[i]
 
+        # 2. 列数据聚合搬运
         for cn in join_cols:
             src_col = self.columns[cn]
-            if src_col.dtype == TYPE_INT:
-                result.columns[cn] = (<IntColumn>src_col).gather_with_sentinel(left_idx_c, result_len, 0)
-            elif src_col.dtype == TYPE_DOUBLE:
-                result.columns[cn] = (<DoubleColumn>src_col).gather_with_sentinel(left_idx_c, result_len, NAN)
-            else:
-                result.columns[cn] = self._reorder_column(src_col, left_idx_c, result_len, False)
+            result.columns[cn] = _gather_or_reorder(self, src_col, left_idx_c, result_len)
 
         for cn in left_col_names:
             src_col = self.columns[cn]
             out_name = cn + '_x' if cn in right_col_names else cn
-            if src_col.dtype == TYPE_INT:
-                result.columns[out_name] = (<IntColumn>src_col).gather_with_sentinel(left_idx_c, result_len, 0)
-            elif src_col.dtype == TYPE_DOUBLE:
-                result.columns[out_name] = (<DoubleColumn>src_col).gather_with_sentinel(left_idx_c, result_len, NAN)
-            else:
-                result.columns[out_name] = self._reorder_column(src_col, left_idx_c, result_len, False)
+            result.columns[out_name] = _gather_or_reorder(self, src_col, left_idx_c, result_len)
 
         for cn in right_col_names:
             src_col = other.columns[cn]
             out_name = cn + '_y' if cn in result.columns or cn in left_col_names else cn
-            if src_col.dtype == TYPE_INT:
-                result.columns[out_name] = (<IntColumn>src_col).gather_with_sentinel(right_idx_c, result_len, 0)
-            elif src_col.dtype == TYPE_DOUBLE:
-                result.columns[out_name] = (<DoubleColumn>src_col).gather_with_sentinel(right_idx_c, result_len, NAN)
-            else:
-                result.columns[out_name] = other._reorder_column(src_col, right_idx_c, result_len, False)
+            result.columns[out_name] = _gather_or_reorder(other, src_col, right_idx_c, result_len)
 
         return result
     finally:

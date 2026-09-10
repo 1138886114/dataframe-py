@@ -1504,6 +1504,8 @@ cdef class AsciiColumn(BaseColumn):
         cdef Py_ssize_t req_bytes = 0
         for i in range(n):
             idx = indices[i]
+            if idx < 0:
+                continue
             req_bytes += self.offsets_c[idx + 1] - self.offsets_c[idx]
 
         cdef Py_ssize_t req_byte_cap = max(req_bytes, 4096)
@@ -1521,6 +1523,9 @@ cdef class AsciiColumn(BaseColumn):
         with nogil:
             for i in range(n):
                 idx = indices[i]
+                if idx < 0:
+                    new_offsets[i + 1] = current_byte_len
+                    continue
                 start = self.offsets_c[idx]
                 end = self.offsets_c[idx + 1]
                 str_len = end - start

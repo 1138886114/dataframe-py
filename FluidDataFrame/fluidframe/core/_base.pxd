@@ -1,6 +1,7 @@
 # cython: language_level=3
 from libc.math cimport sqrt, fabs, NAN
 from libc.string cimport memmove, memcpy, memset
+from libc.stdint cimport int32_t, int64_t
 
 # ============================================================
 #  Data type enum
@@ -99,6 +100,32 @@ cdef inline void _col_gather(void* dst, void* src,
                <char*>src + idx * elem_size,
                elem_size)
 
+cdef inline void _col_gather_zero(void* dst, void* src,
+                                  Py_ssize_t* indices, Py_ssize_t n,
+                                  Py_ssize_t elem_size) noexcept nogil:
+    cdef Py_ssize_t i, idx
+    for i in range(n):
+        idx = indices[i]
+        if idx < 0:
+            memset(<char*>dst + i * elem_size, 0, elem_size)
+        else:
+            memcpy(<char*>dst + i * elem_size,
+                   <char*>src + idx * elem_size,
+                   elem_size)
+
+cdef inline void _col_gather_nan(void* dst, void* src,
+                                 Py_ssize_t* indices, Py_ssize_t n,
+                                 Py_ssize_t elem_size) noexcept nogil:
+    cdef Py_ssize_t i, idx
+    for i in range(n):
+        idx = indices[i]
+        if idx < 0:
+            (<double*>(<char*>dst + i * elem_size))[0] = NAN
+        else:
+            memcpy(<char*>dst + i * elem_size,
+                   <char*>src + idx * elem_size,
+                   elem_size)
+
 # ============================================================
 #  2D (rows*cols column-major) row-level helpers
 #  A logical row i lives at flat index j*rows + i for sub-column j.
@@ -181,6 +208,26 @@ cdef inline void _col_gather_2d(void* dst, void* src,
         _col_gather(<char*>dst + j * n * elem_size,
                     <char*>src + j * rows * elem_size,
                     indices, n, elem_size)
+
+cdef inline void _col_gather_2d_zero(void* dst, void* src,
+                                     Py_ssize_t* indices, Py_ssize_t n,
+                                     Py_ssize_t rows, Py_ssize_t cols,
+                                     Py_ssize_t elem_size) noexcept nogil:
+    cdef Py_ssize_t j
+    for j in range(cols):
+        _col_gather_zero(<char*>dst + j * n * elem_size,
+                         <char*>src + j * rows * elem_size,
+                         indices, n, elem_size)
+
+cdef inline void _col_gather_2d_nan(void* dst, void* src,
+                                    Py_ssize_t* indices, Py_ssize_t n,
+                                    Py_ssize_t rows, Py_ssize_t cols,
+                                    Py_ssize_t elem_size) noexcept nogil:
+    cdef Py_ssize_t j
+    for j in range(cols):
+        _col_gather_nan(<char*>dst + j * n * elem_size,
+                        <char*>src + j * rows * elem_size,
+                        indices, n, elem_size)
 
 cdef inline void _col_concat_2d(void* data_c, Py_ssize_t* length,
                                 void* other_data, Py_ssize_t other_rows,
@@ -498,3 +545,22 @@ cdef inline double _double_int_hamming_dist(double* x, NumericType* y, Py_ssize_
         if <double>x[i] != <double>y[i]:
             diffs += 1
     return <double>diffs / <double>n
+
+# ============================================================
+#  Fused hot-path helpers (inline, zero-overhead)
+# ============================================================
+cdef inline Py_ssize_t _col_count_nonzeros(NumericType* ptr, Py_ssize_t n) noexcept nogil:
+    cdef Py_ssize_t i, count = 0
+    for i in range(n):
+        count += (ptr[i] != 0)
+    return count
+
+ctypedef fused FixedNum:
+    int
+    int32_t
+    int64_t
+    double
+
+cdef inline void _col_memcpy(FixedNum* dst, FixedNum* src, Py_ssize_t n) noexcept nogil:
+    if n > 0:
+        memcpy(dst, src, n * sizeof(FixedNum))
