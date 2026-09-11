@@ -4,13 +4,15 @@
 
 cimport cython
 from libc.string cimport memcpy, strncpy
-from fluidframe.core._base cimport aligned_malloc, os_aligned_free, BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE
+from fluidframe.core._base cimport aligned_malloc, os_aligned_free, BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE, TYPE_DATETIME, TYPE_TIME
 from fluidframe.core.fastdataframe cimport FastDataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.asciicolumn cimport AsciiColumn
 from fluidframe.core.ucs2column cimport UCS2Column
 from fluidframe.core.datecolumn cimport DateColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn
+from fluidframe.core.timecolumn cimport TimeColumn
 from fluidframe.core.index cimport IndexBase
 
 
@@ -92,7 +94,96 @@ cdef class _ILocIndexer:
             os_aligned_free(indices_c)
 
 
+cdef inline void _fast_set_cell(BaseColumn col, int dtype, Py_ssize_t idx, object val) except *:
+    """
+    单格/子列组极速修改器：统一处理 1D 和 2D 逻辑，自带类型格式化。
+    """
+    cdef bint is2d
+    cdef Py_ssize_t c, r, j
+    cdef object v
+    cdef int32_t days
+    cdef int64_t tmp_dt
+
+    _probe_shape(col, &is2d, &c, &r)
+
+    if dtype == TYPE_INT:
+        if is2d and c > 1:
+            for j in range(c):
+                v = val[j]
+                (<IntColumn>col).data_c[j * r + idx] = <int>v
+        else:
+            (<IntColumn>col).data_c[idx] = <int>val
+
+    elif dtype == TYPE_DOUBLE:
+        if is2d and c > 1:
+            for j in range(c):
+                v = val[j]
+                (<DoubleColumn>col).data_c[j * r + idx] = <double>v
+        else:
+            (<DoubleColumn>col).data_c[idx] = <double>val
+
+    elif dtype == TYPE_DATE:
+        if is2d and c > 1:
+            for j in range(c):
+                v = val[j]
+                if isinstance(v, int) and v > 10000000:
+                    days = _ymd_to_days(v // 10000, (v // 100) % 100, v % 100)
+                else:
+                    days = <int32_t>v
+                (<int32_t*>(<DateColumn>col).data_c)[j * r + idx] = days
+        else:
+            if isinstance(val, int) and val > 10000000:
+                days = _ymd_to_days(val // 10000, (val // 100) % 100, val % 100)
+            else:
+                days = <int32_t>val
+            (<int32_t*>(<DateColumn>col).data_c)[idx] = days
+
+    elif dtype == TYPE_DATETIME:
+        if is2d and c > 1:
+            for j in range(c):
+                v = val[j]
+                if isinstance(v, int) and v > 10000000:
+                    tmp_dt = <int64_t>_ymd_to_days(v // 10000, (v // 100) % 100, v % 100) * 86400000000LL
+                else:
+                    tmp_dt = <int64_t>v * 1000000LL
+                (<int64_t*>(<DateTimeColumn>col).data_c)[j * r + idx] = tmp_dt
+        else:
+            if isinstance(val, int) and val > 10000000:
+                tmp_dt = <int64_t>_ymd_to_days(val // 10000, (val // 100) % 100, val % 100) * 86400000000LL
+            else:
+                tmp_dt = <int64_t>val * 1000000LL
+            (<int64_t*>(<DateTimeColumn>col).data_c)[idx] = tmp_dt
+
+    elif dtype == TYPE_TIME:
+        if is2d and c > 1:
+            for j in range(c):
+                v = val[j]
+                (<int32_t*>(<TimeColumn>col).data_c)[j * r + idx] = <int32_t>v
+        else:
+            (<int32_t*>(<TimeColumn>col).data_c)[idx] = <int32_t>val
+
+    elif dtype == TYPE_CHAR256:
+        (<AsciiColumn>col)._set_item(idx, str(val))
+
+    elif dtype == TYPE_UCS2:
+        (<UCS2Column>col)._set_item(idx, str(val))
+
+    elif dtype == TYPE_BOOL:
+        (<BoolColumn>col).data_c[idx] = 1 if val else 0
+
+    elif dtype == TYPE_CATEGORY:
+        if val is None:
+            (<CategoryColumn>col).codes_c[idx] = (<CategoryColumn>col)._get_or_add_code('')
+        else:
+            (<CategoryColumn>col).codes_c[idx] = (<CategoryColumn>col)._get_or_add_code(str(val))
+
+    else:
+        raise TypeError(f"Unsupported dtype {dtype} for setting item")
+
+
 cdef class _LocIndexer:
+    cdef FastDataFrame frame
+
     def __cinit__(self, FastDataFrame frame):
         self.frame = frame
 
@@ -101,7 +192,7 @@ cdef class _LocIndexer:
         if n_orig == 0:
             raise IndexError("Cannot setitem on empty DataFrame")
 
-        cdef Py_ssize_t idx
+        cdef Py_ssize_t idx, i
         cdef list col_names = list(self.frame.columns.keys())
         cdef Py_ssize_t n_cols = len(col_names)
         cdef str col_name
@@ -119,39 +210,16 @@ cdef class _LocIndexer:
                 for i in range(n_cols):
                     col_name = col_names[i]
                     col = self.frame.columns[col_name]
-                    if col.dtype == TYPE_INT:
-                        (<IntColumn>col).data_c[idx] = <int>values[i]
-                    elif col.dtype == TYPE_DOUBLE:
-                        (<DoubleColumn>col).data_c[idx] = <double>values[i]
-                    elif col.dtype == TYPE_CHAR256:
-                        fill_bytes = str(values[i]).encode('ascii', errors='ignore')
-                        dest = (<AsciiColumn>col).data_c + (idx * 256)
-                        strncpy(dest, fill_bytes, 255)
-                        dest[255] = 0
-                    elif col.dtype == TYPE_UCS2:
-                        (<UCS2Column>col)._set_item(idx, str(values[i]))
-                    elif col.dtype == TYPE_DATE:
-                        (<DateColumn>col).data_c[idx] = <long long>values[i]
+                    _fast_set_cell(col, col.dtype, idx, values[i])
             elif isinstance(values, dict):
                 for col_name, val in values.items():
                     if col_name not in self.frame.columns:
                         raise KeyError(f"Column '{col_name}' not found")
                     col = self.frame.columns[col_name]
-                    if col.dtype == TYPE_INT:
-                        (<IntColumn>col).data_c[idx] = <int>val
-                    elif col.dtype == TYPE_DOUBLE:
-                        (<DoubleColumn>col).data_c[idx] = <double>val
-                    elif col.dtype == TYPE_CHAR256:
-                        fill_bytes = str(val).encode('ascii', errors='ignore')
-                        dest = (<AsciiColumn>col).data_c + (idx * 256)
-                        strncpy(dest, fill_bytes, 255)
-                        dest[255] = 0
-                    elif col.dtype == TYPE_UCS2:
-                        (<UCS2Column>col)._set_item(idx, str(val))
-                    elif col.dtype == TYPE_DATE:
-                        (<DateColumn>col).data_c[idx] = <long long>val
+                    _fast_set_cell(col, col.dtype, idx, val)
             else:
                 raise TypeError(f"Cannot set row from {type(values)}")
+
         else:
             raise TypeError(f"Unsupported loc key type for setitem: {type(key).__name__}")
 

@@ -116,11 +116,14 @@ cdef inline void _col_gather_zero(void* dst, void* src,
 cdef inline void _col_gather_nan(void* dst, void* src,
                                  Py_ssize_t* indices, Py_ssize_t n,
                                  Py_ssize_t elem_size) noexcept nogil:
+    """Gather with NaN fill for out-of-range indices.
+    Only safe for elem_size == sizeof(double) (float64)."""
     cdef Py_ssize_t i, idx
+    cdef double nan_val = NAN
     for i in range(n):
         idx = indices[i]
         if idx < 0:
-            (<double*>(<char*>dst + i * elem_size))[0] = NAN
+            memcpy(<char*>dst + i * elem_size, &nan_val, elem_size)
         else:
             memcpy(<char*>dst + i * elem_size,
                    <char*>src + idx * elem_size,
