@@ -1064,8 +1064,8 @@ cdef class IntColumn(BaseColumn):
             if not self.is_2d or c <= 1:
                 return {"count": 0, "mean": NAN, "std": NAN, "min": NAN,
                         "25%": NAN, "50%": NAN, "75%": NAN, "max": NAN}
-            return [{"count": 0, "mean": NAN, "std": NAN, "min": NAN,
-                     "25%": NAN, "50%": NAN, "75%": NAN, "max": NAN} for _ in range(c)]
+            return {"count": 0, "mean": NAN, "std": NAN, "min": NAN,
+                    "25%": NAN, "50%": NAN, "75%": NAN, "max": NAN}
 
         if not self.is_2d or c <= 1:
             return {
@@ -1087,19 +1087,29 @@ cdef class IntColumn(BaseColumn):
         cdef object q50 = self.quantile(0.50)
         cdef object q75 = self.quantile(0.75)
 
-        cdef list results = [None] * c
+        cdef double total_mean = 0.0, total_std = 0.0
+        cdef double global_min = <double>mins[0], global_max = <double>maxs[0]
+        cdef double global_q25 = q25[0], global_q50 = q50[0], global_q75 = q75[0]
+        cdef Py_ssize_t total_count = 0
         for j in range(c):
-            results[j] = {
-                "count": r,
-                "mean": means[j],
-                "std": stds[j],
-                "min": <double>mins[j],
-                "25%": q25[j],
-                "50%": q50[j],
-                "75%": q75[j],
-                "max": <double>maxs[j]
-            }
-        return results
+            total_count += r
+            total_mean += means[j]
+            total_std += stds[j]
+            if <double>mins[j] < global_min: global_min = <double>mins[j]
+            if <double>maxs[j] > global_max: global_max = <double>maxs[j]
+            if q25[j] < global_q25: global_q25 = q25[j]
+            if q50[j] < global_q50: global_q50 = q50[j]
+            if q75[j] < global_q75: global_q75 = q75[j]
+        return {
+            "count": total_count,
+            "mean": total_mean / <double>c,
+            "std": total_std / <double>c,
+            "min": global_min,
+            "25%": global_q25,
+            "50%": global_q50,
+            "75%": global_q75,
+            "max": global_max
+        }
 
     cdef double _sum_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil:
         cdef double total = 0.0
@@ -1478,17 +1488,16 @@ cdef class IntColumn(BaseColumn):
             return result
 
         cdef list results = [None] * c
+        cdef set all_seen = set()
+        cdef list all_result = []
         for j in range(c):
             base = j * r
-            seen = set()
-            result = []
             for i in range(r):
                 val = ptr[base + i]
-                if val not in seen:
-                    seen.add(val)
-                    result.append(val)
-            results[j] = result
-        return results
+                if val not in all_seen:
+                    all_seen.add(val)
+                    all_result.append(val)
+        return all_result
 
     cdef IntColumn _cmp_op(self, object val, int op):
         cdef Py_ssize_t i, n = self.length

@@ -355,7 +355,10 @@ cdef _head_impl(FastDataFrame self, Py_ssize_t n):
     if n < 0: raise ValueError("n must be non-negative")
     n = min(n, self.df_length)
     if n == 0:
-        return FastDataFrame()
+        result = FastDataFrame()
+        for name, col in self.columns.items():
+            result.columns[name] = col.__class__()
+        return result
 
     cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
     if not idx_c: raise MemoryError()
