@@ -1757,7 +1757,7 @@ cdef class IntColumn(BaseColumn):
                 ptr[i] = val
         return col
 
-    cpdef IntColumn abs(self):
+    def abs(self):
         cdef IntColumn new_col = self.copy()
         if new_col.length > 0:
             _col_abs(new_col.data_c, new_col.data_c, new_col.length)

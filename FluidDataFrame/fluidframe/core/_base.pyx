@@ -117,16 +117,24 @@ cdef class BaseColumn:
     def shift_left(self, Py_ssize_t pos):
         raise NotImplementedError
 
-    cpdef BaseColumn abs(self):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def abs(self):
         raise NotImplementedError("Subclasses must implement abs()")
 
-    cpdef BaseColumn round(self, int decimals=0):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def round(self, int decimals=0):
         raise NotImplementedError("Subclasses must implement round()")
 
-    cpdef BaseColumn ffill(self):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ffill(self):
         raise NotImplementedError("Subclasses must implement ffill()")
 
-    cpdef BaseColumn bfill(self):
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def bfill(self):
         raise NotImplementedError("Subclasses must implement bfill()")
 
 

@@ -59,12 +59,6 @@ cdef class BaseColumn:
     cdef Py_ssize_t _get_rows_c(self) noexcept nogil
     cdef void* _get_data_ptr(self) noexcept nogil
 
-    # Element-wise transforms (delegated from FastDataFrame)
-    cpdef BaseColumn abs(self)
-    cpdef BaseColumn round(self, int decimals=*)
-    cpdef BaseColumn ffill(self)
-    cpdef BaseColumn bfill(self)
-
 # ============================================================
 #  Astype helper
 # ============================================================

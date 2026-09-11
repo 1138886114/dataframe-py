@@ -1473,13 +1473,13 @@ cdef class DoubleColumn(BaseColumn):
                 ptr[i] = v
         return col
 
-    cpdef DoubleColumn abs(self):
+    def abs(self):
         cdef DoubleColumn new_col = self.copy()
         if new_col.length > 0:
             _col_abs(new_col.data_c, new_col.data_c, new_col.length)
         return new_col
 
-    cpdef DoubleColumn round(self, int decimals=0):
+    def round(self, int decimals=0):
         cdef DoubleColumn new_col = self.copy()
         cdef double factor
         if new_col.length > 0:
@@ -1487,7 +1487,7 @@ cdef class DoubleColumn(BaseColumn):
             _col_round(new_col.data_c, new_col.data_c, new_col.length, factor)
         return new_col
 
-    cpdef DoubleColumn ffill(self):
+    def ffill(self):
         cdef DoubleColumn new_col = self.copy()
         cdef Py_ssize_t i
         if new_col.length > 0:
@@ -1498,7 +1498,7 @@ cdef class DoubleColumn(BaseColumn):
                 _col_ffill_double(new_col.data_c, new_col.length)
         return new_col
 
-    cpdef DoubleColumn bfill(self):
+    def bfill(self):
         cdef DoubleColumn new_col = self.copy()
         cdef Py_ssize_t i
         if new_col.length > 0:
