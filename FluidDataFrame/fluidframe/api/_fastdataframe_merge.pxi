@@ -22,6 +22,9 @@ cdef inline BaseColumn _gather_or_reorder(FastDataFrame df, BaseColumn src_col,
     cdef Py_ssize_t i, idx
     cdef bint is2d
     cdef Py_ssize_t c_out, r_out
+    cdef int null_code
+    cdef int* dst_codes
+    cdef int* src_codes
 
     # =========================================================================
     # 第一梯队：原生享有 Gather C 宏 的类型 (自带 2D 识别)
@@ -82,9 +85,9 @@ cdef inline BaseColumn _gather_or_reorder(FastDataFrame df, BaseColumn src_col,
         res_cat._reserve(max(result_len, 1))
         res_cat.length = result_len
 
-        cdef int null_code = (<CategoryColumn>res_cat)._get_or_add_code('')
-        cdef int* dst_codes = (<CategoryColumn>res_cat).codes_c
-        cdef int* src_codes = (<CategoryColumn>src_col).codes_c
+        null_code = (<CategoryColumn>res_cat)._get_or_add_code('')
+        dst_codes = (<CategoryColumn>res_cat).codes_c
+        src_codes = (<CategoryColumn>src_col).codes_c
 
         with nogil:
             for i in range(result_len):
@@ -112,6 +115,87 @@ cdef inline BaseColumn _gather_or_reorder(FastDataFrame df, BaseColumn src_col,
         return res_ucs2
 
     raise TypeError(f"Unsupported column dtype for merge gather: {dtype}")
+
+cdef void _fixup_copy(void* dst_base, void* src_base, Py_ssize_t esz,
+                      Py_ssize_t* l_idx, Py_ssize_t* r_idx, Py_ssize_t n,
+                      Py_ssize_t c, Py_ssize_t rr, bint is2d) noexcept nogil:
+    """join 列修复：仅对 left 缺席行 (l_idx<0) 从右源拷贝真实值。"""
+    cdef Py_ssize_t i, j, ridx
+    if is2d and c > 1:
+        for i in range(n):
+            if l_idx[i] < 0:
+                ridx = r_idx[i]
+                for j in range(c):
+                    memcpy(<char*>dst_base + (j * n + i) * esz,
+                           <char*>src_base + (j * rr + ridx) * esz, esz)
+    else:
+        for i in range(n):
+            if l_idx[i] < 0:
+                ridx = r_idx[i]
+                memcpy(<char*>dst_base + i * esz,
+                       <char*>src_base + ridx * esz, esz)
+
+cdef void _join_col_fixup(BaseColumn res_col, BaseColumn r_col,
+                          Py_ssize_t* l_idx, Py_ssize_t* r_idx, Py_ssize_t n):
+    """Join 列双源修复：right/outer 中右独有行须取右源真实键，而非左 gather 的 sentinel。
+    仅适用于定宽类型与 Category；字符串 join 列由 _join_gather_str 全程双源重建。"""
+    cdef int dtype = res_col.dtype
+    cdef bint is2d, ris2d
+    cdef Py_ssize_t c, rr, rc, rr2
+    if n == 0:
+        return
+    if r_col.dtype != dtype:
+        return
+    _probe_shape(r_col, &ris2d, &c, &rr)
+    _probe_shape(res_col, &is2d, &rc, &rr2)
+    if is2d != ris2d or rc != c:
+        return
+    if dtype == TYPE_INT:
+        _fixup_copy(<void*>(<IntColumn>res_col).data_c, <void*>(<IntColumn>r_col).data_c,
+                    sizeof(int), l_idx, r_idx, n, c, rr, ris2d)
+    elif dtype == TYPE_DOUBLE:
+        _fixup_copy(<void*>(<DoubleColumn>res_col).data_c, <void*>(<DoubleColumn>r_col).data_c,
+                    sizeof(double), l_idx, r_idx, n, c, rr, ris2d)
+    elif dtype == TYPE_DATE:
+        _fixup_copy(<void*>(<DateColumn>res_col).data_c, <void*>(<DateColumn>r_col).data_c,
+                    sizeof(int32_t), l_idx, r_idx, n, c, rr, ris2d)
+    elif dtype == TYPE_DATETIME:
+        _fixup_copy(<void*>(<DateTimeColumn>res_col).data_c, <void*>(<DateTimeColumn>r_col).data_c,
+                    sizeof(int64_t), l_idx, r_idx, n, c, rr, ris2d)
+    elif dtype == TYPE_TIME:
+        _fixup_copy(<void*>(<TimeColumn>res_col).data_c, <void*>(<TimeColumn>r_col).data_c,
+                    sizeof(int32_t), l_idx, r_idx, n, c, rr, ris2d)
+    elif dtype == TYPE_BOOL:
+        _fixup_copy(<void*>(<BoolColumn>res_col).data_c, <void*>(<BoolColumn>r_col).data_c,
+                    sizeof(unsigned char), l_idx, r_idx, n, c, rr, ris2d)
+    elif dtype == TYPE_CATEGORY:
+        for i in range(n):
+            if l_idx[i] < 0:
+                res_col[i] = r_col[r_idx[i]]
+
+cdef BaseColumn _join_gather_str(BaseColumn l_col, BaseColumn r_col,
+                                 Py_ssize_t* l_idx, Py_ssize_t* r_idx, Py_ssize_t n):
+    """字符串 join 列双源 gather：left 在场取左、缺席取右（append 重建）。"""
+    cdef Py_ssize_t i
+    cdef AsciiColumn jc_a
+    cdef UCS2Column jc_u
+    if l_col.dtype == TYPE_CHAR256:
+        jc_a = AsciiColumn(max(n, 1))
+        jc_a._reserve_bytes(max((<AsciiColumn>l_col).byte_length, (<AsciiColumn>r_col).byte_length))
+        for i in range(n):
+            if l_idx[i] >= 0:
+                jc_a.append((<AsciiColumn>l_col)[l_idx[i]])
+            else:
+                jc_a.append((<AsciiColumn>r_col)[r_idx[i]])
+        return jc_a
+    jc_u = UCS2Column(max(n, 1))
+    jc_u._reserve_chars(max((<UCS2Column>l_col).char_length, (<UCS2Column>r_col).char_length))
+    for i in range(n):
+        if l_idx[i] >= 0:
+            jc_u.append((<UCS2Column>l_col)[l_idx[i]])
+        else:
+            jc_u.append((<UCS2Column>r_col)[r_idx[i]])
+    return jc_u
 
 cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inner'):
     cdef list join_cols
@@ -223,6 +307,7 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
         raise MemoryError()
 
     cdef BaseColumn src_col
+    cdef BaseColumn jc_col
 
     try:
         # 1. 数组赋值 (消灭内层寻址消耗)
@@ -233,7 +318,12 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
         # 2. 列数据聚合搬运
         for cn in join_cols:
             src_col = self.columns[cn]
-            result.columns[cn] = _gather_or_reorder(self, src_col, left_idx_c, result_len)
+            if src_col.dtype == TYPE_CHAR256 or src_col.dtype == TYPE_UCS2:
+                jc_col = _join_gather_str(src_col, other.columns[cn], left_idx_c, right_idx_c, result_len)
+            else:
+                jc_col = _gather_or_reorder(self, src_col, left_idx_c, result_len)
+                _join_col_fixup(jc_col, other.columns[cn], left_idx_c, right_idx_c, result_len)
+            result.columns[cn] = jc_col
 
         for cn in left_col_names:
             src_col = self.columns[cn]

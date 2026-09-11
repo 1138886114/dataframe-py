@@ -16,7 +16,8 @@ from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUni
 from fluidframe.core._base cimport (
     BaseColumn, NumericType, DataType, aligned_malloc, os_aligned_free,
     TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE,
-    TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME
+    TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
+    _col_gather_zero, _col_gather_2d_zero
 )
 
 cdef extern from *:
