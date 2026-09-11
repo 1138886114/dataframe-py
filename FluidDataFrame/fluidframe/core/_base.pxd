@@ -29,9 +29,25 @@ cdef void os_aligned_free(void* ptr) nogil
 #  Base column class
 # ============================================================
 cdef class BaseColumn:
-    cdef public Py_ssize_t length
-    cdef public Py_ssize_t capacity
-    cdef public int dtype
+    # ---------------------------------------------------------
+    # 核心元数据：使用 readonly。
+    # 内部 C 语言可以直接 col.length 极速无锁读取和修改。
+    # 外部 Python 代码只能读取 col.length，尝试修改会抛出 AttributeError。
+    # ---------------------------------------------------------
+    cdef readonly Py_ssize_t length
+    cdef readonly Py_ssize_t capacity
+    cdef readonly int dtype
+
+    cdef readonly bint is_2d
+    cdef readonly int num_cols
+    cdef readonly bint owns_data
+
+    # ---------------------------------------------------------
+    # C 级别虚函数 (Virtual Methods)：
+    # 允许 FastDataFrame 绕过类型强转，直接操作底层数据
+    # ---------------------------------------------------------
+    cdef Py_ssize_t _get_rows_c(self) noexcept nogil
+    cdef void* _get_data_ptr(self) noexcept nogil
 
 # ============================================================
 #  Astype helper

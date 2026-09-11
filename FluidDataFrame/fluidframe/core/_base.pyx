@@ -77,6 +77,26 @@ cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t a
 #  Base column class
 # ============================================================
 cdef class BaseColumn:
+    def __cinit__(self):
+        self.length = 0
+        self.capacity = 0
+        self.dtype = -1
+        self.is_2d = False
+        self.num_cols = 1
+        self.owns_data = True
+
+    cdef Py_ssize_t _get_rows_c(self) noexcept nogil:
+        """底层无锁获取逻辑行数"""
+        if self.is_2d and self.num_cols > 1:
+            return self.length // self.num_cols
+        return self.length
+
+    cdef void* _get_data_ptr(self) noexcept nogil:
+        """
+        供子类重写：返回底层 C 数组裸指针。
+        """
+        return NULL
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def get_size(self):

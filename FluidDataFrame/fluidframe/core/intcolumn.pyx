@@ -71,71 +71,49 @@ cdef class IntColumn(BaseColumn):
         self.capacity = max(init_capacity, 1)
         self.length = 0
         self.dtype = TYPE_INT
-        self._base_obj = None
 
-        cdef int c = <int>cols if cols > 0 else 1
-        self.set_meta_c(c, True, c > 1)
+        self.num_cols = <int>cols if cols > 0 else 1
+        self.is_2d = (self.num_cols > 1)
+        self.owns_data = True
+        self._base_obj = None
 
         self.data_c = <int*>aligned_malloc(self.capacity * sizeof(int))
         if not self.data_c:
             raise MemoryError()
 
+    cdef void* _get_data_ptr(self) noexcept nogil:
+        return <void*>self.data_c
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __dealloc__(self):
-        if self.get_owns_data_c() and self.data_c != NULL:
+        if self.owns_data and self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
 
+    # ============================================================
+    # 对外暴露的兼容性属性 (Properties)
+    # ============================================================
     @property
-    def cols(self):
-        return self.get_cols_c()
+    def cols(self): return self.num_cols
 
     @property
-    def rows(self):
-        return self.get_rows_c()
+    def rows(self): return self._get_rows_c()
 
     @property
-    def is_2d(self):
-        return self.get_is_2d_c()
-
-    @property
-    def _owns_data(self):
-        return self.get_owns_data_c()
+    def _owns_data(self): return self.owns_data
 
     @_owns_data.setter
-    def _owns_data(self, bint val):
-        if val:
-            self._meta |= 0x00010000
-        else:
-            self._meta &= ~0x00010000
+    def _owns_data(self, bint val): self.owns_data = val
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def get_size(self):
         return self.capacity * sizeof(int)
 
-    cdef inline int get_cols_c(self) noexcept nogil:
-        cdef int c = <int>(self._meta & 0x0000FFFF)
-        return c if c > 0 else 1
-
-    cdef inline bint get_owns_data_c(self) noexcept nogil:
-        return (self._meta & 0x00010000) != 0
-
-    cdef inline bint get_is_2d_c(self) noexcept nogil:
-        return (self._meta & 0x00020000) != 0
-
-    cdef inline Py_ssize_t get_rows_c(self) noexcept nogil:
-        cdef int c = self.get_cols_c()
-        return self.length // c if c > 0 else self.length
-
-    cdef inline void set_meta_c(self, int cols, bint owns_data, bint is_2d) noexcept nogil:
-        self._meta = (
-            (<unsigned int>cols & 0x0000FFFF) |
-            ((<unsigned int>(1 if owns_data else 0)) << 16) |
-            ((<unsigned int>(1 if is_2d else 0)) << 17)
-        )
-
+    # ============================================================
+    # 创建与初始化
+    # ============================================================
     @staticmethod
     cdef IntColumn create_view(int* ptr, Py_ssize_t length, object base_obj):
         cdef IntColumn col = IntColumn.__new__(IntColumn)
@@ -144,7 +122,9 @@ cdef class IntColumn(BaseColumn):
         col.length = length
         col.data_c = ptr
         col._base_obj = base_obj
-        col.set_meta_c(1, False, False)
+        col.num_cols = 1
+        col.is_2d = False
+        col.owns_data = False
         return col
 
     @staticmethod
@@ -156,15 +136,16 @@ cdef class IntColumn(BaseColumn):
         col.length = total
         col.data_c = ptr
         col._base_obj = base_obj
-        col.set_meta_c(<int>cols, False, True)
+        col.num_cols = <int>cols
+        col.is_2d = True
+        col.owns_data = False
         return col
 
     cdef inline DoubleColumn _make_like_nan_dbl(self):
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t total = self.length
         cdef DoubleColumn res = DoubleColumn(max(total, 1), cols=c)
         res.length = total
-        cdef Py_ssize_t i
         cdef double* res_ptr = res.data_c
         with nogil:
             for i in range(total):
@@ -173,18 +154,14 @@ cdef class IntColumn(BaseColumn):
 
     @staticmethod
     def from_2d(object values, Py_ssize_t rows, Py_ssize_t cols):
-        """从一维扁平 Python 列表构建可 owns 的 2D（列优先）IntColumn。
-        values 按列优先顺序排列（先 col0 全部行，再 col1 全部行）。"""
         cdef Py_ssize_t total = rows * cols
-        if len(values) != total:
-            raise ValueError(f"len(values)={len(values)} != rows*cols={total}")
+        if len(values) != total: raise ValueError(f"len(values)={len(values)} != rows*cols={total}")
         cdef IntColumn col = IntColumn(max(total, 1), cols=cols)
-        col.set_meta_c(<int>cols, True, True)
-
+        col.num_cols = <int>cols
+        col.is_2d = True
+        col.length = total
         cdef Py_ssize_t i
         cdef int* ptr = col.data_c
-
-        col.length = total
         for i in range(total):
             ptr[i] = <int>values[i]
         return col
@@ -204,7 +181,7 @@ cdef class IntColumn(BaseColumn):
         col.dtype = TYPE_INT
         col.capacity = length
         col.length = length
-        col._owns_data = False
+        col.owns_data = False
         col._base_obj = arr
         col.data_c = &view[0] if length > 0 else NULL
         return col
@@ -237,22 +214,21 @@ cdef class IntColumn(BaseColumn):
         return columns
 
     cdef void _reserve(self, Py_ssize_t new_cap):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot reallocate a view/slice column. Copy it first.")
         cdef int* new_ptr
         if new_cap > self.capacity:
             new_ptr = <int*>aligned_realloc(self.data_c, self.capacity * sizeof(int), new_cap * sizeof(int))
-            if not new_ptr:
-                raise MemoryError()
+            if not new_ptr: raise MemoryError()
             self.data_c = new_ptr
             self.capacity = new_cap
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, int val):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot append to a view/slice column. Copy it first.")
-        if self.get_is_2d_c():
+        if self.is_2d:
             raise NotImplementedError("append is not supported for 2D columns (rows*cols layout); convert to 1D first")
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
@@ -262,44 +238,41 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
-        cdef IntColumn new_col = IntColumn(max(self.length, 1), cols=self.cols)
+        cdef IntColumn new_col = IntColumn(max(self.length, 1), cols=self.num_cols)
         new_col.length = self.length
-        _col_memcpy(new_col.data_c, self.data_c, self.length)
+        new_col.is_2d = self.is_2d
+        if self.length > 0:
+            memcpy(new_col.data_c, self.data_c, self.length * sizeof(int))
         return new_col
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_back(self):
-        if not self.get_owns_data_c():
-            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
-        if self.length == 0:
-            raise IndexError("pop from empty column")
-        cdef Py_ssize_t c = self.get_cols_c()
+        if not self.owns_data: raise RuntimeError("Cannot modify a view/slice.")
+        if self.length == 0: raise IndexError("pop from empty column")
+        cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r, j
         cdef list vals
-        if self.get_is_2d_c():
-            r = self.get_rows_c()
+        if self.is_2d:
+            r = self._get_rows_c()
             vals = [None] * c
             for j in range(c):
                 vals[j] = self.data_c[j * r + (r - 1)]
             _col_shift_left_2d(self.data_c, &self.length, r, c, r - 1, sizeof(int))
             return vals
-        cdef int* ptr = <int*>_col_pop_back(
-            self.data_c, &self.length, sizeof(int))
+        cdef int* ptr = <int*>_col_pop_back(self.data_c, &self.length, sizeof(int))
         return ptr[0]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_front(self):
-        if not self.get_owns_data_c():
-            raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
-        if self.length == 0:
-            raise IndexError("pop from empty column")
-        cdef Py_ssize_t c = self.get_cols_c()
+        if not self.owns_data: raise RuntimeError("Cannot modify a view/slice.")
+        if self.length == 0: raise IndexError("pop from empty column")
+        cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r, j
         cdef list vals
-        if self.get_is_2d_c():
-            r = self.get_rows_c()
+        if self.is_2d:
+            r = self._get_rows_c()
             vals = [None] * c
             for j in range(c):
                 vals[j] = self.data_c[j * r]
@@ -312,80 +285,114 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, IntColumn other):
-        if not self.get_owns_data_c():
-            raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
-
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t other_c = other.get_cols_c()
+        if not self.owns_data: raise RuntimeError("Cannot modify a view/slice.")
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t other_c = other.num_cols
         cdef Py_ssize_t other_rows
 
-        if self.get_is_2d_c() or other.get_is_2d_c():
+        if self.is_2d or other.is_2d:
             if c != other_c:
-                if self.length == 0:
-                    c = other_c
-                else:
-                    raise ValueError(f"Cannot concat 2D columns with different column counts: {c} vs {other_c}")
-            other_rows = other.get_rows_c()
+                if self.length == 0: c = other_c
+                else: raise ValueError(f"Cannot concat 2D columns with diff cols: {c} vs {other_c}")
+            other_rows = other._get_rows_c()
             if other_rows == 0: return
 
             self._reserve(self.length + other_rows * c)
             _col_concat_2d(self.data_c, &self.length, other.data_c, other_rows, c, sizeof(int))
-            self.set_meta_c(<int>c, True, True)
+
+            self.num_cols = <int>c
+            self.is_2d = True
             return
+
         if other.length == 0: return
         self._reserve(self.length + other.length)
-        _col_concat(self.data_c, &self.length, other.data_c, other.length,
-                     sizeof(int))
+        _col_concat(self.data_c, &self.length, other.data_c, other.length, sizeof(int))
 
+    # ============================================================
+    # Python 层公开接口：智能 2D 感知聚合
+    # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def max(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef int max_val = self.data_c[0]
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t i, j, base
+        cdef int max_val
+
+        if not self.is_2d or c <= 1:
+            max_val = ptr[0]
+            with nogil:
+                for i in range(1, r):
+                    if ptr[i] > max_val: max_val = ptr[i]
+            return max_val
+
+        cdef list results = [None] * c
         with nogil:
-            for i in range(1, n):
-                if ptr[i] > max_val:
-                    max_val = ptr[i]
-        return max_val
+            for j in range(c):
+                base = j * r
+                max_val = ptr[base]
+                for i in range(1, r):
+                    if ptr[base + i] > max_val: max_val = ptr[base + i]
+
+                with gil:
+                    results[j] = max_val
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def min(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef int min_val = self.data_c[0]
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t i, j, base
+        cdef int min_val
+
+        if not self.is_2d or c <= 1:
+            min_val = ptr[0]
+            with nogil:
+                for i in range(1, r):
+                    if ptr[i] < min_val: min_val = ptr[i]
+            return min_val
+
+        cdef list results = [None] * c
         with nogil:
-            for i in range(1, n):
-                if ptr[i] < min_val:
-                    min_val = ptr[i]
-        return min_val
+            for j in range(c):
+                base = j * r
+                min_val = ptr[base]
+                for i in range(1, r):
+                    if ptr[base + i] < min_val: min_val = ptr[base + i]
+                with gil:
+                    results[j] = min_val
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sum(self):
-        cdef Py_ssize_t n = self.length
-        if n == 0: return 0
+        if self.length == 0: return 0
         cdef int* ptr = self.data_c
-        cdef int64_t total = 0
-        cdef Py_ssize_t i
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t i, j, base
+        cdef int64_t total
 
-        cdef int64_t s0 = 0, s1 = 0, s2 = 0, s3 = 0
-        cdef Py_ssize_t n_unrolled = n - (n % 4)
+        if not self.is_2d or c <= 1:
+            total = 0
+            with nogil:
+                for i in range(r): total += ptr[i]
+            return total
 
+        cdef list results = [None] * c
         with nogil:
-            for i in range(0, n_unrolled, 4):
-                s0 += ptr[i]
-                s1 += ptr[i + 1]
-                s2 += ptr[i + 2]
-                s3 += ptr[i + 3]
-
-            total = (s0 + s1) + (s2 + s3)
-            for i in range(n_unrolled, n):
-                total += ptr[i]
-        return total
+            for j in range(c):
+                base = j * r
+                total = 0
+                for i in range(r): total += ptr[base + i]
+                with gil:
+                    results[j] = total
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
