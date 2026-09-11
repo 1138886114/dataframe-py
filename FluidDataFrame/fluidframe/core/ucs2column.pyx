@@ -230,7 +230,7 @@ cdef class UCS2Column(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def _reorder(self, list indices):
+    def _reorder_impl(self, list indices):
         cdef Py_ssize_t n = len(indices)
         cdef char err_buf[256]
         if n != self.length:
@@ -1022,9 +1022,7 @@ cdef class UCS2Column(BaseColumn):
                 result.append(s)
         return result
 
-    @cython.always_allow_keywords(False)
-    @cython.binding(False)
-    def _cmp_op(self, val, int op):
+    cdef IntColumn _cmp_op(self, val, int op):
         cdef Py_ssize_t i
         cdef IntColumn res = IntColumn(self.capacity)
         res.length = self.length

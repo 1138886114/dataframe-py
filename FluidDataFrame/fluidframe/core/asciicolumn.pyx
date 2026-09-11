@@ -304,7 +304,7 @@ cdef class AsciiColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def _reorder(self, list indices):
+    def _reorder_impl(self, list indices):
         cdef Py_ssize_t n = len(indices)
         if n != self.length:
             raise ValueError("Length of indices must match column length")
@@ -1323,9 +1323,7 @@ cdef class AsciiColumn(BaseColumn):
                 result.append(val)
         return result
 
-    @cython.always_allow_keywords(False)
-    @cython.binding(False)
-    def _cmp_op(self, val, int op):
+    cdef IntColumn _cmp_op(self, val, int op):
         cdef Py_ssize_t i, n = self.length
         cdef IntColumn res = IntColumn(max(n, 1))
         res.length = n

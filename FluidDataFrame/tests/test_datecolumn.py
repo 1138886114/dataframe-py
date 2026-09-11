@@ -274,7 +274,7 @@ class TestDateColumnMisc:
 
     def test_reorder(self):
         col = DateColumn(); col.append(20160101); col.append(20231225); col.append(20200615)
-        col._reorder([2, 0, 1])
+        col._reorder_impl([2, 0, 1])
         check('reorder', [col[i] for i in range(3)] == [20200615, 20160101, 20231225])
 
     def test_large(self):

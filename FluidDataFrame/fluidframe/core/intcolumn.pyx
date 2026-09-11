@@ -1405,7 +1405,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def _reorder(self, list indices):
+    def _reorder_impl(self, list indices):
         cdef Py_ssize_t n = len(indices)
         cdef char err_buf[128]
         if n != self.length:
@@ -1489,9 +1489,7 @@ cdef class IntColumn(BaseColumn):
             results[j] = result
         return results
 
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def _cmp_op(self, object val, int op):
+    cdef IntColumn _cmp_op(self, object val, int op):
         cdef Py_ssize_t i, n = self.length
         cdef IntColumn res = IntColumn(max(n, 1), cols=self.cols)
         res.length = n

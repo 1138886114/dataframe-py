@@ -22,6 +22,7 @@ cdef class AsciiColumn(BaseColumn):
     cdef void _set_item(self, Py_ssize_t idx, str val) except *
     cdef AsciiColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
     cdef AsciiStringAccessor _str_cache
+    cdef IntColumn _cmp_op(self, object val, int op)
 
 @cython.final
 @cython.freelist(16)

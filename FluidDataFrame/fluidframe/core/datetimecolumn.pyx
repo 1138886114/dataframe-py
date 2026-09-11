@@ -349,7 +349,7 @@ cdef class DateTimeColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def _reorder(self, list indices):
+    def _reorder_impl(self, list indices):
         cdef Py_ssize_t n = len(indices)
         cdef char err_buf[128]
         if n != self.length:
@@ -678,9 +678,7 @@ cdef class DateTimeColumn(BaseColumn):
     # ------------------------------------------------------------
     # 纯 C 64 位整数比较算子 (完全向量化)
     # ------------------------------------------------------------
-    @cython.always_allow_keywords(False)
-    @cython.binding(False)
-    def _cmp_op(self, object val, int op):
+    cdef IntColumn _cmp_op(self, object val, int op):
         cdef Py_ssize_t i, n = self.length
         cdef IntColumn res = IntColumn(max(n, 1))
         res.length = n

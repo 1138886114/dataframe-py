@@ -140,7 +140,7 @@ class TestTimeColumnOps2:
     def test_reorder(self):
         col = TimeColumn()
         col.append('08:00:00'); col.append('10:30:45'); col.append('14:00:00')
-        col._reorder([2, 0, 1])
+        col._reorder_impl([2, 0, 1])
         check('reorder', col[0] == '14:00:00')
 
 

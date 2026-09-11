@@ -48,3 +48,4 @@ cdef class IntColumn(BaseColumn):
     cdef IntColumn create_view_2d(int* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj)
 
     cdef inline DoubleColumn _make_like_nan_dbl(self)
+    cdef IntColumn _cmp_op(self, object val, int op)

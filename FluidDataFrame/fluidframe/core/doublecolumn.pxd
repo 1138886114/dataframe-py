@@ -44,3 +44,4 @@ cdef class DoubleColumn(BaseColumn):
     @staticmethod
     cdef DoubleColumn create_view_2d(double* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj)
     cdef inline DoubleColumn _make_like_nan(self)
+    cdef IntColumn _cmp_op(self, object val, int op)

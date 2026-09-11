@@ -111,7 +111,7 @@ def test_growth():
 
 def test_reorder():
     col = UCS2Column(); col.append("a"); col.append("b"); col.append("c")
-    col._reorder([2, 0, 1])
+    col._reorder_impl([2, 0, 1])
     check('reorder [0]', col[0] == "c")
     check('reorder [1]', col[1] == "a")
     check('reorder [2]', col[2] == "b")

@@ -241,7 +241,7 @@ def test_growth():
 
 def test_reorder():
     col = IntColumn(); col.append(10); col.append(20); col.append(30)
-    col._reorder([2, 0, 1])
+    col._reorder_impl([2, 0, 1])
     check('reorder [0]', col[0] == 30)
     check('reorder [1]', col[1] == 10)
     check('reorder [2]', col[2] == 20)

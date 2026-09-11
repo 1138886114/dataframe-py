@@ -1132,8 +1132,14 @@ cdef class FastDataFrame:
         for name in col_names:
             if name not in self.columns:
                 raise KeyError(f"Column '{name}' not found")
-        for name in col_names:
-            del self.columns[name]
+        cdef FastDataFrame new_df = FastDataFrame()
+        new_df.df_length = self.df_length
+        for col_name, col_obj in self.columns.items():
+            if col_name not in col_names:
+                new_df.columns[col_name] = col_obj
+        if self.index is not None:
+            new_df.index = self.index
+        return new_df
 
     def drop_with_index(self, list drop_indices, bint inplace=False):
         return _drop_with_index_impl(self, drop_indices, inplace)

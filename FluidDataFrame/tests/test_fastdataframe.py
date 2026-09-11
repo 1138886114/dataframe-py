@@ -331,9 +331,10 @@ def test_pop_empty():
 # =====================================================================
 def test_drop():
     df = make_complex_df()
-    df.drop('tag')
-    check('drop shape', df.shape == (10, 4))
-    check('drop not in cols', 'tag' not in df.columns)
+    df2 = df.drop('tag')
+    check('drop original unchanged', df.shape == (10, 5))
+    check('drop new shape', df2.shape == (10, 4))
+    check('drop not in cols', 'tag' not in df2.columns)
 
 def test_drop_with_index():
     df = make_complex_df()

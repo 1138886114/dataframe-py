@@ -869,7 +869,7 @@ def test_distances():
 
 def test_reorder():
     col = _make_1d([10.0, 20.0, 30.0])
-    col._reorder([2, 0, 1])
+    col._reorder_impl([2, 0, 1])
     check('reorder [0]', col[0] == 30.0)
     check('reorder [1]', col[1] == 10.0)
     check('reorder [2]', col[2] == 20.0)

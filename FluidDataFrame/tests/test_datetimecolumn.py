@@ -161,7 +161,7 @@ class TestDateTimeColumnOps2:
     def test_reorder(self):
         col = DateTimeColumn()
         col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2024-01-01 08:00:00')
-        col._reorder([2, 0, 1])
+        col._reorder_impl([2, 0, 1])
         check('reorder', col[0] == '2024-01-01 08:00:00')
 
 
