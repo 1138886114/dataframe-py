@@ -998,9 +998,27 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getitem__(self, name):
+        cdef FastDataFrame result
+        cdef str col_name
         if isinstance(name, IntColumn):
             return self.loc[name]
+        if isinstance(name, list):
+            result = FastDataFrame()
+            result.df_length = self.df_length
+            for col_name in name:
+                if col_name not in self.columns:
+                    raise KeyError(f"Column '{col_name}' not found")
+                result.columns[col_name] = self.columns[col_name]
+            if self.index is not None:
+                result.index = self.index
+            return result
         return self.columns[name]
+
+    def __iter__(self):
+        return iter(self.columns)
+
+    def __contains__(self, name):
+        return name in self.columns
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

@@ -359,6 +359,40 @@ def test_drop_raw():
 
 
 # =====================================================================
+#  __getitem__ list, __iter__, __contains__
+# =====================================================================
+def test_getitem_list():
+    df = make_complex_df()
+    sub = df[['id', 'name']]
+    check('getitem list shape', sub.shape == (10, 2))
+    check('getitem list cols', sub.col_names == ['id', 'name'])
+    check('getitem list data id', sub['id'][0] == 1)
+    check('getitem list data name', sub['name'][0] == 'Alice')
+    check('getitem list orig unchanged', df.shape == (10, 5))
+
+def test_getitem_list_3cols():
+    df = make_complex_df()
+    sub = df[['score', 'tag', 'dt']]
+    check('getitem 3cols shape', sub.shape == (10, 3))
+    check('getitem 3cols order', sub.col_names == ['score', 'tag', 'dt'])
+
+def test_getitem_list_error():
+    df = make_complex_df()
+    check('getitem list missing col', expect_exception(KeyError, df.__getitem__, ['id', 'zzz']))
+
+def test_iter():
+    df = make_complex_df()
+    names = list(df)
+    check('iter', names == ['id', 'score', 'name', 'tag', 'dt'])
+
+def test_contains():
+    df = make_complex_df()
+    check('contains id', 'id' in df)
+    check('contains name', 'name' in df)
+    check('contains missing', 'zzz' not in df)
+
+
+# =====================================================================
 #  Sort
 # =====================================================================
 def test_sort_int():
@@ -2414,6 +2448,13 @@ def run_all():
     test_drop()
     test_drop_with_index()
     test_drop_raw()
+
+    # __getitem__ list, __iter__, __contains__
+    test_getitem_list()
+    test_getitem_list_3cols()
+    test_getitem_list_error()
+    test_iter()
+    test_contains()
 
     # Sort
     test_sort_int()
