@@ -796,16 +796,18 @@ cdef inline void _col_abs(NumericType* dst, NumericType* src, Py_ssize_t n) noex
 cdef inline void _col_round(NumericType* dst, NumericType* src,
                             Py_ssize_t n, double factor) noexcept nogil:
     cdef Py_ssize_t i
-    cdef double v
+    cdef double v, scaled, intpart, frac
     if NumericType is double:
-        if factor == 1.0:
-            for i in range(n):
-                v = src[i]
-                dst[i] = <double>(<long long>(v + 0.5 if v >= 0 else v - 0.5))
-        else:
-            for i in range(n):
-                v = src[i] * factor
-                dst[i] = <double>(<long long>(v + 0.5 if v >= 0 else v - 0.5)) / factor
+        for i in range(n):
+            v = src[i]
+            scaled = v * factor
+            intpart = <double>(<long long>scaled)
+            frac = scaled - intpart
+            if frac < 0.0:
+                frac = -frac
+            if frac > 0.5 or (frac == 0.5 and (<long long>intpart) % 2 != 0):
+                intpart += (1.0 if scaled >= 0 else -1.0)
+            dst[i] = intpart / factor
     else:
         for i in range(n):
             dst[i] = src[i]

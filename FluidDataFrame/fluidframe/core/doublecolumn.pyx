@@ -1473,13 +1473,13 @@ cdef class DoubleColumn(BaseColumn):
                 ptr[i] = v
         return col
 
-    def abs(self):
+    cpdef DoubleColumn abs(self):
         cdef DoubleColumn new_col = self.copy()
         if new_col.length > 0:
             _col_abs(new_col.data_c, new_col.data_c, new_col.length)
         return new_col
 
-    def round(self, int decimals=0):
+    cpdef DoubleColumn round(self, int decimals=0):
         cdef DoubleColumn new_col = self.copy()
         cdef double factor
         if new_col.length > 0:
@@ -1487,16 +1487,26 @@ cdef class DoubleColumn(BaseColumn):
             _col_round(new_col.data_c, new_col.data_c, new_col.length, factor)
         return new_col
 
-    def ffill(self):
+    cpdef DoubleColumn ffill(self):
         cdef DoubleColumn new_col = self.copy()
+        cdef Py_ssize_t i
         if new_col.length > 0:
-            _col_ffill_double(new_col.data_c, new_col.length)
+            if new_col.is_2d and new_col.num_cols > 1:
+                for i in range(new_col.num_cols):
+                    _col_ffill_double(new_col.data_c + i * new_col._get_rows_c(), new_col._get_rows_c())
+            else:
+                _col_ffill_double(new_col.data_c, new_col.length)
         return new_col
 
-    def bfill(self):
+    cpdef DoubleColumn bfill(self):
         cdef DoubleColumn new_col = self.copy()
+        cdef Py_ssize_t i
         if new_col.length > 0:
-            _col_bfill_double(new_col.data_c, new_col.length)
+            if new_col.is_2d and new_col.num_cols > 1:
+                for i in range(new_col.num_cols):
+                    _col_bfill_double(new_col.data_c + i * new_col._get_rows_c(), new_col._get_rows_c())
+            else:
+                _col_bfill_double(new_col.data_c, new_col.length)
         return new_col
 
     cpdef DoubleColumn where(self, IntColumn cond, double other, bint inplace=False):
