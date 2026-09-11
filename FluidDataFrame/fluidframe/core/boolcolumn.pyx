@@ -7,7 +7,6 @@
 
 cimport cython
 from libc.string cimport memcpy, memmove, memset, memcmp
-from libc.math cimport NAN
 from libc.stdio cimport snprintf
 from fluidframe.core._base cimport (
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
@@ -264,23 +263,6 @@ cdef class BoolColumn(BaseColumn):
             for i in range(n):
                 col_ptr[i] = self_ptr[i] if mask_ptr[i] != 0 else fill_val
         return col
-
-    @cython.always_allow_keywords(False)
-    @cython.binding(False)
-    def sum(self):
-        cdef Py_ssize_t i, s = 0, n = self.length
-        cdef unsigned char* ptr = self.data_c
-        with nogil:
-            for i in range(n):
-                s += ptr[i]
-        return s
-
-    @cython.always_allow_keywords(False)
-    @cython.binding(False)
-    def mean(self):
-        if self.length == 0:
-            return NAN
-        return <double>self.sum() / <double>self.length
 
     # ------------------------------------------------------------
     # 逻辑操作：直接纯 C 循环，编译器会自动生成 256/512-bit AVX 指令

@@ -87,12 +87,6 @@ class TestBoolColumnOps:
         r = ~a
         check('not', [r[i] for i in range(4)] == [False, True, False, True])
 
-    def test_sum_mean(self):
-        bc = BoolColumn(4)
-        bc.append(True); bc.append(False); bc.append(True); bc.append(True)
-        check('sum', bc.sum() == 3)
-        check('mean', bc.mean() == 0.75)
-
     def test_isin(self):
         bc = BoolColumn(4)
         bc.append(True); bc.append(False); bc.append(True); bc.append(False)
@@ -120,8 +114,6 @@ class TestBoolColumnInDataFrame:
         df = FastDataFrame({'A': int, 'B': bool})
         df.append_row(A=1, B=True); df.append_row(A=2, B=False); df.append_row(A=3, B=True)
         check('df val', df['B'][0] is True and df['B'][1] is False)
-        check('df sum', df['B'].sum() == 2)
-        check('df mean', abs(df['B'].mean() - 2/3) < 1e-9)
 
 
 class TestBoolColumnOwnership:
