@@ -33,6 +33,13 @@ cdef class DoubleColumn(BaseColumn):
     cdef DoubleColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, double sentinel)
     cdef void _central_moments(self, double* out_mean, double* out_m2, double* out_m3, double* out_m4) noexcept nogil
     cdef double _quickselect(self, double* data, Py_ssize_t n, Py_ssize_t k) noexcept nogil
+    cdef inline void _max_2d_c(self, double* out_buf) noexcept nogil
+    cdef inline void _min_2d_c(self, double* out_buf) noexcept nogil
+    cdef inline void _sum_2d_c(self, double* out_buf) noexcept nogil
+    cdef inline void _mean_2d_c(self, double* out_buf) noexcept nogil
+    cdef inline void _prod_2d_c(self, double* out_buf) noexcept nogil
+    cdef inline void _var_2d_c(self, double* out_buf) noexcept nogil
+    cdef inline void _std_2d_c(self, double* out_buf) noexcept nogil
     @staticmethod
     cdef DoubleColumn create_view(double* ptr, Py_ssize_t length, object base_obj)
     @staticmethod

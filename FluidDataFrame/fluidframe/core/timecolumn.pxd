@@ -23,3 +23,5 @@ cdef class TimeColumn(BaseColumn):
     cdef inline bint get_is_2d_c(self) noexcept nogil
     cdef inline Py_ssize_t get_rows_c(self) noexcept nogil
     cdef inline void set_meta_c(self, int cols, bint owns_data, bint is_2d) noexcept nogil
+    cdef inline void _max_2d_c(self, double* out_buf) noexcept nogil
+    cdef inline void _min_2d_c(self, double* out_buf) noexcept nogil

@@ -567,3 +567,90 @@ ctypedef fused FixedNum:
 cdef inline void _col_memcpy(FixedNum* dst, FixedNum* src, Py_ssize_t n) noexcept nogil:
     if n > 0:
         memcpy(dst, src, n * sizeof(FixedNum))
+
+# ============================================================
+#  2D column-major aggregation helpers (fused type, zero-overhead)
+#  ptr = column-major flat buffer, rows = height, cols = width
+#  out_buf[j] = result for sub-column j
+# ============================================================
+cdef inline void _max_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
+    cdef Py_ssize_t i, j, base
+    cdef NumericType max_val
+    for j in range(cols):
+        base = j * rows
+        if rows == 0:
+            out_buf[j] = NAN
+            continue
+        max_val = ptr[base]
+        for i in range(1, rows):
+            if ptr[base + i] > max_val:
+                max_val = ptr[base + i]
+        out_buf[j] = <double>max_val
+
+cdef inline void _min_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
+    cdef Py_ssize_t i, j, base
+    cdef NumericType min_val
+    for j in range(cols):
+        base = j * rows
+        if rows == 0:
+            out_buf[j] = NAN
+            continue
+        min_val = ptr[base]
+        for i in range(1, rows):
+            if ptr[base + i] < min_val:
+                min_val = ptr[base + i]
+        out_buf[j] = <double>min_val
+
+cdef inline void _sum_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
+    cdef Py_ssize_t i, j, base
+    cdef double total
+    for j in range(cols):
+        base = j * rows
+        total = 0.0
+        for i in range(rows):
+            total += <double>ptr[base + i]
+        out_buf[j] = total
+
+cdef inline void _mean_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
+    cdef Py_ssize_t i, j, base
+    cdef double total
+    for j in range(cols):
+        base = j * rows
+        total = 0.0
+        for i in range(rows):
+            total += <double>ptr[base + i]
+        out_buf[j] = total / <double>rows if rows > 0 else NAN
+
+cdef inline void _prod_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
+    cdef Py_ssize_t i, j, base
+    cdef double total
+    for j in range(cols):
+        base = j * rows
+        total = 1.0
+        for i in range(rows):
+            total *= <double>ptr[base + i]
+        out_buf[j] = total
+
+cdef inline void _var_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
+    cdef Py_ssize_t i, j, base
+    cdef double m, sum_sq, diff
+    for j in range(cols):
+        base = j * rows
+        if rows < 2:
+            out_buf[j] = 0.0
+            continue
+        m = 0.0
+        for i in range(rows):
+            m += <double>ptr[base + i]
+        m /= <double>rows
+        sum_sq = 0.0
+        for i in range(rows):
+            diff = <double>ptr[base + i] - m
+            sum_sq += diff * diff
+        out_buf[j] = sum_sq / <double>(rows - 1)
+
+cdef inline void _std_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
+    _var_2d_c(ptr, rows, cols, out_buf)
+    cdef Py_ssize_t j
+    for j in range(cols):
+        out_buf[j] = sqrt(out_buf[j])
