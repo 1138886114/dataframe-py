@@ -122,6 +122,7 @@ cdef void _join_col_fixup(BaseColumn res_col, BaseColumn r_col,
     cdef int dtype = res_col.dtype
     cdef bint is2d, ris2d
     cdef Py_ssize_t c, rr, rc, rr2, i, j, ridx
+    cdef CategoryColumn cat_res, cat_r
 
     if n == 0 or r_col.dtype != dtype:
         return
@@ -205,8 +206,8 @@ cdef void _join_col_fixup(BaseColumn res_col, BaseColumn r_col,
 
     # 2. 【核心漏洞修复】：分类列的独立重编码
     elif dtype == TYPE_CATEGORY:
-        cdef CategoryColumn cat_res = <CategoryColumn>res_col
-        cdef CategoryColumn cat_r = <CategoryColumn>r_col
+        cat_res = <CategoryColumn>res_col
+        cat_r = <CategoryColumn>r_col
         for i in range(n):
             if l_idx[i] < 0:
                 cat_res.codes_c[i] = cat_res._get_or_add_code(str(cat_r[r_idx[i]]))
