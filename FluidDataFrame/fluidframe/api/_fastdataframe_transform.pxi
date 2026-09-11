@@ -355,11 +355,7 @@ cdef _head_impl(FastDataFrame self, Py_ssize_t n):
     if n < 0: raise ValueError("n must be non-negative")
     n = min(n, self.df_length)
     if n == 0:
-        result = FastDataFrame()
-        for col_name, col_obj in self.columns.items():
-            result.columns[col_name] = col_obj.copy()
-            result.columns[col_name].length = 0
-        return result
+        return FastDataFrame()
 
     cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
     if not idx_c: raise MemoryError()
@@ -567,7 +563,9 @@ cdef _reshape_impl(FastDataFrame self, Py_ssize_t rows, Py_ssize_t cols):
         if c_out > 1:
             col = DoubleColumn(max(rows * c_out, 1), cols=c_out)
             col.length = rows * c_out
-            col.set_meta_c(<int>c_out, True, True)
+            col.num_cols = <int>c_out
+            col.is_2d = True
+            col.owns_data = True
             for r_idx in range(rows):
                 cell = all_cells[r_idx * cols + c_idx]
                 if isinstance(cell, tuple):
@@ -620,7 +618,9 @@ cdef _T_impl(FastDataFrame self):
             if c_out > 1:
                 new_col = DoubleColumn(max(cols * c_out, 1), cols=c_out)
                 new_col.length = cols * c_out
-                new_col.set_meta_c(<int>c_out, True, True)
+                new_col.num_cols = <int>c_out
+                new_col.is_2d = True
+                new_col.owns_data = True
 
                 with nogil:
                     for j in range(cols):
@@ -826,7 +826,10 @@ cdef _pct_change_impl(FastDataFrame self, int periods=1):
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
             dbl_col = DoubleColumn(max(total, 1), cols=<Py_ssize_t>c_out)
             dbl_col.length = total
-            if is2d: dbl_col.set_meta_c(<int>c_out, True, True)
+            if is2d:
+                dbl_col.num_cols = <int>c_out
+                dbl_col.is_2d = True
+                dbl_col.owns_data = True
             d_out = dbl_col.data_c
 
             i_ptr = (<IntColumn>col).data_c if col.dtype == TYPE_INT else NULL
@@ -1062,7 +1065,9 @@ cdef _melt_impl(FastDataFrame self, list id_vars=None, list value_vars=None, str
     new_val = DoubleColumn(max(total * c_out, 1), cols=c_out)
     new_val.length = total * c_out
     if c_out > 1:
-        new_val.set_meta_c(<int>c_out, True, True)
+        new_val.num_cols = <int>c_out
+        new_val.is_2d = True
+        new_val.owns_data = True
         for i in range(total * c_out):
             new_val.data_c[i] = NAN
 
@@ -1099,7 +1104,10 @@ cdef _expanding_sum_impl(FastDataFrame self, str col_name):
 
     cdef DoubleColumn res = DoubleColumn(max(total, 1), cols=c_out)
     res.length = total
-    if is2d: res.set_meta_c(<int>c_out, True, True)
+    if is2d:
+        res.num_cols = <int>c_out
+        res.is_2d = True
+        res.owns_data = True
 
     cdef double acc
     cdef double* d_out = res.data_c
@@ -1138,7 +1146,10 @@ cdef _ewm_mean_impl(FastDataFrame self, str col_name, double span):
 
     cdef DoubleColumn res = DoubleColumn(max(total, 1), cols=c_out)
     res.length = total
-    if is2d: res.set_meta_c(<int>c_out, True, True)
+    if is2d:
+        res.num_cols = <int>c_out
+        res.is_2d = True
+        res.owns_data = True
 
     cdef double alpha = 2.0 / (span + 1.0)
     cdef double acc

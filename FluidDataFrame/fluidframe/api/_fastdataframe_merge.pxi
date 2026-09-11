@@ -41,7 +41,10 @@ cdef inline BaseColumn _gather_or_reorder(FastDataFrame df, BaseColumn src_col,
         _probe_shape(src_col, &is2d, &c_out, &r_out)
         res_dt = DateColumn(max(result_len * c_out, 1), cols=c_out)
         res_dt.length = result_len * c_out
-        if is2d: res_dt.set_meta_c(<int>c_out, True, True)
+        if is2d:
+            res_dt.num_cols = <int>c_out
+            res_dt.is_2d = True
+            res_dt.owns_data = True
         if is2d and c_out > 1:
             _col_gather_2d_zero(res_dt.data_c, (<DateColumn>src_col).data_c, idx_c, result_len, r_out, c_out, sizeof(int32_t))
         else:
@@ -52,7 +55,10 @@ cdef inline BaseColumn _gather_or_reorder(FastDataFrame df, BaseColumn src_col,
         _probe_shape(src_col, &is2d, &c_out, &r_out)
         res_dtn = DateTimeColumn(max(result_len * c_out, 1), cols=c_out)
         res_dtn.length = result_len * c_out
-        if is2d: res_dtn.set_meta_c(<int>c_out, True, True)
+        if is2d:
+            res_dtn.num_cols = <int>c_out
+            res_dtn.is_2d = True
+            res_dtn.owns_data = True
         if is2d and c_out > 1:
             _col_gather_2d_zero(res_dtn.data_c, (<DateTimeColumn>src_col).data_c, idx_c, result_len, r_out, c_out, sizeof(int64_t))
         else:
@@ -63,7 +69,10 @@ cdef inline BaseColumn _gather_or_reorder(FastDataFrame df, BaseColumn src_col,
         _probe_shape(src_col, &is2d, &c_out, &r_out)
         res_tm = TimeColumn(max(result_len * c_out, 1), cols=c_out)
         res_tm.length = result_len * c_out
-        if is2d: res_tm.set_meta_c(<int>c_out, True, True)
+        if is2d:
+            res_tm.num_cols = <int>c_out
+            res_tm.is_2d = True
+            res_tm.owns_data = True
         if is2d and c_out > 1:
             _col_gather_2d_zero(res_tm.data_c, (<TimeColumn>src_col).data_c, idx_c, result_len, r_out, c_out, sizeof(int32_t))
         else:

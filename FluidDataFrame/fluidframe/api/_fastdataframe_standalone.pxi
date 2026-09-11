@@ -82,7 +82,9 @@ def from_pickle(filename, bint allow_raw_pickle=False):
                     raise ValueError(f"DateColumn 2D size mismatch: expected {rows * cols}, got {total}")
                 dcol = DateColumn(max(total, 1), cols=cols)
                 dcol.length = total
-                dcol.set_meta_c(<int>cols, True, True)
+                dcol.num_cols = <int>cols
+                dcol.is_2d = True
+                dcol.owns_data = True
                 dptr = <int32_t*>dcol.data_c
                 val_list = <list>values if type(values) is list else list(values)
                 for i in range(total):
@@ -106,7 +108,9 @@ def from_pickle(filename, bint allow_raw_pickle=False):
                     raise ValueError(f"DateTimeColumn 2D size mismatch: expected {rows * cols}, got {total}")
                 tcol = DateTimeColumn(max(total, 1), cols=cols)
                 tcol.length = total
-                tcol.set_meta_c(<int>cols, True, True)
+                tcol.num_cols = <int>cols
+                tcol.is_2d = True
+                tcol.owns_data = True
                 tptr = <int64_t*>tcol.data_c
                 val_list = <list>values if type(values) is list else list(values)
                 for i in range(total):
@@ -122,7 +126,9 @@ def from_pickle(filename, bint allow_raw_pickle=False):
                     raise ValueError(f"TimeColumn 2D size mismatch: expected {rows * cols}, got {total}")
                 qcol = TimeColumn(max(total, 1), cols=cols)
                 qcol.length = total
-                qcol.set_meta_c(<int>cols, True, True)
+                qcol.num_cols = <int>cols
+                qcol.is_2d = True
+                qcol.owns_data = True
                 dptr = <int32_t*>qcol.data_c
                 val_list = <list>values if type(values) is list else list(values)
                 for i in range(total):
@@ -375,7 +381,9 @@ def to_numeric(column, errors='coerce'):
     cdef DoubleColumn res = DoubleColumn(max(alloc_size, 1))
     res.length = alloc_size
     if is_2d_c:
-        res.set_meta_c(<int>c, True, True)
+        res.num_cols = <int>c
+        res.is_2d = True
+        res.owns_data = True
 
     cdef Py_ssize_t i, j, idx = 0
     cdef bint raise_err = (errors == 'raise')
@@ -428,7 +436,9 @@ def to_datetime(column, str fmt='', errors='coerce'):
                     if raise_err:
                         raise ValueError(f"Could not convert '{s}' to datetime")
                     res.append(0)
-        res.set_meta_c(<int>c, True, True)
+        res.num_cols = <int>c
+        res.is_2d = True
+        res.owns_data = True
     else:
         for i in range(r):
             s = str(column[i])
@@ -464,7 +474,9 @@ def to_date(column, str fmt='', errors='coerce'):
                     if raise_err:
                         raise ValueError(f"Could not convert '{s}' to date")
                     res.append(0)
-        res.set_meta_c(<int>c, True, True)
+        res.num_cols = <int>c
+        res.is_2d = True
+        res.owns_data = True
     else:
         for i in range(r):
             s = str(column[i])
@@ -500,7 +512,9 @@ def to_time(column, str fmt='', errors='coerce'):
                     if raise_err:
                         raise ValueError(f"Could not convert '{s}' to time")
                     res.append(0)
-        res.set_meta_c(<int>c, True, True)
+        res.num_cols = <int>c
+        res.is_2d = True
+        res.owns_data = True
     else:
         for i in range(r):
             s = str(column[i])

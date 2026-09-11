@@ -148,8 +148,9 @@ cdef class TimeColumn(BaseColumn):
         self.dtype = TYPE_TIME
         self._base_obj = None
 
-        cdef int c = <int>cols if cols > 0 else 1
-        self.set_meta_c(c, True, c > 1)
+        self.num_cols = <int>cols if cols > 0 else 1
+        self.is_2d = (self.num_cols > 1)
+        self.owns_data = True
 
         self.data_c = <int32_t*>aligned_malloc(self.capacity * sizeof(int32_t))
         if not self.data_c:
@@ -160,33 +161,29 @@ cdef class TimeColumn(BaseColumn):
     def get_size(self):
         return self.capacity * sizeof(int32_t)
 
+    cdef void* _get_data_ptr(self) noexcept nogil:
+        return <void*>self.data_c
+
     def __dealloc__(self):
-        if self.get_owns_data_c() and self.data_c != NULL:
+        if self.owns_data and self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
 
     @property
     def cols(self):
-        return self.get_cols_c()
+        return self.num_cols
 
     @property
     def rows(self):
-        return self.get_rows_c()
-
-    @property
-    def is_2d(self):
-        return self.get_is_2d_c()
+        return self._get_rows_c()
 
     @property
     def _owns_data(self):
-        return self.get_owns_data_c()
+        return self.owns_data
 
     @_owns_data.setter
     def _owns_data(self, bint val):
-        if val:
-            self._meta |= 0x00010000
-        else:
-            self._meta &= ~0x00010000
+        self.owns_data = val
 
     @staticmethod
     cdef TimeColumn create_view(int32_t* ptr, Py_ssize_t length, object base_obj):
@@ -196,7 +193,9 @@ cdef class TimeColumn(BaseColumn):
         col.length = length
         col.data_c = ptr
         col._base_obj = base_obj
-        col.set_meta_c(1, False, False)
+        col.num_cols = 1
+        col.is_2d = False
+        col.owns_data = False
         return col
 
     @staticmethod
@@ -208,32 +207,13 @@ cdef class TimeColumn(BaseColumn):
         col.length = total
         col.data_c = ptr
         col._base_obj = base_obj
-        col.set_meta_c(<int>cols, False, True)
+        col.num_cols = <int>cols
+        col.is_2d = True
+        col.owns_data = False
         return col
 
-    cdef inline int get_cols_c(self) noexcept nogil:
-        cdef int c = <int>(self._meta & 0x0000FFFF)
-        return c if c > 0 else 1
-
-    cdef inline bint get_owns_data_c(self) noexcept nogil:
-        return (self._meta & 0x00010000) != 0
-
-    cdef inline bint get_is_2d_c(self) noexcept nogil:
-        return (self._meta & 0x00020000) != 0
-
-    cdef inline Py_ssize_t get_rows_c(self) noexcept nogil:
-        cdef int c = self.get_cols_c()
-        return self.length // c if c > 0 else self.length
-
-    cdef inline void set_meta_c(self, int cols, bint owns_data, bint is_2d) noexcept nogil:
-        self._meta = (
-            (<unsigned int>cols & 0x0000FFFF) |
-            ((<unsigned int>(1 if owns_data else 0)) << 16) |
-            ((<unsigned int>(1 if is_2d else 0)) << 17)
-        )
-
     cdef void _reserve(self, Py_ssize_t new_cap):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot reallocate a view/slice column. Copy it first.")
         cdef int32_t* new_ptr
         if new_cap > self.capacity:
@@ -251,9 +231,9 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, val):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot append to a view/slice column. Copy it first.")
-        if self.get_is_2d_c():
+        if self.is_2d:
             raise NotImplementedError("append is not supported for 2D columns (rows*cols layout); convert to 1D first")
         cdef int32_t v = _parse_time_str(<str>val) if isinstance(val, str) else <int32_t>val
         if self.length >= self.capacity:
@@ -272,15 +252,15 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_back(self):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
-        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r, j
         cdef list vals
-        if self.get_is_2d_c():
-            r = self.get_rows_c()
+        if self.is_2d:
+            r = self._get_rows_c()
             vals = [None] * c
             for j in range(c):
                 vals[j] = self.data_c[j * r + (r - 1)]
@@ -293,15 +273,15 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_front(self):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
-        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r, j
         cdef list vals
-        if self.get_is_2d_c():
-            r = self.get_rows_c()
+        if self.is_2d:
+            r = self._get_rows_c()
             vals = [None] * c
             for j in range(c):
                 vals[j] = self.data_c[j * r]
@@ -314,25 +294,26 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, TimeColumn other):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
 
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t other_c = other.get_cols_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t other_c = other.num_cols
         cdef Py_ssize_t other_rows
 
-        if self.get_is_2d_c() or other.get_is_2d_c():
+        if self.is_2d or other.is_2d:
             if c != other_c:
                 if self.length == 0:
                     c = other_c
                 else:
                     raise ValueError(f"Cannot concat 2D columns with different column counts: {c} vs {other_c}")
-            other_rows = other.get_rows_c()
+            other_rows = other._get_rows_c()
             if other_rows == 0: return
 
             self._reserve(self.length + other_rows * c)
             _col_concat_2d(self.data_c, &self.length, other.data_c, other_rows, c, sizeof(int32_t))
-            self.set_meta_c(<int>c, True, True)
+            self.num_cols = <int>c
+            self.is_2d = True
             return
         if other.length == 0: return
         self._reserve(self.length + other.length)
@@ -396,12 +377,11 @@ cdef class TimeColumn(BaseColumn):
             raise
         os_aligned_free(c_indices)
 
-        if self.get_owns_data_c() and self.data_c != NULL:
+        if self.owns_data and self.data_c != NULL:
             os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = n
         self.length = n
-        self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
         self._base_obj = None
 
     @cython.binding(False)
@@ -540,15 +520,15 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         if row_idx < 0:
             row_idx += r
         if row_idx < 0 or row_idx >= r:
             raise IndexError("Index out of bounds")
-        if self.get_is_2d_c():
+        if self.is_2d:
             _col_shift_left_2d(self.data_c, &self.length, r, c, row_idx, sizeof(int32_t))
         else:
             _col_drop_row(self.data_c, &self.length, row_idx, sizeof(int32_t))
@@ -556,16 +536,16 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_left(self, Py_ssize_t pos):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         cdef Py_ssize_t col_len
         if pos < 0:
             pos += r
         if pos < 0 or pos >= r:
             raise IndexError("Index out of bounds")
-        if self.get_is_2d_c():
+        if self.is_2d:
             _col_shift_left_2d(self.data_c, &self.length, r, c, pos, sizeof(int32_t))
         else:
             col_len = self.length
@@ -575,15 +555,15 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_right(self, Py_ssize_t pos):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         if pos < 0:
             pos += r
         if pos < 0 or pos > r:
             raise IndexError("Index out of bounds")
-        if self.get_is_2d_c():
+        if self.is_2d:
             if self.length + c > self.capacity:
                 self._reserve(max(16, max(self.capacity * 2, self.length + c)))
             _col_shift_right_2d_int(self.data_c, &self.length, r, c, pos, sizeof(int32_t))
@@ -597,10 +577,10 @@ cdef class TimeColumn(BaseColumn):
     cdef TimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef TimeColumn new_col
         cdef int32_t* new_data
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
 
-        if self.get_is_2d_c():
+        if self.is_2d:
             if not inplace:
                 new_col = TimeColumn(max(n * c, 1), cols=c)
                 new_col.length = n * c
@@ -610,12 +590,13 @@ cdef class TimeColumn(BaseColumn):
                 new_data = <int32_t*>aligned_malloc(max(n * c, 1) * sizeof(int32_t))
                 if not new_data: raise MemoryError()
                 _col_gather_2d_zero(new_data, self.data_c, indices, n, r, c, sizeof(int32_t))
-                if self.get_owns_data_c() and self.data_c != NULL:
+                if self.owns_data and self.data_c != NULL:
                     os_aligned_free(self.data_c)
                 self.data_c = new_data
                 self.capacity = n * c
                 self.length = n * c
-                self.set_meta_c(<int>c, True, True)
+                self.num_cols = <int>c
+                self.is_2d = True
                 self._base_obj = None
                 return self
 
@@ -628,12 +609,11 @@ cdef class TimeColumn(BaseColumn):
             new_data = <int32_t*>aligned_malloc(max(n, 1) * sizeof(int32_t))
             if not new_data: raise MemoryError()
             _col_gather_zero(new_data, self.data_c, indices, n, sizeof(int32_t))
-            if self.get_owns_data_c() and self.data_c != NULL:
+            if self.owns_data and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
             self.length = n
-            self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
             self._base_obj = None
             return self
 
@@ -731,10 +711,10 @@ cdef class TimeColumn(BaseColumn):
         return self.length
 
     cdef inline void _max_2d_c(self, double* out_buf) noexcept nogil:
-        _max_2d_c(<int*>self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _max_2d_c(<int*>self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _min_2d_c(self, double* out_buf) noexcept nogil:
-        _min_2d_c(<int*>self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _min_2d_c(<int*>self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     # ------------------------------------------------------------
     # 类型转换 astype (直接 C 级内存赋值与零堆开销)

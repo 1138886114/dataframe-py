@@ -80,33 +80,9 @@ cdef BaseColumn _column_from_list_impl(FastDataFrame self, str name, list values
     raise TypeError(f"Unsupported type: {type(sample)}")
 
 cdef inline void _probe_shape(BaseColumn col, bint* is2d, Py_ssize_t* c, Py_ssize_t* r):
-    cdef int dtype = col.dtype
-    if dtype == TYPE_INT:
-        is2d[0] = (<IntColumn>col).get_is_2d_c()
-        c[0] = (<IntColumn>col).get_cols_c()
-        r[0] = (<IntColumn>col).get_rows_c()
-    elif dtype == TYPE_DOUBLE:
-        is2d[0] = (<DoubleColumn>col).get_is_2d_c()
-        c[0] = (<DoubleColumn>col).get_cols_c()
-        r[0] = (<DoubleColumn>col).get_rows_c()
-    elif dtype == TYPE_DATE:
-        is2d[0] = (<DateColumn>col).get_is_2d_c()
-        c[0] = (<DateColumn>col).get_cols_c()
-        r[0] = (<DateColumn>col).get_rows_c()
-    elif dtype == TYPE_DATETIME:
-        is2d[0] = (<DateTimeColumn>col).get_is_2d_c()
-        c[0] = (<DateTimeColumn>col).get_cols_c()
-        r[0] = (<DateTimeColumn>col).get_rows_c()
-    elif dtype == TYPE_TIME:
-        is2d[0] = (<TimeColumn>col).get_is_2d_c()
-        c[0] = (<TimeColumn>col).get_cols_c()
-        r[0] = (<TimeColumn>col).get_rows_c()
-    elif dtype == TYPE_CHAR256 or dtype == TYPE_UCS2 or dtype == TYPE_BOOL or dtype == TYPE_CATEGORY:
-        is2d[0] = False
-        c[0] = 1
-        r[0] = col.length
-    else:
-        raise TypeError(f"unsupported column dtype {dtype}")
+    is2d[0] = col.is_2d
+    c[0] = col.num_cols
+    r[0] = col._get_rows_c()
 
 
 cdef BaseColumn _column_from_2d_list_impl(list values, Py_ssize_t rows, Py_ssize_t cols):
@@ -209,15 +185,15 @@ cdef BaseColumn _col_from_keys_2d(BaseColumn src, list keys):
         return IntColumn(0)
     cdef Py_ssize_t c = 1
     if dtype == TYPE_INT:
-        c = (<IntColumn>src).get_cols_c()
+        c = (<IntColumn>src).num_cols
     elif dtype == TYPE_DOUBLE:
-        c = (<DoubleColumn>src).get_cols_c()
+        c = (<DoubleColumn>src).num_cols
     elif dtype == TYPE_DATE:
-        c = (<DateColumn>src).get_cols_c()
+        c = (<DateColumn>src).num_cols
     elif dtype == TYPE_DATETIME:
-        c = (<DateTimeColumn>src).get_cols_c()
+        c = (<DateTimeColumn>src).num_cols
     elif dtype == TYPE_TIME:
-        c = (<TimeColumn>src).get_cols_c()
+        c = (<TimeColumn>src).num_cols
     cdef Py_ssize_t total = nkeys * c
     cdef Py_ssize_t k, j
     cdef object flat = []
@@ -236,7 +212,9 @@ cdef BaseColumn _col_from_keys_2d(BaseColumn src, list keys):
     elif dtype == TYPE_DATE:
         dcol = DateColumn(max(total, 1), cols=c)
         dcol.length = total
-        dcol.set_meta_c(<int>c, True, True)
+        dcol.num_cols = <int>c
+        dcol.is_2d = True
+        dcol.owns_data = True
         dptr = <int32_t*>dcol.data_c
         for k in range(nkeys):
             for j in range(c):
@@ -454,15 +432,15 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
     cdef bint is2d = False
 
     if dtype == TYPE_INT:
-        cols = (<IntColumn>col).get_cols_c(); rows = (<IntColumn>col).get_rows_c(); is2d = (<IntColumn>col).get_is_2d_c()
+        cols = (<IntColumn>col).num_cols; rows = (<IntColumn>col)._get_rows_c(); is2d = (<IntColumn>col).is_2d
     elif dtype == TYPE_DOUBLE:
-        cols = (<DoubleColumn>col).get_cols_c(); rows = (<DoubleColumn>col).get_rows_c(); is2d = (<DoubleColumn>col).get_is_2d_c()
+        cols = (<DoubleColumn>col).num_cols; rows = (<DoubleColumn>col)._get_rows_c(); is2d = (<DoubleColumn>col).is_2d
     elif dtype == TYPE_DATE:
-        cols = (<DateColumn>col).get_cols_c(); rows = (<DateColumn>col).get_rows_c(); is2d = (<DateColumn>col).get_is_2d_c()
+        cols = (<DateColumn>col).num_cols; rows = (<DateColumn>col)._get_rows_c(); is2d = (<DateColumn>col).is_2d
     elif dtype == TYPE_DATETIME:
-        cols = (<DateTimeColumn>col).get_cols_c(); rows = (<DateTimeColumn>col).get_rows_c(); is2d = (<DateTimeColumn>col).get_is_2d_c()
+        cols = (<DateTimeColumn>col).num_cols; rows = (<DateTimeColumn>col)._get_rows_c(); is2d = (<DateTimeColumn>col).is_2d
     elif dtype == TYPE_TIME:
-        cols = (<TimeColumn>col).get_cols_c(); rows = (<TimeColumn>col).get_rows_c(); is2d = (<TimeColumn>col).get_is_2d_c()
+        cols = (<TimeColumn>col).num_cols; rows = (<TimeColumn>col)._get_rows_c(); is2d = (<TimeColumn>col).is_2d
 
     cdef Py_ssize_t c = cols
     cdef Py_ssize_t i, j, old_idx
@@ -525,7 +503,10 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
     if dtype == TYPE_INT:
         ric = IntColumn(max(total, 1), cols=c)
         ric.length = total
-        if is2d: ric.set_meta_c(<int>c, True, True)
+        if is2d:
+            ric.num_cols = <int>c
+            ric.is_2d = True
+            ric.owns_data = True
         nd = ric.data_c
         sd = (<IntColumn>col).data_c
 
@@ -541,7 +522,10 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
     elif dtype == TYPE_DOUBLE:
         rdc = DoubleColumn(max(total, 1), cols=c)
         rdc.length = total
-        if is2d: rdc.set_meta_c(<int>c, True, True)
+        if is2d:
+            rdc.num_cols = <int>c
+            rdc.is_2d = True
+            rdc.owns_data = True
         ndd = rdc.data_c
         sdd = (<DoubleColumn>col).data_c
 
@@ -557,7 +541,10 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
     elif dtype == TYPE_DATE:
         rdc2 = DateColumn(max(total, 1), cols=c)
         rdc2.length = total
-        if is2d: rdc2.set_meta_c(<int>c, True, True)
+        if is2d:
+            rdc2.num_cols = <int>c
+            rdc2.is_2d = True
+            rdc2.owns_data = True
         nda = rdc2.data_c
         sda = (<DateColumn>col).data_c
 
@@ -573,7 +560,10 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
     elif dtype == TYPE_DATETIME:
         rdtc = DateTimeColumn(max(total, 1), cols=c)
         rdtc.length = total
-        if is2d: rdtc.set_meta_c(<int>c, True, True)
+        if is2d:
+            rdtc.num_cols = <int>c
+            rdtc.is_2d = True
+            rdtc.owns_data = True
         ndt = rdtc.data_c
         sdt = (<DateTimeColumn>col).data_c
 
@@ -589,7 +579,10 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
     elif dtype == TYPE_TIME:
         rtmc = TimeColumn(max(total, 1), cols=c)
         rtmc.length = total
-        if is2d: rtmc.set_meta_c(<int>c, True, True)
+        if is2d:
+            rtmc.num_cols = <int>c
+            rtmc.is_2d = True
+            rtmc.owns_data = True
         ntm = rtmc.data_c
         stm = (<TimeColumn>col).data_c
 

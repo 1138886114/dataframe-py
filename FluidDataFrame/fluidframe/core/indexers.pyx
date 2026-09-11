@@ -98,33 +98,9 @@ cdef class _ILocIndexer:
 
 
 cdef inline void _probe_shape(BaseColumn col, bint* is2d, Py_ssize_t* c, Py_ssize_t* r):
-    cdef int dtype = col.dtype
-    if dtype == TYPE_INT:
-        is2d[0] = (<IntColumn>col).get_is_2d_c()
-        c[0] = (<IntColumn>col).get_cols_c()
-        r[0] = (<IntColumn>col).get_rows_c()
-    elif dtype == TYPE_DOUBLE:
-        is2d[0] = (<DoubleColumn>col).get_is_2d_c()
-        c[0] = (<DoubleColumn>col).get_cols_c()
-        r[0] = (<DoubleColumn>col).get_rows_c()
-    elif dtype == TYPE_DATE:
-        is2d[0] = (<DateColumn>col).get_is_2d_c()
-        c[0] = (<DateColumn>col).get_cols_c()
-        r[0] = (<DateColumn>col).get_rows_c()
-    elif dtype == TYPE_DATETIME:
-        is2d[0] = (<DateTimeColumn>col).get_is_2d_c()
-        c[0] = (<DateTimeColumn>col).get_cols_c()
-        r[0] = (<DateTimeColumn>col).get_rows_c()
-    elif dtype == TYPE_TIME:
-        is2d[0] = (<TimeColumn>col).get_is_2d_c()
-        c[0] = (<TimeColumn>col).get_cols_c()
-        r[0] = (<TimeColumn>col).get_rows_c()
-    elif dtype == TYPE_CHAR256 or dtype == TYPE_UCS2 or dtype == TYPE_BOOL or dtype == TYPE_CATEGORY:
-        is2d[0] = False
-        c[0] = 1
-        r[0] = col.length
-    else:
-        raise TypeError(f"unsupported column dtype {dtype}")
+    is2d[0] = col.is_2d
+    c[0] = col.num_cols
+    r[0] = col._get_rows_c()
 
 
 cdef inline void _fast_set_cell(BaseColumn col, int dtype, Py_ssize_t idx, object val) except *:

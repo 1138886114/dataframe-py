@@ -838,25 +838,25 @@ cdef class FastDataFrame:
         cdef uint64_t dbits
 
         if dt == TYPE_INT:
-            is2d = (<IntColumn>col).get_is_2d_c()
-            cols = (<IntColumn>col).get_cols_c()
-            rows = (<IntColumn>col).get_rows_c()
+            is2d = (<IntColumn>col).is_2d
+            cols = (<IntColumn>col).num_cols
+            rows = (<IntColumn>col)._get_rows_c()
         elif dt == TYPE_DOUBLE:
-            is2d = (<DoubleColumn>col).get_is_2d_c()
-            cols = (<DoubleColumn>col).get_cols_c()
-            rows = (<DoubleColumn>col).get_rows_c()
+            is2d = (<DoubleColumn>col).is_2d
+            cols = (<DoubleColumn>col).num_cols
+            rows = (<DoubleColumn>col)._get_rows_c()
         elif dt == TYPE_DATE:
-            is2d = (<DateColumn>col).get_is_2d_c()
-            cols = (<DateColumn>col).get_cols_c()
-            rows = (<DateColumn>col).get_rows_c()
+            is2d = (<DateColumn>col).is_2d
+            cols = (<DateColumn>col).num_cols
+            rows = (<DateColumn>col)._get_rows_c()
         elif dt == TYPE_DATETIME:
-            is2d = (<DateTimeColumn>col).get_is_2d_c()
-            cols = (<DateTimeColumn>col).get_cols_c()
-            rows = (<DateTimeColumn>col).get_rows_c()
+            is2d = (<DateTimeColumn>col).is_2d
+            cols = (<DateTimeColumn>col).num_cols
+            rows = (<DateTimeColumn>col)._get_rows_c()
         elif dt == TYPE_TIME:
-            is2d = (<TimeColumn>col).get_is_2d_c()
-            cols = (<TimeColumn>col).get_cols_c()
-            rows = (<TimeColumn>col).get_rows_c()
+            is2d = (<TimeColumn>col).is_2d
+            cols = (<TimeColumn>col).num_cols
+            rows = (<TimeColumn>col)._get_rows_c()
 
         # 2D 列：单元格 = 整行向量（各子列取值），与 _col_row_key 语义一致
         if is2d and cols > 1:
@@ -1074,7 +1074,7 @@ cdef class FastDataFrame:
 
         if col.dtype == TYPE_INT:
             int_ptr = (<IntColumn>col).data_c
-            r = (<IntColumn>col).get_rows_c()
+            r = (<IntColumn>col)._get_rows_c()
             if n > r: n = r
 
             with nogil:
@@ -1083,7 +1083,7 @@ cdef class FastDataFrame:
 
         elif col.dtype == TYPE_DOUBLE:
             double_ptr = (<DoubleColumn>col).data_c
-            r = (<DoubleColumn>col).get_rows_c()
+            r = (<DoubleColumn>col)._get_rows_c()
             if n > r: n = r
             memcpy(out, double_ptr + (sub * r), n * sizeof(double))
         else:

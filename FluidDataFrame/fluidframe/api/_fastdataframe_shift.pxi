@@ -5,7 +5,9 @@ cdef _shift_int_column(IntColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize
     cdef IntColumn new_col = IntColumn(max(n, 1), cols=c)
     new_col.length = n
     # 强制锁定新列的 2D 状态，防止发生 1D 降级
-    new_col.set_meta_c(<int>c, True, c > 1)
+    new_col.num_cols = <int>c
+    new_col.is_2d = True
+    new_col.owns_data = c > 1
 
     cdef int* src = col.data_c
     cdef int* dst = new_col.data_c
@@ -38,7 +40,9 @@ cdef _shift_int_column(IntColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize
 cdef _shift_double_column(DoubleColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
     cdef DoubleColumn new_col = DoubleColumn(max(n, 1), cols=c)
     new_col.length = n
-    new_col.set_meta_c(<int>c, True, c > 1)
+    new_col.num_cols = <int>c
+    new_col.is_2d = True
+    new_col.owns_data = c > 1
 
     cdef double* src = col.data_c
     cdef double* dst = new_col.data_c
@@ -66,7 +70,9 @@ cdef _shift_double_column(DoubleColumn col, Py_ssize_t periods, Py_ssize_t n, Py
 cdef _shift_bool_column(BoolColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
     cdef BoolColumn new_col = BoolColumn(max(n, 1), cols=c)
     new_col.length = n
-    new_col.set_meta_c(<int>c, True, c > 1)
+    new_col.num_cols = <int>c
+    new_col.is_2d = True
+    new_col.owns_data = c > 1
 
     cdef unsigned char* src = col.data_c
     cdef unsigned char* dst = new_col.data_c
@@ -122,7 +128,9 @@ cdef void _shift_fixed_zero(void* dst, void* src, Py_ssize_t periods,
 cdef _shift_date_column(DateColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
     cdef DateColumn new_col = DateColumn(max(n, 1), cols=c)
     new_col.length = n
-    new_col.set_meta_c(<int>c, True, c > 1)
+    new_col.num_cols = <int>c
+    new_col.is_2d = True
+    new_col.owns_data = c > 1
     _shift_fixed_zero(<void*>new_col.data_c, <void*>col.data_c, periods, c, r, sizeof(int32_t))
     return new_col
 
@@ -130,7 +138,9 @@ cdef _shift_date_column(DateColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssi
 cdef _shift_time_column(TimeColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
     cdef TimeColumn new_col = TimeColumn(max(n, 1), cols=c)
     new_col.length = n
-    new_col.set_meta_c(<int>c, True, c > 1)
+    new_col.num_cols = <int>c
+    new_col.is_2d = True
+    new_col.owns_data = c > 1
     _shift_fixed_zero(<void*>new_col.data_c, <void*>col.data_c, periods, c, r, sizeof(int32_t))
     return new_col
 
@@ -138,7 +148,9 @@ cdef _shift_time_column(TimeColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssi
 cdef _shift_datetime_column(DateTimeColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
     cdef DateTimeColumn new_col = DateTimeColumn(max(n, 1), cols=c)
     new_col.length = n
-    new_col.set_meta_c(<int>c, True, c > 1)
+    new_col.num_cols = <int>c
+    new_col.is_2d = True
+    new_col.owns_data = c > 1
     _shift_fixed_zero(<void*>new_col.data_c, <void*>col.data_c, periods, c, r, sizeof(int64_t))
     return new_col
 

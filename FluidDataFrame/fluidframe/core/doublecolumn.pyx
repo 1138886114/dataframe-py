@@ -101,72 +101,48 @@ cdef class DoubleColumn(BaseColumn):
         self.dtype = TYPE_DOUBLE
         self._base_obj = None
 
-        cdef int c = <int>cols if cols > 0 else 1
-        self.set_meta_c(c, True, c > 1)
+        self.num_cols = <int>cols if cols > 0 else 1
+        self.is_2d = (self.num_cols > 1)
+        self.owns_data = True
 
         self.data_c = <double*>aligned_malloc(self.capacity * sizeof(double))
         if not self.data_c:
             raise MemoryError()
 
+    cdef void* _get_data_ptr(self) noexcept nogil:
+        return <void*>self.data_c
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __dealloc__(self):
-        if self.get_owns_data_c() and self.data_c != NULL:
+        if self.owns_data and self.data_c != NULL:
             os_aligned_free(self.data_c)
             self.data_c = NULL
 
     @property
     def cols(self):
-        return self.get_cols_c()
+        return self.num_cols
 
     @property
     def rows(self):
-        return self.get_rows_c()
-
-    @property
-    def is_2d(self):
-        return self.get_is_2d_c()
+        return self._get_rows_c()
 
     @property
     def _owns_data(self):
-        return self.get_owns_data_c()
+        return self.owns_data
 
     @_owns_data.setter
     def _owns_data(self, bint val):
-        if val:
-            self._meta |= 0x00010000
-        else:
-            self._meta &= ~0x00010000
+        self.owns_data = val
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def get_size(self):
         return self.capacity * sizeof(double)
 
-    cdef inline int get_cols_c(self) noexcept nogil:
-        cdef int c = <int>(self._meta & 0x0000FFFF)
-        return c if c > 0 else 1
-
-    cdef inline bint get_owns_data_c(self) noexcept nogil:
-        return (self._meta & 0x00010000) != 0
-
-    cdef inline bint get_is_2d_c(self) noexcept nogil:
-        return (self._meta & 0x00020000) != 0
-
-    cdef inline Py_ssize_t get_rows_c(self) noexcept nogil:
-        cdef int c = self.get_cols_c()
-        return self.length // c if c > 0 else self.length
-
-    cdef inline void set_meta_c(self, int cols, bint owns_data, bint is_2d) noexcept nogil:
-        self._meta = (
-            (<unsigned int>cols & 0x0000FFFF) |
-            ((<unsigned int>(1 if owns_data else 0)) << 16) |
-            ((<unsigned int>(1 if is_2d else 0)) << 17)
-        )
-
     cdef inline DoubleColumn _make_like_nan(self):
         """生成与自身形状与容量完全一致的纯 NaN 结果列"""
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t total = self.length
         cdef DoubleColumn res = DoubleColumn(max(total, 1), cols=c)
         res.length = total
@@ -186,7 +162,9 @@ cdef class DoubleColumn(BaseColumn):
         col.data_c = ptr
         col._base_obj = base_obj
         # 1 列, owns_data=False, is_2d=False
-        col.set_meta_c(1, False, False)
+        col.num_cols = 1
+        col.is_2d = False
+        col.owns_data = False
         return col
 
     @staticmethod
@@ -200,7 +178,9 @@ cdef class DoubleColumn(BaseColumn):
         col.data_c = ptr
         col._base_obj = base_obj
         # cols 列, owns_data=False, is_2d=True
-        col.set_meta_c(<int>cols, False, True)
+        col.num_cols = <int>cols
+        col.is_2d = True
+        col.owns_data = False
         return col
 
     @staticmethod
@@ -214,9 +194,9 @@ cdef class DoubleColumn(BaseColumn):
             raise ValueError(f"len(values)={len(values)} != rows*cols={total}")
 
         cdef DoubleColumn col = DoubleColumn(max(total, 1), cols=cols)
+        col.num_cols = <int>cols
+        col.is_2d = True
         col.length = total
-
-        col.set_meta_c(<int>cols, True, True)
         cdef Py_ssize_t i
         cdef double* ptr = col.data_c
         for i in range(total):
@@ -239,7 +219,7 @@ cdef class DoubleColumn(BaseColumn):
         col.dtype = TYPE_DOUBLE
         col.capacity = length
         col.length = length
-        col._owns_data = False
+        col.owns_data = False
         col._base_obj = arr
         col.data_c = &view[0] if length > 0 else NULL
         return col
@@ -273,7 +253,7 @@ cdef class DoubleColumn(BaseColumn):
         return columns
 
     cdef void _reserve(self, Py_ssize_t new_cap):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot reallocate a view/slice column. Copy it first.")
         cdef double* new_ptr
         if new_cap > self.capacity:
@@ -286,9 +266,9 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def append(self, double val):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot append to a view/slice column. Copy it first.")
-        if self.get_is_2d_c():
+        if self.is_2d:
             raise NotImplementedError("append is not supported for 2D columns (rows*cols layout); convert to 1D first")
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
@@ -298,7 +278,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def copy(self):
-        cdef DoubleColumn new_col = DoubleColumn(max(self.length, 1), cols=self.cols)
+        cdef DoubleColumn new_col = DoubleColumn(max(self.length, 1), cols=self.num_cols)
         new_col.length = self.length
         _col_memcpy(new_col.data_c, self.data_c, self.length)
         return new_col
@@ -306,15 +286,15 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_back(self):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
-        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r, j
         cdef list vals
-        if self.get_is_2d_c():
-            r = self.get_rows_c()
+        if self.is_2d:
+            r = self._get_rows_c()
             vals = []
             for j in range(c):
                 vals.append(self.data_c[j * r + (r - 1)])
@@ -327,15 +307,15 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def pop_front(self):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
         if self.length == 0:
             raise IndexError("pop from empty column")
-        cdef Py_ssize_t c = self.get_cols_c()
+        cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r, j
         cdef list vals
-        if self.get_is_2d_c():
-            r = self.get_rows_c()
+        if self.is_2d:
+            r = self._get_rows_c()
             vals = []
             for j in range(c):
                 vals.append(self.data_c[j * r])
@@ -348,25 +328,26 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def concat(self, DoubleColumn other):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot concat into a view/slice column. Copy it first.")
 
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t other_c = other.get_cols_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t other_c = other.num_cols
         cdef Py_ssize_t other_rows
 
-        if self.get_is_2d_c() or other.get_is_2d_c():
+        if self.is_2d or other.is_2d:
             if c != other_c:
                 if self.length == 0:
                     c = other_c
                 else:
                     raise ValueError(f"Cannot concat 2D columns with different column counts: {c} vs {other_c}")
-            other_rows = other.get_rows_c()
+            other_rows = other._get_rows_c()
             if other_rows == 0: return
 
             self._reserve(self.length + other_rows * c)
             _col_concat_2d(self.data_c, &self.length, other.data_c, other_rows, c, sizeof(double))
-            self.set_meta_c(<int>c, True, True)
+            self.num_cols = <int>c
+            self.is_2d = True
             return
         if other.length == 0: return
         self._reserve(self.length + other.length)
@@ -478,12 +459,11 @@ cdef class DoubleColumn(BaseColumn):
             raise
         os_aligned_free(c_indices)
 
-        if self.get_owns_data_c() and self.data_c != NULL:
+        if self.owns_data and self.data_c != NULL:
             os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = new_cap
         self.length = n
-        self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
         self._base_obj = None
 
     @cython.binding(False)
@@ -569,25 +549,25 @@ cdef class DoubleColumn(BaseColumn):
         return a[k]
 
     cdef inline void _max_2d_c(self, double* out_buf) noexcept nogil:
-        _max_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _max_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _min_2d_c(self, double* out_buf) noexcept nogil:
-        _min_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _min_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _sum_2d_c(self, double* out_buf) noexcept nogil:
-        _sum_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _sum_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _mean_2d_c(self, double* out_buf) noexcept nogil:
-        _mean_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _mean_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _prod_2d_c(self, double* out_buf) noexcept nogil:
-        _prod_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _prod_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _var_2d_c(self, double* out_buf) noexcept nogil:
-        _var_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _var_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _std_2d_c(self, double* out_buf) noexcept nogil:
-        _std_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _std_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -694,9 +674,9 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cumsum(self):
-        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
-        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef double total
         cdef double* ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -713,10 +693,10 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cummax(self):
-        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
         if self.length == 0: return res
-        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef double cur_max
         cdef double* ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -736,10 +716,10 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cummin(self):
-        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
         if self.length == 0: return res
-        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef double cur_min
         cdef double* ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -758,9 +738,9 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     def diff(self, int periods=1):
-        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
-        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef double* ptr = self.data_c
         cdef double* res_ptr = res.data_c
         cdef Py_ssize_t col_idx, offset, i
@@ -784,9 +764,9 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     def pct_change(self, int periods=1):
-        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
-        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef double* ptr = self.data_c
         cdef double* res_ptr = res.data_c
         cdef Py_ssize_t col_idx, offset, i
@@ -873,9 +853,9 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cumprod(self):
-        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
-        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef double total = 1.0
         cdef double* ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -963,7 +943,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def add_val(self, double val):
-        cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef double* data_ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -976,7 +956,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sub_val(self, double val):
-        cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef double* data_ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -989,7 +969,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mul_val(self, double val):
-        cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef double* data_ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -1002,7 +982,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def div_val(self, double val):
-        cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef double* data_ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -1027,7 +1007,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
-        cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.num_cols)
         res.length = n
         cdef double* self_ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -1055,7 +1035,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
-        cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.num_cols)
         res.length = n
         cdef double* self_ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -1083,7 +1063,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
-        cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.num_cols)
         res.length = n
         cdef double* self_ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -1111,7 +1091,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
-        cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.cols)
+        cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.num_cols)
         res.length = n
         cdef double* self_ptr = self.data_c
         cdef double* res_ptr = res.data_c
@@ -1160,7 +1140,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* r_ptr
         cdef Py_ssize_t i
         if isinstance(other, (int, float)):
-            res = DoubleColumn(max(n, 1), cols=self.cols)
+            res = DoubleColumn(max(n, 1), cols=self.num_cols)
             res.length = n
             v = <double>other
             s_ptr = self.data_c
@@ -1195,7 +1175,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* r_ptr
         cdef Py_ssize_t i
         if isinstance(other, (int, float)):
-            res = DoubleColumn(max(n, 1), cols=self.cols)
+            res = DoubleColumn(max(n, 1), cols=self.num_cols)
             res.length = n
             v = <double>other
             s_ptr = self.data_c
@@ -1227,7 +1207,7 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def _cmp_op(self, object val, int op):
-        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.cols)
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef Py_ssize_t i, n = self.length
         cdef double v
@@ -1438,10 +1418,10 @@ cdef class DoubleColumn(BaseColumn):
     cdef DoubleColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef DoubleColumn new_col
         cdef double* new_data
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
 
-        if self.get_is_2d_c():
+        if self.is_2d:
             if not inplace:
                 new_col = DoubleColumn(max(n * c, 1), cols=c)
                 new_col.length = n * c
@@ -1451,12 +1431,13 @@ cdef class DoubleColumn(BaseColumn):
                 new_data = <double*>aligned_malloc(max(n * c, 1) * sizeof(double))
                 if not new_data: raise MemoryError()
                 _col_gather_2d_nan(new_data, self.data_c, indices, n, r, c, sizeof(double))
-                if self.get_owns_data_c() and self.data_c != NULL:
+                if self.owns_data and self.data_c != NULL:
                     os_aligned_free(self.data_c)
                 self.data_c = new_data
                 self.capacity = n * c
                 self.length = n * c
-                self.set_meta_c(<int>c, True, True)
+                self.num_cols = <int>c
+                self.is_2d = True
                 self._base_obj = None
                 return self
 
@@ -1469,12 +1450,11 @@ cdef class DoubleColumn(BaseColumn):
             new_data = <double*>aligned_malloc(max(n, 1) * sizeof(double))
             if not new_data: raise MemoryError()
             _col_gather_nan(new_data, self.data_c, indices, n, sizeof(double))
-            if self.get_owns_data_c() and self.data_c != NULL:
+            if self.owns_data and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
             self.length = n
-            self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
             self._base_obj = None
             return self
 
@@ -1496,8 +1476,8 @@ cdef class DoubleColumn(BaseColumn):
 
     cpdef DoubleColumn where(self, IntColumn cond, double other, bint inplace=False):
         cdef Py_ssize_t n = self.length
-        cdef Py_ssize_t r = self.get_rows_c()
-        cdef Py_ssize_t ccols = self.get_cols_c()
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t ccols = self.num_cols
         cdef char err_buf[128]
         cdef DoubleColumn col
         cdef Py_ssize_t i, j, base
@@ -1505,7 +1485,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* self_ptr = self.data_c
         cdef int* cond_ptr = cond.data_c
 
-        if self.get_is_2d_c() and ccols > 1:
+        if self.is_2d and ccols > 1:
             if cond.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
                 raise ValueError(err_buf.decode('ascii'))
@@ -1523,7 +1503,7 @@ cdef class DoubleColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        col = self if inplace else DoubleColumn(max(n, 1), cols=self.cols)
+        col = self if inplace else DoubleColumn(max(n, 1), cols=self.num_cols)
         if not inplace: col.length = n
 
         col_ptr = col.data_c
@@ -1536,8 +1516,8 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
-        cdef Py_ssize_t r = self.get_rows_c()
-        cdef Py_ssize_t ccols = self.get_cols_c()
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t ccols = self.num_cols
         cdef char err_buf[128]
         cdef DoubleColumn col
         cdef Py_ssize_t i, j, base
@@ -1546,7 +1526,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* self_ptr = self.data_c
         cdef int* mask_ptr = mask.data_c
 
-        if self.get_is_2d_c() and ccols > 1:
+        if self.is_2d and ccols > 1:
             if mask.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Mask length %zd must match column rows %zd", mask.length, r)
                 raise ValueError(err_buf.decode('ascii'))
@@ -1564,7 +1544,7 @@ cdef class DoubleColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Mask length %zd != column length %zd", mask.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        col = DoubleColumn(max(n, 1), cols=self.cols)
+        col = DoubleColumn(max(n, 1), cols=self.num_cols)
         col.length = n
         col_ptr = col.data_c
 
@@ -1575,8 +1555,8 @@ cdef class DoubleColumn(BaseColumn):
 
     cpdef DoubleColumn mask(self, IntColumn cond, double other, bint inplace=False):
         cdef Py_ssize_t n = self.length
-        cdef Py_ssize_t r = self.get_rows_c()
-        cdef Py_ssize_t ccols = self.get_cols_c()
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t ccols = self.num_cols
         cdef char err_buf[128]
         cdef DoubleColumn col
         cdef Py_ssize_t i, j, base
@@ -1584,7 +1564,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* self_ptr = self.data_c
         cdef int* cond_ptr = cond.data_c
 
-        if self.get_is_2d_c() and ccols > 1:
+        if self.is_2d and ccols > 1:
             if cond.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
                 raise ValueError(err_buf.decode('ascii'))
@@ -1602,7 +1582,7 @@ cdef class DoubleColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        col = self if inplace else DoubleColumn(max(n, 1), cols=self.cols)
+        col = self if inplace else DoubleColumn(max(n, 1), cols=self.num_cols)
         if not inplace: col.length = n
 
         col_ptr = col.data_c
@@ -1614,15 +1594,15 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         if row_idx < 0:
             row_idx += r
         if row_idx < 0 or row_idx >= r:
             raise IndexError("Row index out of bounds")
-        if self.get_is_2d_c():
+        if self.is_2d:
             _col_shift_left_2d(self.data_c, &self.length, r, c, row_idx, sizeof(double))
         else:
             _col_drop_row(self.data_c, &self.length, row_idx, sizeof(double))
@@ -1630,16 +1610,16 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_left(self, Py_ssize_t pos):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         cdef Py_ssize_t col_len
         if pos < 0:
             pos += r
         if pos < 0 or pos >= r:
             raise IndexError("Index out of bounds")
-        if self.get_is_2d_c():
+        if self.is_2d:
             _col_shift_left_2d(self.data_c, &self.length, r, c, pos, sizeof(double))
         else:
             col_len = self.length
@@ -1649,15 +1629,15 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_right(self, Py_ssize_t pos):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         if pos < 0:
             pos += r
         if pos < 0 or pos > r:
             raise IndexError("Index out of bounds")
-        if self.get_is_2d_c():
+        if self.is_2d:
             if self.length + c > self.capacity:
                 self._reserve(max(16, max(self.capacity * 2, self.length + c)))
             _col_shift_right_2d_double(self.data_c, &self.length, r, c, pos)
@@ -1759,18 +1739,17 @@ cdef class DoubleColumn(BaseColumn):
         return _vec_hamming_dist(self.data_c, temp.data_c, n)
 
     cdef DoubleColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, double sentinel):
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         cdef Py_ssize_t i, j, idx
         cdef Py_ssize_t dst_base, src_base
         cdef double* res_ptr
         cdef double* src_ptr
         cdef DoubleColumn new_col
 
-        if self.get_is_2d_c():
+        if self.is_2d:
             new_col = DoubleColumn(max(n * c, 1), cols=c)
             new_col.length = n * c
-            new_col.set_meta_c(<int>c, True, True)
             res_ptr = new_col.data_c
             src_ptr = self.data_c
             with nogil:
@@ -1803,8 +1782,8 @@ cdef class DoubleColumn(BaseColumn):
     def astype(self, object target):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
-        cdef Py_ssize_t c = self.cols
-        cdef Py_ssize_t first_col_n = self.rows if c > 1 else n
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t first_col_n = self._get_rows_c() if c > 1 else n
         cdef Py_ssize_t safe_cap = max(n, 1)
         cdef Py_ssize_t first_col_cap = max(first_col_n, 1)
         cdef int ival, sz
@@ -1938,8 +1917,8 @@ cdef class DoubleColumn(BaseColumn):
         """
         if window < 0: raise ValueError("window must be >= 0")
         cdef DoubleColumn res = self._make_like_nan()
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         if window <= 0 or r < window: return res
 
         cdef double inv_w = 1.0 / <double>window
@@ -1972,8 +1951,8 @@ cdef class DoubleColumn(BaseColumn):
         """滚动累加和"""
         if window < 0: raise ValueError("window must be >= 0")
         cdef DoubleColumn res = self._make_like_nan()
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         if window <= 0 or r < window: return res
 
         cdef double* src = self.data_c
@@ -2003,8 +1982,8 @@ cdef class DoubleColumn(BaseColumn):
         """滚动最小值 (采用严格连续内存单调双端队列)"""
         if window < 1: raise ValueError("window must be >= 1")
         cdef DoubleColumn res = self._make_like_nan()
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         if r < window: return res
 
         # 分配单列复用的队列缓冲 (最大长度为 r)
@@ -2042,8 +2021,8 @@ cdef class DoubleColumn(BaseColumn):
         """滚动最大值"""
         if window < 1: raise ValueError("window must be >= 1")
         cdef DoubleColumn res = self._make_like_nan()
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         if r < window: return res
 
         cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
@@ -2081,8 +2060,8 @@ cdef class DoubleColumn(BaseColumn):
         """滚动方差 (ddof=True 为样本方差 N-1，False 为总体方差 N)"""
         if window < 2: raise ValueError("window must be >= 2 for variance")
         cdef DoubleColumn res = self._make_like_nan()
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         if r < window: return res
 
         cdef double inv_w = 1.0 / <double>window
@@ -2136,8 +2115,8 @@ cdef class DoubleColumn(BaseColumn):
         if window < 1: raise ValueError("window must be >= 1")
         if q < 0.0 or q > 1.0: raise ValueError("q must be between 0.0 and 1.0")
         cdef DoubleColumn res = self._make_like_nan()
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         if r < window: return res
 
         cdef double* buf = <double*>aligned_malloc(window * sizeof(double))
@@ -2195,8 +2174,8 @@ cdef class DoubleColumn(BaseColumn):
 
         if window < 1: raise ValueError("weights length must be >= 1")
         cdef DoubleColumn res = self._make_like_nan()
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         if r < window: return res
 
         cdef double* w_ptr = w_col.data_c
@@ -2227,8 +2206,8 @@ cdef class DoubleColumn(BaseColumn):
         if window < 1: raise ValueError("window must be >= 1")
         if not callable(func): raise TypeError("func must be a callable object")
         cdef DoubleColumn res = self._make_like_nan()
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         if r < window: return res
 
         cdef double* src = self.data_c
@@ -2253,8 +2232,8 @@ cdef class DoubleColumn(BaseColumn):
     # 8. roll_skew / roll_kurt / roll_corr / roll_cov
     # ============================================================
     def roll_skew(self, Py_ssize_t window):
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         cdef DoubleColumn res = self._make_like_nan()
         if r < window or window < 3: return res
         cdef double* src = self.data_c
@@ -2283,8 +2262,8 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     def roll_kurt(self, Py_ssize_t window):
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         cdef DoubleColumn res = self._make_like_nan()
         if r < window or window < 4: return res
         cdef double* src = self.data_c
@@ -2313,8 +2292,8 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     def roll_corr(self, Py_ssize_t window, object other):
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         cdef DoubleColumn res = self._make_like_nan()
         if r < window: return res
         cdef double* src_x = self.data_c
@@ -2361,8 +2340,8 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     def roll_cov(self, Py_ssize_t window, object other):
-        cdef Py_ssize_t r = self.rows if self.rows > 0 else self.length
-        cdef Py_ssize_t c = self.cols
+        cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef Py_ssize_t c = self.num_cols
         cdef DoubleColumn res = self._make_like_nan()
         if r < window: return res
         cdef double* src_x = self.data_c

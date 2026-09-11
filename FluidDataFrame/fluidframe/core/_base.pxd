@@ -1,5 +1,5 @@
 # cython: language_level=3
-from libc.math cimport sqrt, fabs, NAN
+from libc.math cimport isnan, sqrt, fabs, NAN, fmax
 from libc.string cimport memmove, memcpy, memset
 from libc.stdint cimport int32_t, int64_t
 
@@ -591,82 +591,183 @@ cdef inline void _col_memcpy(FixedNum* dst, FixedNum* src, Py_ssize_t n) noexcep
 # ============================================================
 cdef inline void _max_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
     cdef Py_ssize_t i, j, base
-    cdef NumericType max_val
+    cdef NumericType max_val, val
+    cdef bint found_valid
+
     for j in range(cols):
-        base = j * rows
         if rows == 0:
             out_buf[j] = NAN
             continue
-        max_val = ptr[base]
-        for i in range(1, rows):
-            if ptr[base + i] > max_val:
-                max_val = ptr[base + i]
+
+        base = j * rows
+        if NumericType is double:
+            found_valid = False
+            for i in range(rows):
+                val = ptr[base + i]
+                if not isnan(val):
+                    max_val = val
+                    found_valid = True
+                    break
+
+            if not found_valid:
+                out_buf[j] = NAN
+                continue
+
+            for i in range(i + 1, rows):
+                val = ptr[base + i]
+                if not isnan(val) and val > max_val:
+                    max_val = val
+        else:
+            max_val = ptr[base]
+            for i in range(1, rows):
+                if ptr[base + i] > max_val:
+                    max_val = ptr[base + i]
+
         out_buf[j] = <double>max_val
 
 cdef inline void _min_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
     cdef Py_ssize_t i, j, base
-    cdef NumericType min_val
+    cdef NumericType min_val, val
+    cdef bint found_valid
+
     for j in range(cols):
-        base = j * rows
         if rows == 0:
             out_buf[j] = NAN
             continue
-        min_val = ptr[base]
-        for i in range(1, rows):
-            if ptr[base + i] < min_val:
-                min_val = ptr[base + i]
+
+        base = j * rows
+
+        if NumericType is double:
+            found_valid = False
+            for i in range(rows):
+                val = ptr[base + i]
+                if not isnan(val):
+                    min_val = val
+                    found_valid = True
+                    break
+
+            if not found_valid:
+                out_buf[j] = NAN
+                continue
+
+            for i in range(i + 1, rows):
+                val = ptr[base + i]
+                if not isnan(val) and val < min_val:
+                    min_val = val
+        else:
+            min_val = ptr[base]
+            for i in range(1, rows):
+                if ptr[base + i] < min_val:
+                    min_val = ptr[base + i]
+
         out_buf[j] = <double>min_val
 
 cdef inline void _sum_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
     cdef Py_ssize_t i, j, base
     cdef double total
+    cdef NumericType val
+
     for j in range(cols):
         base = j * rows
         total = 0.0
         for i in range(rows):
-            total += <double>ptr[base + i]
+            val = ptr[base + i]
+            if NumericType is double:
+                if not isnan(val):
+                    total += <double>val
+            else:
+                total += <double>val
         out_buf[j] = total
 
 cdef inline void _mean_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
     cdef Py_ssize_t i, j, base
     cdef double total
+    cdef Py_ssize_t valid_cnt
+    cdef NumericType val
+
     for j in range(cols):
         base = j * rows
         total = 0.0
+        valid_cnt = 0
+
         for i in range(rows):
-            total += <double>ptr[base + i]
-        out_buf[j] = total / <double>rows if rows > 0 else NAN
+            val = ptr[base + i]
+            if NumericType is double:
+                if not isnan(val):
+                    total += <double>val
+                    valid_cnt += 1
+            else:
+                total += <double>val
+                valid_cnt += 1
+
+        out_buf[j] = total / <double>valid_cnt if valid_cnt > 0 else NAN
 
 cdef inline void _prod_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
     cdef Py_ssize_t i, j, base
     cdef double total
+    cdef NumericType val
+    cdef Py_ssize_t valid_cnt
+
     for j in range(cols):
         base = j * rows
         total = 1.0
+        valid_cnt = 0
         for i in range(rows):
-            total *= <double>ptr[base + i]
-        out_buf[j] = total
+            val = ptr[base + i]
+            if NumericType is double:
+                if not isnan(val):
+                    total *= <double>val
+                    valid_cnt += 1
+            else:
+                total *= <double>val
+                valid_cnt += 1
+
+        out_buf[j] = total if valid_cnt > 0 else NAN
 
 cdef inline void _var_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
     cdef Py_ssize_t i, j, base
     cdef double m, sum_sq, diff
+    cdef NumericType val
+    cdef Py_ssize_t valid_cnt
+
     for j in range(cols):
         base = j * rows
-        if rows < 2:
-            out_buf[j] = 0.0
-            continue
         m = 0.0
+        valid_cnt = 0
+
+        # Pass 1: 均值计算
         for i in range(rows):
-            m += <double>ptr[base + i]
-        m /= <double>rows
+            val = ptr[base + i]
+            if NumericType is double:
+                if not isnan(val):
+                    m += <double>val
+                    valid_cnt += 1
+            else:
+                m += <double>val
+                valid_cnt += 1
+
+        if valid_cnt < 2:
+            out_buf[j] = NAN
+            continue
+
+        m /= <double>valid_cnt
         sum_sq = 0.0
+
+        # Pass 2: 离差平方和
         for i in range(rows):
-            diff = <double>ptr[base + i] - m
-            sum_sq += diff * diff
-        out_buf[j] = sum_sq / <double>(rows - 1)
+            val = ptr[base + i]
+            if NumericType is double:
+                if not isnan(val):
+                    diff = <double>val - m
+                    sum_sq += diff * diff
+            else:
+                diff = <double>val - m
+                sum_sq += diff * diff
+        out_buf[j] = fmax(sum_sq, 0.0) / <double>(valid_cnt - 1)
 
 cdef inline void _std_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, double* out_buf) noexcept nogil:
     _var_2d_c(ptr, rows, cols, out_buf)
     cdef Py_ssize_t j
     for j in range(cols):
-        out_buf[j] = sqrt(out_buf[j])
+        if not isnan(out_buf[j]):
+            out_buf[j] = sqrt(out_buf[j])
