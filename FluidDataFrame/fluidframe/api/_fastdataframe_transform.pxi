@@ -655,39 +655,9 @@ cdef _abs_impl(FastDataFrame self):
     result.index = self.index
     cdef str name
     cdef BaseColumn col
-    cdef Py_ssize_t i, total, c_out
-    cdef bint is2d
-    cdef IntColumn int_col
-    cdef DoubleColumn dbl_col
-
-    cdef int* i_in
-    cdef int* i_out
-    cdef double* d_in
-    cdef double* d_out
-
     for name, col in self.columns.items():
-        is2d, c_out, _ = _col_shape_probe(col)
-        total = col.length
-
-        if col.dtype == TYPE_INT:
-            int_col = IntColumn(max(total, 1), cols=<Py_ssize_t>c_out)
-            int_col.length = total
-            i_in = (<IntColumn>col).data_c
-            i_out = int_col.data_c
-            with nogil:
-                for i in range(total):
-                    i_out[i] = c_abs(i_in[i])
-            result.columns[name] = int_col
-
-        elif col.dtype == TYPE_DOUBLE:
-            dbl_col = DoubleColumn(max(total, 1), cols=<Py_ssize_t>c_out)
-            dbl_col.length = total
-            d_in = (<DoubleColumn>col).data_c
-            d_out = dbl_col.data_c
-            with nogil:
-                for i in range(total):
-                    d_out[i] = fabs(d_in[i])
-            result.columns[name] = dbl_col
+        if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+            result.columns[name] = col.abs()
         else:
             result.columns[name] = col.copy()
     return result
@@ -698,33 +668,9 @@ cdef _round_impl(FastDataFrame self, int decimals):
     result.index = self.index
     cdef str name
     cdef BaseColumn col
-    cdef Py_ssize_t i, total, c_out
-    cdef bint is2d
-    cdef DoubleColumn dbl_col
-
-    cdef double factor = pow(10.0, <double>decimals)
-    cdef double* d_in
-    cdef double* d_out
-
     for name, col in self.columns.items():
-        is2d, c_out, _ = _col_shape_probe(col)
-        total = col.length
-
-        if col.dtype == TYPE_INT:
-            result.columns[name] = col.copy()
-        elif col.dtype == TYPE_DOUBLE:
-            dbl_col = DoubleColumn(max(total, 1), cols=<Py_ssize_t>c_out)
-            dbl_col.length = total
-            d_in = (<DoubleColumn>col).data_c
-            d_out = dbl_col.data_c
-
-            if decimals == 0:
-                for i in range(total):
-                    d_out[i] = round(d_in[i])
-            else:
-                for i in range(total):
-                    d_out[i] = round(d_in[i] * factor) / factor
-            result.columns[name] = dbl_col
+        if col.dtype == TYPE_DOUBLE:
+            result.columns[name] = col.round(decimals)
         else:
             result.columns[name] = col.copy()
     return result
@@ -910,55 +856,29 @@ cdef _replace_impl(FastDataFrame self, object to_replace, object value):
     return result
 
 cdef _ffill_impl(FastDataFrame self):
-    cdef FastDataFrame result = _copy_impl(self)
+    cdef FastDataFrame result = FastDataFrame()
+    result.df_length = self.df_length
+    result.index = self.index
     cdef str name
     cdef BaseColumn col
-    cdef Py_ssize_t i, k, total, base
-    cdef bint is2d
-    cdef Py_ssize_t c_out, r_out
-    cdef double* d_ptr
-    cdef double last_val
-
-    for name in result.columns:
-        col = result.columns[name]
+    for name, col in self.columns.items():
         if col.dtype == TYPE_DOUBLE:
-            _probe_shape(col, &is2d, &c_out, &r_out)
-            d_ptr = (<DoubleColumn>col).data_c
-            with nogil:
-                for k in range(c_out):
-                    base = k * r_out
-                    last_val = NAN
-                    for i in range(r_out):
-                        if not isnan(d_ptr[base + i]):
-                            last_val = d_ptr[base + i]
-                        elif not isnan(last_val):
-                            d_ptr[base + i] = last_val
+            result.columns[name] = col.ffill()
+        else:
+            result.columns[name] = col.copy()
     return result
 
 cdef _bfill_impl(FastDataFrame self):
-    cdef FastDataFrame result = _copy_impl(self)
+    cdef FastDataFrame result = FastDataFrame()
+    result.df_length = self.df_length
+    result.index = self.index
     cdef str name
     cdef BaseColumn col
-    cdef Py_ssize_t i, k, total, base
-    cdef bint is2d
-    cdef Py_ssize_t c_out, r_out
-    cdef double* d_ptr
-    cdef double next_val
-
-    for name in result.columns:
-        col = result.columns[name]
+    for name, col in self.columns.items():
         if col.dtype == TYPE_DOUBLE:
-            _probe_shape(col, &is2d, &c_out, &r_out)
-            d_ptr = (<DoubleColumn>col).data_c
-            with nogil:
-                for k in range(c_out):
-                    base = k * r_out
-                    next_val = NAN
-                    for i in range(r_out - 1, -1, -1):
-                        if not isnan(d_ptr[base + i]):
-                            next_val = d_ptr[base + i]
-                        elif not isnan(next_val):
-                            d_ptr[base + i] = next_val
+            result.columns[name] = col.bfill()
+        else:
+            result.columns[name] = col.copy()
     return result
 
 cdef _pivot_impl(FastDataFrame self, str index, str columns, str values):

@@ -25,7 +25,8 @@ from fluidframe.core._base cimport (
     _col_drop_row, _col_gather,
     _col_shift_right_2d_double, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
     _col_gather_nan, _col_gather_2d_nan, _col_count_nonzeros, _col_memcpy,
-    _max_2d_c, _min_2d_c, _sum_2d_c, _mean_2d_c, _prod_2d_c, _var_2d_c, _std_2d_c
+    _max_2d_c, _min_2d_c, _sum_2d_c, _mean_2d_c, _prod_2d_c, _var_2d_c, _std_2d_c,
+    _col_abs, _col_round, _col_ffill_double, _col_bfill_double
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -1471,6 +1472,32 @@ cdef class DoubleColumn(BaseColumn):
                 v = upper if v > upper else v
                 ptr[i] = v
         return col
+
+    def abs(self):
+        cdef DoubleColumn new_col = self.copy()
+        if new_col.length > 0:
+            _col_abs(new_col.data_c, new_col.data_c, new_col.length)
+        return new_col
+
+    def round(self, int decimals=0):
+        cdef DoubleColumn new_col = self.copy()
+        cdef double factor
+        if new_col.length > 0:
+            factor = pow(10.0, <double>decimals)
+            _col_round(new_col.data_c, new_col.data_c, new_col.length, factor)
+        return new_col
+
+    def ffill(self):
+        cdef DoubleColumn new_col = self.copy()
+        if new_col.length > 0:
+            _col_ffill_double(new_col.data_c, new_col.length)
+        return new_col
+
+    def bfill(self):
+        cdef DoubleColumn new_col = self.copy()
+        if new_col.length > 0:
+            _col_bfill_double(new_col.data_c, new_col.length)
+        return new_col
 
     cpdef DoubleColumn where(self, IntColumn cond, double other, bint inplace=False):
         cdef Py_ssize_t n = self.length

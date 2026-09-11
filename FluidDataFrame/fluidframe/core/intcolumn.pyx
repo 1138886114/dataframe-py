@@ -24,7 +24,8 @@ from fluidframe.core._base cimport (
     _col_drop_row, _col_gather,
     _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
     _col_gather_zero, _col_gather_2d_zero, _col_count_nonzeros, _col_memcpy,
-    _max_2d_c, _min_2d_c, _sum_2d_c, _mean_2d_c, _prod_2d_c, _var_2d_c, _std_2d_c
+    _max_2d_c, _min_2d_c, _sum_2d_c, _mean_2d_c, _prod_2d_c, _var_2d_c, _std_2d_c,
+    _col_abs
 )
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -1746,6 +1747,12 @@ cdef class IntColumn(BaseColumn):
                 elif val > u: val = u
                 ptr[i] = val
         return col
+
+    def abs(self):
+        cdef IntColumn new_col = self.copy()
+        if new_col.length > 0:
+            _col_abs(new_col.data_c, new_col.data_c, new_col.length)
+        return new_col
 
     cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=False):
         cdef Py_ssize_t n = self.length

@@ -18,6 +18,16 @@ cdef enum DataType:
     TYPE_DATETIME = 8
     TYPE_TIME = 9
 
+
+# ============================================================
+#  Fused numeric type for vectorized math
+# ============================================================
+ctypedef fused NumericType:
+    int
+    long
+    double
+    long long
+
 # ============================================================
 #  Aligned memory allocation
 # ============================================================
@@ -48,6 +58,12 @@ cdef class BaseColumn:
     # ---------------------------------------------------------
     cdef Py_ssize_t _get_rows_c(self) noexcept nogil
     cdef void* _get_data_ptr(self) noexcept nogil
+
+    # Element-wise transforms (delegated from FastDataFrame)
+    cpdef BaseColumn abs(self)
+    cpdef BaseColumn round(self, int decimals=*)
+    cpdef BaseColumn ffill(self)
+    cpdef BaseColumn bfill(self)
 
 # ============================================================
 #  Astype helper
@@ -283,14 +299,7 @@ cdef inline Py_ssize_t _col_reserve(void** data_c, Py_ssize_t* capacity,
     capacity[0] = new_cap
     return 1
 
-# ============================================================
-#  Fused numeric type for vectorized math
-# ============================================================
-ctypedef fused NumericType:
-    int
-    long
-    double
-    long long
+
 
 # ============================================================
 #  Vectorized math: same-type (inline for SIMD auto-vectorization)
@@ -771,3 +780,50 @@ cdef inline void _std_2d_c(NumericType* ptr, Py_ssize_t rows, Py_ssize_t cols, d
     for j in range(cols):
         if not isnan(out_buf[j]):
             out_buf[j] = sqrt(out_buf[j])
+
+
+# ============================================================
+#  Generic element-wise transforms (fused type, zero-overhead)
+# ============================================================
+cdef inline void _col_abs(NumericType* dst, NumericType* src, Py_ssize_t n) noexcept nogil:
+    cdef Py_ssize_t i
+    for i in range(n):
+        if NumericType is double:
+            dst[i] = fabs(src[i])
+        else:
+            dst[i] = src[i] if src[i] >= 0 else -src[i]
+
+cdef inline void _col_round(NumericType* dst, NumericType* src,
+                            Py_ssize_t n, double factor) noexcept nogil:
+    cdef Py_ssize_t i
+    cdef double v
+    if NumericType is double:
+        if factor == 1.0:
+            for i in range(n):
+                v = src[i]
+                dst[i] = <double>(<long long>(v + 0.5 if v >= 0 else v - 0.5))
+        else:
+            for i in range(n):
+                v = src[i] * factor
+                dst[i] = <double>(<long long>(v + 0.5 if v >= 0 else v - 0.5)) / factor
+    else:
+        for i in range(n):
+            dst[i] = src[i]
+
+cdef inline void _col_ffill_double(double* data, Py_ssize_t n) noexcept nogil:
+    cdef Py_ssize_t i
+    cdef double last_val = NAN
+    for i in range(n):
+        if not isnan(data[i]):
+            last_val = data[i]
+        elif not isnan(last_val):
+            data[i] = last_val
+
+cdef inline void _col_bfill_double(double* data, Py_ssize_t n) noexcept nogil:
+    cdef Py_ssize_t i
+    cdef double next_val = NAN
+    for i in range(n - 1, -1, -1):
+        if not isnan(data[i]):
+            next_val = data[i]
+        elif not isnan(next_val):
+            data[i] = next_val

@@ -117,6 +117,18 @@ cdef class BaseColumn:
     def shift_left(self, Py_ssize_t pos):
         raise NotImplementedError
 
+    cpdef BaseColumn abs(self):
+        raise NotImplementedError("Subclasses must implement abs()")
+
+    cpdef BaseColumn round(self, int decimals=0):
+        raise NotImplementedError("Subclasses must implement round()")
+
+    cpdef BaseColumn ffill(self):
+        raise NotImplementedError("Subclasses must implement ffill()")
+
+    cpdef BaseColumn bfill(self):
+        raise NotImplementedError("Subclasses must implement bfill()")
+
 
 # ============================================================
 #  Astype helper
