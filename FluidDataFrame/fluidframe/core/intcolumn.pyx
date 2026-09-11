@@ -397,27 +397,90 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mean(self):
-        if self.length == 0: return NAN
-        return <double>self.sum() / <double>self.length
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
+
+        if r == 0:
+            if not self.is_2d or c <= 1: return NAN
+            return [NAN] * c
+
+        cdef object sums = self.sum()
+
+        if not self.is_2d or c <= 1:
+            return <double>sums / <double>r
+
+        cdef list results = [None] * c
+        cdef Py_ssize_t j
+        for j in range(c):
+            results[j] = <double>sums[j] / <double>r
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def var(self):
-        if self.length < 2: return 0.0
-        cdef double m = self.mean()
-        cdef double sum_sq = 0.0, diff
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
+
+        if r < 2:
+            if not self.is_2d or c <= 1: return 0.0
+            return [0.0] * c
+
         cdef int* ptr = self.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(n):
-                diff = <double>ptr[i] - m
-                sum_sq += diff * diff
-        return sum_sq / (n - 1)
+        cdef object means = self.mean()
+        cdef double m, sum_sq, diff
+        cdef Py_ssize_t i, j, base
+
+        if not self.is_2d or c <= 1:
+            m = <double>means
+            sum_sq = 0.0
+            with nogil:
+                for i in range(r):
+                    diff = <double>ptr[i] - m
+                    sum_sq += diff * diff
+            return sum_sq / <double>(r - 1)
+
+        cdef double* c_means = <double*>malloc(c * sizeof(double))
+        cdef double* c_vars = <double*>malloc(c * sizeof(double))
+        if not c_means or not c_vars:
+            if c_means: free(c_means)
+            if c_vars: free(c_vars)
+            raise MemoryError()
+
+        try:
+            for j in range(c):
+                c_means[j] = <double>means[j]
+
+            with nogil:
+                for j in range(c):
+                    base = j * r
+                    m = c_means[j]
+                    sum_sq = 0.0
+                    for i in range(r):
+                        diff = <double>ptr[base + i] - m
+                        sum_sq += diff * diff
+                    c_vars[j] = sum_sq / <double>(r - 1)
+
+            cdef list results = [None] * c
+            for j in range(c):
+                results[j] = c_vars[j]
+            return results
+        finally:
+            free(c_means)
+            free(c_vars)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def std(self):
-        return sqrt(self.var())
+        cdef object v = self.var()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t j
+        if not self.is_2d or c <= 1:
+            return sqrt(<double>v)
+
+        cdef list results = [None] * c
+        for j in range(c):
+            results[j] = sqrt(<double>v[j])
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -492,42 +555,63 @@ cdef class IntColumn(BaseColumn):
         return <double>a[k]
 
     cdef inline void _max_2d_c(self, double* out_buf) noexcept nogil:
-        _max_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _max_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _min_2d_c(self, double* out_buf) noexcept nogil:
-        _min_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _min_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _sum_2d_c(self, double* out_buf) noexcept nogil:
-        _sum_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _sum_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _mean_2d_c(self, double* out_buf) noexcept nogil:
-        _mean_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _mean_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _prod_2d_c(self, double* out_buf) noexcept nogil:
-        _prod_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _prod_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _var_2d_c(self, double* out_buf) noexcept nogil:
-        _var_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _var_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     cdef inline void _std_2d_c(self, double* out_buf) noexcept nogil:
-        _std_2d_c(self.data_c, self.get_rows_c(), self.get_cols_c(), out_buf)
+        _std_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def median(self):
-        if self.length == 0: return NAN
-        cdef int* temp = <int*>aligned_malloc(self.length * sizeof(int))
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
+        if r == 0:
+            if not self.is_2d or c <= 1: return NAN
+            return [NAN] * c
+
+        cdef int* temp = <int*>aligned_malloc(r * sizeof(int))
         if not temp: raise MemoryError()
-        memcpy(temp, self.data_c, self.length * sizeof(int))
-        cdef Py_ssize_t mid = self.length // 2
-        cdef double v1, v2, result
+
+        cdef Py_ssize_t mid = r // 2
+        cdef double v1, v2
+        cdef Py_ssize_t j, base
+        cdef int* ptr = self.data_c
+
         try:
-            if self.length % 2 == 0:
-                v1 = self._quickselect(temp, self.length, mid - 1)
-                v2 = self._quickselect(temp, self.length, mid)
-                return (v1 + v2) * 0.5
-            result = self._quickselect(temp, self.length, mid)
-            return result
+            if not self.is_2d or c <= 1:
+                memcpy(temp, ptr, r * sizeof(int))
+                if r % 2 == 0:
+                    v1 = self._quickselect(temp, r, mid - 1)
+                    v2 = self._quickselect(temp, r, mid)
+                    return (v1 + v2) * 0.5
+                return self._quickselect(temp, r, mid)
+
+            cdef list results = [None] * c
+            for j in range(c):
+                base = j * r
+                memcpy(temp, ptr + base, r * sizeof(int))
+                if r % 2 == 0:
+                    v1 = self._quickselect(temp, r, mid - 1)
+                    v2 = self._quickselect(temp, r, mid)
+                    results[j] = (v1 + v2) * 0.5
+                else:
+                    results[j] = self._quickselect(temp, r, mid)
+            return results
         finally:
             os_aligned_free(temp)
 
@@ -580,36 +664,83 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mode(self):
-        if self.length == 0: return []
-        cdef dict counts = {}
-        cdef Py_ssize_t i, n = self.length
-        cdef int val, count, max_count = 0
-        for i in range(n):
-            val = self.data_c[i]
-            count = counts.get(val, 0) + 1
-            counts[val] = count
-            if count > max_count:
-                max_count = count
-        return [k for k, v in counts.items() if v == max_count]
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
+
+        if r == 0:
+            if not self.is_2d or c <= 1: return []
+            return [[] for _ in range(c)]
+
+        cdef Py_ssize_t i, j, base
+        cdef int val, count, max_count
+        cdef int* ptr = self.data_c
+        cdef dict counts
+
+        if not self.is_2d or c <= 1:
+            counts = {}
+            max_count = 0
+            for i in range(r):
+                val = ptr[i]
+                count = counts.get(val, 0) + 1
+                counts[val] = count
+                if count > max_count: max_count = count
+            return [k for k, v in counts.items() if v == max_count]
+
+        cdef list results = [None] * c
+        for j in range(c):
+            base = j * r
+            counts = {}
+            max_count = 0
+            for i in range(r):
+                val = ptr[base + i]
+                count = counts.get(val, 0) + 1
+                counts[val] = count
+                if count > max_count: max_count = count
+            results[j] = [k for k, v in counts.items() if v == max_count]
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def quantile(self, double q):
-        if self.length == 0: return NAN
-        if q < 0.0 or q > 1.0: raise ValueError("q must be between 0 and 1")
-        cdef int* temp = <int*>aligned_malloc(self.length * sizeof(int))
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
+        if r == 0:
+            if not self.is_2d or c <= 1: return NAN
+            return [NAN] * c
+
+        if q < 0.0 or q > 1.0:
+            raise ValueError("q must be between 0 and 1")
+
+        cdef int* temp = <int*>aligned_malloc(r * sizeof(int))
         if not temp: raise MemoryError()
-        memcpy(temp, self.data_c, self.length * sizeof(int))
-        cdef double pos = q * (self.length - 1)
+
+        cdef double pos = q * (r - 1)
         cdef Py_ssize_t idx = <Py_ssize_t>pos
         cdef double frac = pos - idx
         cdef double v1, v2
+        cdef Py_ssize_t j, base
+        cdef int* ptr = self.data_c
+
         try:
-            if idx >= self.length - 1:
-                return self._quickselect(temp, self.length, self.length - 1)
-            v1 = self._quickselect(temp, self.length, idx)
-            v2 = self._quickselect(temp, self.length, idx + 1)
-            return v1 + frac * (v2 - v1)
+            if not self.is_2d or c <= 1:
+                memcpy(temp, ptr, r * sizeof(int))
+                if idx >= r - 1:
+                    return self._quickselect(temp, r, r - 1)
+                v1 = self._quickselect(temp, r, idx)
+                v2 = self._quickselect(temp, r, idx + 1)
+                return v1 + frac * (v2 - v1)
+
+            cdef list results = [None] * c
+            for j in range(c):
+                base = j * r
+                memcpy(temp, ptr + base, r * sizeof(int))
+                if idx >= r - 1:
+                    results[j] = self._quickselect(temp, r, r - 1)
+                else:
+                    v1 = self._quickselect(temp, r, idx)
+                    v2 = self._quickselect(temp, r, idx + 1)
+                    results[j] = v1 + frac * (v2 - v1)
+            return results
         finally:
             os_aligned_free(temp)
 
@@ -1165,12 +1296,11 @@ cdef class IntColumn(BaseColumn):
         finally:
             os_aligned_free(c_indices)
 
-        if self.get_owns_data_c() and self.data_c != NULL:
+        if self.owns_data and self.data_c != NULL:
             os_aligned_free(self.data_c)
         self.data_c = new_data
         self.capacity = new_cap
         self.length = n
-        self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
         self._base_obj = None
 
     @cython.binding(False)
@@ -1396,25 +1526,27 @@ cdef class IntColumn(BaseColumn):
     cdef IntColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=False):
         cdef IntColumn new_col
         cdef int* new_data
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
 
-        if self.get_is_2d_c():
+        if self.is_2d:
             if not inplace:
                 new_col = IntColumn(max(n * c, 1), cols=c)
                 new_col.length = n * c
+                new_col.is_2d = self.is_2d
                 _col_gather_2d_zero(new_col.data_c, self.data_c, indices, n, r, c, sizeof(int))
                 return new_col
             else:
                 new_data = <int*>aligned_malloc(max(n * c, 1) * sizeof(int))
                 if not new_data: raise MemoryError()
                 _col_gather_2d_zero(new_data, self.data_c, indices, n, r, c, sizeof(int))
-                if self.get_owns_data_c() and self.data_c != NULL:
+                if self.owns_data and self.data_c != NULL:
                     os_aligned_free(self.data_c)
                 self.data_c = new_data
                 self.capacity = n * c
                 self.length = n * c
-                self.set_meta_c(<int>c, True, True)
+                self.num_cols = <int>c
+                self.is_2d = True
                 self._base_obj = None
                 return self
 
@@ -1427,12 +1559,11 @@ cdef class IntColumn(BaseColumn):
             new_data = <int*>aligned_malloc(max(n, 1) * sizeof(int))
             if not new_data: raise MemoryError()
             _col_gather_zero(new_data, self.data_c, indices, n, sizeof(int))
-            if self.get_owns_data_c() and self.data_c != NULL:
+            if self.owns_data and self.data_c != NULL:
                 os_aligned_free(self.data_c)
             self.data_c = new_data
             self.capacity = n
             self.length = n
-            self.set_meta_c(self.get_cols_c(), True, self.get_is_2d_c())
             self._base_obj = None
             return self
 
@@ -1455,8 +1586,8 @@ cdef class IntColumn(BaseColumn):
 
     cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=False):
         cdef Py_ssize_t n = self.length
-        cdef Py_ssize_t r = self.get_rows_c()
-        cdef Py_ssize_t ccols = self.get_cols_c()
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t ccols = self.num_cols
         cdef char err_buf[128]
         cdef IntColumn col
         cdef Py_ssize_t i, j, base
@@ -1465,12 +1596,14 @@ cdef class IntColumn(BaseColumn):
         cdef int* cond_ptr = cond.data_c
         cdef int m
 
-        if self.get_is_2d_c() and ccols > 1:
+        if self.is_2d and ccols > 1:
             if cond.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
                 raise ValueError(err_buf.decode('ascii'))
             col = self if inplace else IntColumn(max(n, 1), cols=ccols)
-            if not inplace: col.length = n
+            if not inplace:
+                col.length = n
+                col.is_2d = True
             col_ptr = col.data_c
             with nogil:
                 for j in range(ccols):
@@ -1484,7 +1617,7 @@ cdef class IntColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        col = self if inplace else IntColumn(max(n, 1), cols=self.cols)
+        col = self if inplace else IntColumn(max(n, 1), cols=self.num_cols)
         if not inplace: col.length = n
 
         col_ptr = col.data_c
@@ -1498,8 +1631,8 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
-        cdef Py_ssize_t r = self.get_rows_c()
-        cdef Py_ssize_t ccols = self.get_cols_c()
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t ccols = self.num_cols
         cdef char err_buf[128]
         cdef IntColumn col
         cdef Py_ssize_t i, j, base
@@ -1509,12 +1642,13 @@ cdef class IntColumn(BaseColumn):
         cdef int m
         cdef int fill_val = <int>fill
 
-        if self.get_is_2d_c() and ccols > 1:
+        if self.is_2d and ccols > 1:
             if mask.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Mask length %zd must match column rows %zd", mask.length, r)
                 raise ValueError(err_buf.decode('ascii'))
             col = IntColumn(max(n, 1), cols=ccols)
             col.length = n
+            col.is_2d = True
             col_ptr = col.data_c
             with nogil:
                 for j in range(ccols):
@@ -1528,7 +1662,7 @@ cdef class IntColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Mask length %zd != column length %zd", mask.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        col = IntColumn(max(n, 1), cols=self.cols)
+        col = IntColumn(max(n, 1), cols=self.num_cols)
         col.length = n
         col_ptr = col.data_c
 
@@ -1540,8 +1674,8 @@ cdef class IntColumn(BaseColumn):
 
     cpdef IntColumn mask(self, IntColumn cond, int other, bint inplace=False):
         cdef Py_ssize_t n = self.length
-        cdef Py_ssize_t r = self.get_rows_c()
-        cdef Py_ssize_t ccols = self.get_cols_c()
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t ccols = self.num_cols
         cdef char err_buf[128]
         cdef IntColumn col
         cdef Py_ssize_t i, j, base
@@ -1550,12 +1684,14 @@ cdef class IntColumn(BaseColumn):
         cdef int* cond_ptr = cond.data_c
         cdef int m
 
-        if self.get_is_2d_c() and ccols > 1:
+        if self.is_2d and ccols > 1:
             if cond.length != r:
                 snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column rows %zd", cond.length, r)
                 raise ValueError(err_buf.decode('ascii'))
             col = self if inplace else IntColumn(max(n, 1), cols=ccols)
-            if not inplace: col.length = n
+            if not inplace:
+                col.length = n
+                col.is_2d = True
             col_ptr = col.data_c
             with nogil:
                 for j in range(ccols):
@@ -1569,7 +1705,7 @@ cdef class IntColumn(BaseColumn):
             snprintf(err_buf, sizeof(err_buf), "Condition mask length %zd must match column length %zd", cond.length, n)
             raise ValueError(err_buf.decode('ascii'))
 
-        col = self if inplace else IntColumn(max(n, 1), cols=self.cols)
+        col = self if inplace else IntColumn(max(n, 1), cols=self.num_cols)
         if not inplace: col.length = n
 
         col_ptr = col.data_c
@@ -1582,15 +1718,15 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot drop row on a view/slice column. Copy it first.")
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         if row_idx < 0:
             row_idx += r
         if row_idx < 0 or row_idx >= r:
             raise IndexError("Row index out of bounds")
-        if self.get_is_2d_c():
+        if self.is_2d:
             _col_shift_left_2d(self.data_c, &self.length, r, c, row_idx, sizeof(int))
         else:
             _col_drop_row(self.data_c, &self.length, row_idx, sizeof(int))
@@ -1598,16 +1734,16 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def shift_left(self, Py_ssize_t pos):
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         cdef Py_ssize_t col_len
         if pos < 0:
             pos += r
         if pos < 0 or pos >= r:
             raise IndexError("Index out of bounds")
-        if self.get_is_2d_c():
+        if self.is_2d:
             _col_shift_left_2d(self.data_c, &self.length, r, c, pos, sizeof(int))
         else:
             col_len = self.length
@@ -1619,15 +1755,15 @@ cdef class IntColumn(BaseColumn):
     def shift_right(self, Py_ssize_t pos):
         """Insert a blank slot at logical position pos (any sub-column).
         For 1D columns this mirrors the historical flat shift_right."""
-        if not self.get_owns_data_c():
+        if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         if pos < 0:
             pos += r
         if pos < 0 or pos > r:
             raise IndexError("Index out of bounds")
-        if self.get_is_2d_c():
+        if self.is_2d:
             if self.length + c > self.capacity:
                 self._reserve(max(16, max(self.capacity * 2, self.length + c)))
             _col_shift_right_2d_int(self.data_c, &self.length, r, c, pos, sizeof(int))
@@ -1728,18 +1864,19 @@ cdef class IntColumn(BaseColumn):
             raise TypeError(f"Unsupported type: {type(other)}")
 
     cdef IntColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, int sentinel):
-        cdef Py_ssize_t c = self.get_cols_c()
-        cdef Py_ssize_t r = self.get_rows_c()
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         cdef Py_ssize_t i, j, idx
         cdef Py_ssize_t dst_base, src_base
         cdef int* res_ptr
         cdef int* src_ptr
         cdef IntColumn new_col
 
-        if self.get_is_2d_c():
+        if self.is_2d:
             new_col = IntColumn(max(n * c, 1), cols=c)
             new_col.length = n * c
-            new_col.set_meta_c(<int>c, True, True)
+            new_col.num_cols = <int>c
+            new_col.is_2d = True
             res_ptr = new_col.data_c
             src_ptr = self.data_c
             with nogil:
