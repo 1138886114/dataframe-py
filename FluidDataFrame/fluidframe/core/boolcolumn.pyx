@@ -89,7 +89,7 @@ cdef class BoolColumn(BaseColumn):
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def append_bool(self, bint val):
+    def _append_bool(self, bint val):
         if self.length >= self.capacity:
             self._reserve(max(16, self.capacity * 2))
         self.data_c[self.length] = 1 if val else 0

@@ -17,7 +17,7 @@ from fluidframe.core._base cimport (
     TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_TIME, _resolve_astype_target,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
-    _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
+    _col_shift_right_2d_int, _col_shift_left_2d, _col_concat_2d,
     _col_gather_zero, _col_gather_2d_zero, _col_memcpy,
 )
 from fluidframe.core.intcolumn cimport IntColumn
@@ -440,7 +440,7 @@ cdef class DateTimeColumn(BaseColumn):
     # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def year(self):
+    def _year(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
@@ -457,7 +457,7 @@ cdef class DateTimeColumn(BaseColumn):
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def month(self):
+    def _month(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
@@ -474,7 +474,7 @@ cdef class DateTimeColumn(BaseColumn):
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def day(self):
+    def _day(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
@@ -491,7 +491,7 @@ cdef class DateTimeColumn(BaseColumn):
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def hour(self):
+    def _hour(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
@@ -509,7 +509,7 @@ cdef class DateTimeColumn(BaseColumn):
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def minute(self):
+    def _minute(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
@@ -527,7 +527,7 @@ cdef class DateTimeColumn(BaseColumn):
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def second(self):
+    def _second(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c

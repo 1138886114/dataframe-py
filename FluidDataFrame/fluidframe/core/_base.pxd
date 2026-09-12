@@ -226,18 +226,6 @@ cdef inline void _col_shift_left_2d(void* buf, Py_ssize_t* length,
                     tail * elem_size)
     length[0] -= cols
 
-cdef inline void _col_gather_2d(void* dst, void* src,
-                                Py_ssize_t* indices, Py_ssize_t n,
-                                Py_ssize_t rows, Py_ssize_t cols,
-                                Py_ssize_t elem_size) noexcept nogil:
-    """Row-wise gather: dst keeps cols sub-columns of n rows each, one
-    per src sub-column (which has rows entries)."""
-    cdef Py_ssize_t j
-    for j in range(cols):
-        _col_gather(<char*>dst + j * n * elem_size,
-                    <char*>src + j * rows * elem_size,
-                    indices, n, elem_size)
-
 cdef inline void _col_gather_2d_zero(void* dst, void* src,
                                      Py_ssize_t* indices, Py_ssize_t n,
                                      Py_ssize_t rows, Py_ssize_t cols,
@@ -280,20 +268,6 @@ cdef inline void _col_concat_2d(void* data_c, Py_ssize_t* length,
                <char*>other_data + (j * other_rows) * elem_size,
                other_rows * elem_size)
     length[0] += other_rows * cols
-
-cdef inline Py_ssize_t _col_reserve(void** data_c, Py_ssize_t* capacity,
-                                    Py_ssize_t new_cap, Py_ssize_t old_size,
-                                    Py_ssize_t elem_size) except -1 nogil:
-    if new_cap <= capacity[0]:
-        return 0
-    cdef void* new_ptr = aligned_realloc(data_c[0], old_size, new_cap * elem_size)
-    if not new_ptr:
-        return -1
-    data_c[0] = new_ptr
-    capacity[0] = new_cap
-    return 1
-
-
 
 # ============================================================
 #  Vectorized math: same-type (inline for SIMD auto-vectorization)
@@ -469,97 +443,6 @@ cdef inline double _int_double_jaccard_sim(int* x, NumericType* y, Py_ssize_t n)
     return <double>intersection / <double>union_cnt if union_cnt > 0 else 0.0
 
 cdef inline double _int_double_hamming_dist(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef Py_ssize_t diffs = 0
-    cdef Py_ssize_t i
-    for i in range(n):
-        if <double>x[i] != <double>y[i]:
-            diffs += 1
-    return <double>diffs / <double>n
-
-# ============================================================
-#  Vectorized math: double* / NumericType cross-type (inline)
-# ============================================================
-cdef inline double _double_int_pearson_corr(double* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n < 2: return NAN
-    cdef double sum_x = 0.0, sum_y = 0.0
-    cdef double mean_x, mean_y
-    cdef double cov = 0.0, var_x = 0.0, var_y = 0.0
-    cdef double xi, yi, denom
-    cdef Py_ssize_t i
-    for i in range(n):
-        sum_x += x[i]
-        sum_y += <double>y[i]
-    mean_x = sum_x / <double>n
-    mean_y = sum_y / <double>n
-    for i in range(n):
-        xi = x[i] - mean_x
-        yi = <double>y[i] - mean_y
-        cov += xi * yi
-        var_x += xi * xi
-        var_y += yi * yi
-    denom = sqrt(var_x * var_y)
-    return cov / denom if denom > 1e-15 else NAN
-
-cdef inline double _double_int_pearson_cov(double* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n < 2: return NAN
-    cdef double sum_x = 0.0, sum_y = 0.0, sum_xy = 0.0
-    cdef double val_x, val_y
-    cdef Py_ssize_t i
-    for i in range(n):
-        val_x = <double>x[i]
-        val_y = <double>y[i]
-        sum_x += val_x
-        sum_y += val_y
-        sum_xy += val_x * val_y
-    return (sum_xy - (sum_x * sum_y) / <double>n) / <double>(n - 1.0)
-
-cdef inline double _double_int_euclidean_dist(double* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef double sum_sq = 0.0, diff
-    cdef Py_ssize_t i
-    for i in range(n):
-        diff = <double>x[i] - <double>y[i]
-        sum_sq += diff * diff
-    return sqrt(sum_sq)
-
-cdef inline double _double_int_manhattan_dist(double* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef double sum_abs = 0.0
-    cdef Py_ssize_t i
-    for i in range(n):
-        sum_abs += fabs(<double>x[i] - <double>y[i])
-    return sum_abs
-
-cdef inline double _double_int_cosine_sim(double* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef double sum_xx = 0.0, sum_yy = 0.0, sum_xy = 0.0
-    cdef double val_x, val_y
-    cdef Py_ssize_t i
-    for i in range(n):
-        val_x = <double>x[i]
-        val_y = <double>y[i]
-        sum_xx += val_x * val_x
-        sum_yy += val_y * val_y
-        sum_xy += val_x * val_y
-    cdef double denom = sqrt(sum_xx * sum_yy)
-    return sum_xy / denom if denom > 0.0 else 0.0
-
-cdef inline double _double_int_jaccard_sim(double* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n == 0: return NAN
-    cdef Py_ssize_t intersection = 0, union_cnt = 0
-    cdef bint bx, by
-    cdef Py_ssize_t i
-    for i in range(n):
-        bx = (x[i] != 0)
-        by = (y[i] != 0)
-        if bx and by:
-            intersection += 1
-        if bx or by:
-            union_cnt += 1
-    return <double>intersection / <double>union_cnt if union_cnt > 0 else 0.0
-
-cdef inline double _double_int_hamming_dist(double* x, NumericType* y, Py_ssize_t n) noexcept nogil:
     if n == 0: return NAN
     cdef Py_ssize_t diffs = 0
     cdef Py_ssize_t i

@@ -41,13 +41,13 @@ class TestCategoryColumnConstruction:
     def test_codes(self):
         cc = CategoryColumn(4)
         cc.append('apple'); cc.append('banana'); cc.append('apple'); cc.append('cherry')
-        codes = cc.cate.codes
+        codes = cc._cate.codes
         check('codes', [codes[i] for i in range(4)] == [0, 1, 0, 2])
 
     def test_categories(self):
         cc = CategoryColumn(4)
         cc.append('apple'); cc.append('banana'); cc.append('apple'); cc.append('cherry')
-        cats = cc.cate.categories
+        cats = cc._cate.categories
         check('categories', cats == ['apple', 'banana', 'cherry'])
 
 
@@ -105,93 +105,93 @@ class TestCategoryAccessor:
 
     def test_codes_is_intcolumn(self):
         g = self._make()
-        codes = g.cate.codes
+        codes = g._cate.codes
         check('is IntColumn', isinstance(codes, IntColumn))
         check('codes values', list(codes) == [0, 1, 0, 2, 1, 0])
 
     def test_categories_copy(self):
         g = self._make()
-        cats = g.cate.categories
+        cats = g._cate.categories
         check('categories', cats == ['apple', 'banana', 'cherry'])
         cats.append('mutated')
-        check('is copy', g.cate.categories == ['apple', 'banana', 'cherry'])
+        check('is copy', g._cate.categories == ['apple', 'banana', 'cherry'])
 
     def test_rename_categories_dict(self):
         g = self._make()
-        g2 = g.cate.rename_categories({'apple': 'fruit_a', 'banana': 'fruit_b'})
-        check('renamed cats', g2.cate.categories == ['fruit_a', 'fruit_b', 'cherry'])
-        check('codes kept', list(g2.cate.codes) == list(g.cate.codes))
-        check('original preserved', g.cate.categories == ['apple', 'banana', 'cherry'])
+        g2 = g._cate.rename_categories({'apple': 'fruit_a', 'banana': 'fruit_b'})
+        check('renamed cats', g2._cate.categories == ['fruit_a', 'fruit_b', 'cherry'])
+        check('codes kept', list(g2._cate.codes) == list(g._cate.codes))
+        check('original preserved', g._cate.categories == ['apple', 'banana', 'cherry'])
 
     def test_rename_categories_list(self):
         g = self._make()
-        g2 = g.cate.rename_categories(['A', 'B', 'C'])
-        check('renamed cats', g2.cate.categories == ['A', 'B', 'C'])
+        g2 = g._cate.rename_categories(['A', 'B', 'C'])
+        check('renamed cats', g2._cate.categories == ['A', 'B', 'C'])
         check('values', [g2[i] for i in range(len(g2))] == ['A', 'B', 'A', 'C', 'B', 'A'])
 
     def test_rename_duplicate_guard(self):
         g = self._make()
         try:
-            g.cate.rename_categories({'apple': 'banana'})
+            g._cate.rename_categories({'apple': 'banana'})
             check('duplicate raises', False)
         except ValueError:
             check('duplicate raises', True)
 
     def test_rename_inplace(self):
         g = CategoryColumn(4); g.append('apple'); g.append('banana')
-        r = g.cate.rename_categories({'apple': 'x'}, inplace=True)
+        r = g._cate.rename_categories({'apple': 'x'}, inplace=True)
         check('returns None', r is None)
-        check('mutated', g.cate.categories == ['x', 'banana'])
+        check('mutated', g._cate.categories == ['x', 'banana'])
 
     def test_add_categories(self):
         g = self._make()
-        g2 = g.cate.add_categories(['date', 'elderberry'])
-        check('added', g2.cate.categories == ['apple', 'banana', 'cherry', 'date', 'elderberry'])
+        g2 = g._cate.add_categories(['date', 'elderberry'])
+        check('added', g2._cate.categories == ['apple', 'banana', 'cherry', 'date', 'elderberry'])
         g2.append('date')
-        check('can append new', list(g2.cate.codes)[-1] == 3)
-        check('original unchanged', 'date' not in g.cate.categories)
+        check('can append new', list(g2._cate.codes)[-1] == 3)
+        check('original unchanged', 'date' not in g._cate.categories)
 
     def test_add_categories_dedup(self):
         g = self._make()
-        g2 = g.cate.add_categories(['apple', 'date'])
-        check('deduped', g2.cate.categories == ['apple', 'banana', 'cherry', 'date'])
+        g2 = g._cate.add_categories(['apple', 'date'])
+        check('deduped', g2._cate.categories == ['apple', 'banana', 'cherry', 'date'])
 
     def test_set_categories(self):
         g = self._make()
-        g2 = g.cate.set_categories(['apple', 'banana'])
-        check('subset cats', g2.cate.categories == ['apple', 'banana', ''])
+        g2 = g._cate.set_categories(['apple', 'banana'])
+        check('subset cats', g2._cate.categories == ['apple', 'banana', ''])
         check('removed mapped to empty', [g2[i] for i in range(len(g2))] == ['apple', 'banana', 'apple', '', 'banana', 'apple'])
 
     def test_set_categories_reorder(self):
         g = self._make()
-        g2 = g.cate.set_categories(['cherry', 'apple', 'banana'])
-        check('reordered', g2.cate.categories == ['cherry', 'apple', 'banana', ''])
+        g2 = g._cate.set_categories(['cherry', 'apple', 'banana'])
+        check('reordered', g2._cate.categories == ['cherry', 'apple', 'banana', ''])
 
     def test_set_categories_inplace(self):
         g = CategoryColumn(4)
         for v in ['apple', 'banana', 'apple', 'cherry']: g.append(v)
-        r = g.cate.set_categories(['apple'], inplace=True)
+        r = g._cate.set_categories(['apple'], inplace=True)
         check('returns None', r is None)
-        check('categories', g.cate.categories == ['apple', ''])
+        check('categories', g._cate.categories == ['apple', ''])
 
     def test_remove_categories(self):
         g = self._make()
-        g2 = g.cate.remove_categories(['cherry'])
-        check('removed', g2.cate.categories == ['apple', 'banana', ''])
+        g2 = g._cate.remove_categories(['cherry'])
+        check('removed', g2._cate.categories == ['apple', 'banana', ''])
         check('values', [g2[i] for i in range(len(g2))] == ['apple', 'banana', 'apple', '', 'banana', 'apple'])
 
     def test_remove_categories_inplace(self):
         g = CategoryColumn(4)
         for v in ['apple', 'banana', 'apple', 'cherry']: g.append(v)
-        r = g.cate.remove_categories(['apple'], inplace=True)
+        r = g._cate.remove_categories(['apple'], inplace=True)
         check('returns None', r is None)
-        check('categories', g.cate.categories == ['banana', 'cherry', ''])
+        check('categories', g._cate.categories == ['banana', 'cherry', ''])
         check('values', [g[i] for i in range(len(g))] == ['', 'banana', '', 'cherry'])
 
     def test_empty_column(self):
         g = CategoryColumn(0)
-        check('empty codes', len(g.cate.codes) == 0)
-        check('empty categories', g.cate.categories == [])
+        check('empty codes', len(g._cate.codes) == 0)
+        check('empty categories', g._cate.categories == [])
 
 
 class TestCategoryInDataFrame:
@@ -204,8 +204,8 @@ class TestCategoryInDataFrame:
     def df_rename(self):
         df = FastDataFrame({'C': 'category'})
         df.append_row(C='apple'); df.append_row(C='banana'); df.append_row(C='apple')
-        r = df['C'].cate.rename_categories({'apple': 'AA'})
-        check('codes', list(r.cate.codes) == [0, 1, 0])
+        r = df['C']._cate.rename_categories({'apple': 'AA'})
+        check('codes', list(r._cate.codes) == [0, 1, 0])
         check('val', r[0] == 'AA')
 
 

@@ -19,11 +19,9 @@ from fluidframe.core._base cimport (
     _resolve_astype_target, NumericType,
     _vec_pearson_corr, _vec_pearson_cov, _vec_euclidean_dist,
     _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist,
-    _double_int_pearson_corr, _double_int_pearson_cov, _double_int_euclidean_dist,
-    _double_int_manhattan_dist, _double_int_cosine_sim, _double_int_jaccard_sim, _double_int_hamming_dist,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
-    _col_shift_right_2d_double, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
+    _col_shift_right_2d_double, _col_shift_left_2d, _col_concat_2d,
     _col_gather_nan, _col_gather_2d_nan, _col_count_nonzeros, _col_memcpy,
     _col_abs, _col_round, _col_ffill_double, _col_bfill_double,
     _c_max, _c_min, _c_sum, _c_prod, _c_idxmax, _c_idxmin, _c_var, _c_mad
@@ -209,7 +207,7 @@ cdef class DoubleColumn(BaseColumn):
     @staticmethod
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def load_from_1d_array(object arr):
+    def _load_from_1d_array(object arr):
         """零拷贝加载 1D 连续数组 (支持 NumPy、PyTorch 等任意实现 Buffer 协议的对象)"""
         cdef double[::1] view
         try:
@@ -232,7 +230,7 @@ cdef class DoubleColumn(BaseColumn):
     @staticmethod
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def load_from_2d_array(object arr, list col_names):
+    def _load_from_2d_array(object arr, list col_names):
         """零拷贝加载 2D 列优先数组 (Fortran-contiguous)"""
         cdef double[::1, :] view
         try:
@@ -538,7 +536,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def count_nonzeros(self):
+    def _count_nonzeros(self):
         return _col_count_nonzeros(self.data_c, self.length)
 
     @cython.binding(False)
@@ -589,11 +587,11 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def argmax(self): return self.idxmax()
+    def _argmax(self): return self.idxmax()
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def argmin(self): return self.idxmin()
+    def _argmin(self): return self.idxmin()
 
     # ------------------------------------------------------------
     # 工业级三路划分快速选择 (防死循环、防退化、支持 NaN 安全比较)
@@ -717,7 +715,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def nunique(self):
+    def _nunique(self):
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
         if r == 0:
@@ -737,7 +735,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def value_counts(self):
+    def _value_counts(self):
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         cdef double* ptr = self.data_c
         cdef Py_ssize_t i, j, base
@@ -921,7 +919,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def pct_change(self, int periods=1):
+    def _pct_change(self, int periods=1):
         cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
@@ -1094,7 +1092,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def describe(self):
+    def _describe(self):
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         cdef double* ptr = self.data_c
         cdef Py_ssize_t j, i, base
@@ -1983,7 +1981,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def pearson_corr_with(self, other):
+    def _pearson_corr_with(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if n < 2: return NAN
         cdef DoubleColumn temp = DoubleColumn(max(n, 1))
@@ -1993,7 +1991,7 @@ cdef class DoubleColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def pearson_cov_with(self, other):
+    def _pearson_cov_with(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if n < 2: return NAN
         cdef DoubleColumn temp = DoubleColumn(max(n, 1))
@@ -2479,7 +2477,7 @@ cdef class DoubleColumn(BaseColumn):
     # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_apply_weights(self, object weights):
+    def _roll_apply_weights(self, object weights):
         """
         滚动权重内积滤波 (用于加权移动平均 WMA、高斯平滑等)
         weights 可以是 list、tuple 或 1D DoubleColumn/NumPy 数组。
@@ -2523,7 +2521,7 @@ cdef class DoubleColumn(BaseColumn):
     # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_custom(self, Py_ssize_t window, object func):
+    def _roll_custom(self, Py_ssize_t window, object func):
         """
         通用滚动自定义滤波。每次滑窗时切片构建一个临时视图传递给 func(slice_col)。
         func 必须返回一个可以转换为 float 的标量数值。
@@ -2715,7 +2713,7 @@ cdef class DoubleColumn(BaseColumn):
     # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll(self, Py_ssize_t window, str method="mean", **kwargs):
+    def _roll(self, Py_ssize_t window, str method="mean", **kwargs):
         cdef str m = method.lower()
         if m == "mean":
             return self.roll_mean(window)

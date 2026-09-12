@@ -39,7 +39,7 @@ class TestBoolColumnConstruction:
 
     def test_append_bool(self):
         bc = BoolColumn(4)
-        bc.append_bool(False); bc.append_bool(True)
+        bc._append_bool(False); bc._append_bool(True)
         check('append_bool False', bc[0] is False)
         check('append_bool True', bc[1] is True)
 

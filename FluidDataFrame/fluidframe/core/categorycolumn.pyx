@@ -214,7 +214,7 @@ cdef class CategoryColumn(BaseColumn):
         self._base_obj = None
 
     @property
-    def cate(self):
+    def _cate(self):
         return _CategoryAccessor(self)
 
     @cython.always_allow_keywords(False)

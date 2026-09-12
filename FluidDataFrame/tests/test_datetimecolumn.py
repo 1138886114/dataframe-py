@@ -56,32 +56,32 @@ class TestDateTimeColumnExtractors:
 
     def test_year(self):
         col = self._make()
-        r = col.year()
+        r = col._year()
         check('year', r[0] == 2023 and r[1] == 2023)
 
     def test_month(self):
         col = self._make()
-        r = col.month()
+        r = col._month()
         check('month', r[0] == 1 and r[1] == 6)
 
     def test_day(self):
         col = self._make()
-        r = col.day()
+        r = col._day()
         check('day', r[0] == 15 and r[1] == 20)
 
     def test_hour(self):
         col = self._make()
-        r = col.hour()
+        r = col._hour()
         check('hour', r[0] == 10 and r[1] == 14)
 
     def test_minute(self):
         col = self._make()
-        r = col.minute()
+        r = col._minute()
         check('minute', r[0] == 30 and r[1] == 0)
 
     def test_second(self):
         col = self._make()
-        r = col.second()
+        r = col._second()
         check('second', r[0] == 45 and r[1] == 0)
 
 

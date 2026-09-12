@@ -22,9 +22,9 @@ from fluidframe.core._base cimport (
     _int_double_manhattan_dist, _int_double_cosine_sim, _int_double_jaccard_sim, _int_double_hamming_dist,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
-    _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
-    _col_gather_zero, _col_gather_2d_zero, _col_count_nonzeros, _col_memcpy,
-    _col_abs
+    _col_shift_right_2d_int, _col_shift_left_2d, _col_concat_2d,
+    _col_gather_zero, _col_gather_2d_zero, _col_count_nonzeros,
+    _col_abs, _c_sum, _c_var, _c_mad
 )
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -171,7 +171,7 @@ cdef class IntColumn(BaseColumn):
     @staticmethod
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def load_from_1d_array(object arr):
+    def _load_from_1d_array(object arr):
         cdef int[::1] view
         try:
             view = arr
@@ -193,7 +193,7 @@ cdef class IntColumn(BaseColumn):
     @staticmethod
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def load_from_2d_array(object arr, list col_names):
+    def _load_from_2d_array(object arr, list col_names):
         cdef int[::1, :] view
         try:
             view = arr
@@ -491,7 +491,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def count_nonzeros(self):
+    def _count_nonzeros(self):
         return _col_count_nonzeros(self.data_c, self.length)
 
     @cython.binding(False)
@@ -570,11 +570,11 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def argmax(self): return self.idxmax()
+    def _argmax(self): return self.idxmax()
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def argmin(self): return self.idxmin()
+    def _argmin(self): return self.idxmin()
 
     cdef double _quickselect(self, int* a, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
         cdef Py_ssize_t l = 0, r = n - 1
@@ -649,10 +649,18 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mad(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         if self.length == 0: return NAN
+        cdef int* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(_c_mad(ptr + j * r, r, _c_sum(ptr + j * r, r) / <double>r))
+            return result
         cdef double m = self.mean()
         cdef double total_dev = 0.0
-        cdef int* ptr = self.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
@@ -693,7 +701,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def nunique(self):
+    def _nunique(self):
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
         if r == 0:
@@ -716,7 +724,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def value_counts(self):
+    def _value_counts(self):
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
 
@@ -924,7 +932,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def pct_change(self, int periods=1):
+    def _pct_change(self, int periods=1):
         cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.cols)
         res.length = self.length
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
@@ -980,30 +988,89 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def skew(self):
-        if self.length < 3: return NAN
         cdef double m, m2, m3, m4
+        cdef double n, var_sample
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef int* ptr = self.data_c
+        cdef Py_ssize_t j, i
+        cdef int* sub_ptr
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                sub_ptr = ptr + j * r
+                m = _c_sum(sub_ptr, r) / <double>r
+                m2 = _c_var(sub_ptr, r, m) * <double>(r - 1) / <double>r
+                if m2 <= 1e-14:
+                    result.append(NAN)
+                    continue
+                n = <double>r
+                var_sample = m2 / (n - 1)
+                m3 = 0.0
+                for i in range(r):
+                    m3 += (<double>sub_ptr[i] - m) ** 3
+                m3 = m3 / n
+                result.append((n * m3) / ((n - 1) * (n - 2) * (var_sample * sqrt(var_sample))))
+            return result
+        if self.length < 3: return NAN
         self._central_moments(&m, &m2, &m3, &m4)
         if m2 <= 1e-14: return NAN
-        cdef double n = <double>self.length
-        cdef double var_sample = m2 / (n - 1)
+        n = <double>self.length
+        var_sample = m2 / (n - 1)
         return (n * m3) / ((n - 1) * (n - 2) * (var_sample * sqrt(var_sample)))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def kurt(self):
-        if self.length < 4: return NAN
         cdef double m, m2, m3, m4
+        cdef double n, var_sample
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef int* ptr = self.data_c
+        cdef Py_ssize_t j, i
+        cdef int* sub_ptr
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                sub_ptr = ptr + j * r
+                m = _c_sum(sub_ptr, r) / <double>r
+                m2 = _c_var(sub_ptr, r, m) * <double>(r - 1) / <double>r
+                if m2 <= 1e-14:
+                    result.append(NAN)
+                    continue
+                n = <double>r
+                var_sample = m2 / (n - 1)
+                m4 = 0.0
+                for i in range(r):
+                    m4 += (<double>sub_ptr[i] - m) ** 4
+                m4 = m4 / n
+                result.append((m4 / (n - 1)) / (var_sample * var_sample) - 3.0)
+            return result
+        if self.length < 4: return NAN
         self._central_moments(&m, &m2, &m3, &m4)
         if m2 <= 1e-14: return NAN
-        cdef double n = <double>self.length
-        cdef double var_sample = m2 / (n - 1)
+        n = <double>self.length
+        var_sample = m2 / (n - 1)
         return (m4 / (n - 1)) / (var_sample * var_sample) - 3.0
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sem(self):
-        if self.length < 2: return NAN
         cdef double m, m2, m3, m4
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef int* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef int* sub_ptr
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                sub_ptr = ptr + j * r
+                m = _c_sum(sub_ptr, r) / <double>r
+                m2 = _c_var(sub_ptr, r, m) * <double>(r - 1) / <double>r
+                result.append(sqrt(m2 / ((<double>(r - 1)) * <double>r)))
+            return result
+        if self.length < 2: return NAN
         self._central_moments(&m, &m2, &m3, &m4)
         return sqrt(m2 / ((<double>self.length - 1) * <double>self.length))
 
@@ -1035,7 +1102,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def describe(self):
+    def _describe(self):
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
 
@@ -1949,7 +2016,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def pearson_corr_with(self, other):
+    def _pearson_corr_with(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if isinstance(other, IntColumn):
             return _vec_pearson_corr(self.data_c, (<IntColumn>other).data_c, n)
@@ -1960,7 +2027,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def pearson_cov_with(self, other):
+    def _pearson_cov_with(self, other):
         cdef Py_ssize_t n = min(self.length, other.length)
         if isinstance(other, IntColumn):
             return _vec_pearson_cov(self.data_c, (<IntColumn>other).data_c, n)
@@ -2067,7 +2134,7 @@ cdef class IntColumn(BaseColumn):
         return new_col
 
     cdef Py_ssize_t count_nonzero(self):
-        return self.count_nonzeros()
+        return self._count_nonzeros()
 
     cdef void gather_zero_to(self, Py_ssize_t* out):
         if out == NULL: return
@@ -2440,7 +2507,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_apply_weights(self, Py_ssize_t window, list weights):
+    def _roll_apply_weights(self, Py_ssize_t window, list weights):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
@@ -2475,7 +2542,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_custom(self, Py_ssize_t window, object func):
+    def _roll_custom(self, Py_ssize_t window, object func):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
@@ -2693,7 +2760,7 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll(self, Py_ssize_t window, str method="mean", bint ddof=True, double quantile=0.5, list weights=None, object func=None):
+    def _roll(self, Py_ssize_t window, str method="mean", bint ddof=True, double quantile=0.5, list weights=None, object func=None):
         if method == "mean":
             return self.roll_mean(window)
         elif method == "sum":
@@ -2717,10 +2784,10 @@ cdef class IntColumn(BaseColumn):
         elif method == "apply_weights":
             if weights is None:
                 raise ValueError("weights must be provided for apply_weights method")
-            return self.roll_apply_weights(window, weights)
+            return self._roll_apply_weights(window, weights)
         elif method == "custom":
             if func is None:
                 raise ValueError("func must be provided for custom method")
-            return self.roll_custom(window, func)
+            return self._roll_custom(window, func)
         else:
             raise ValueError(f"Unknown roll method: {method}")

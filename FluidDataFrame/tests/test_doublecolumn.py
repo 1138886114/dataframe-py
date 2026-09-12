@@ -126,7 +126,7 @@ def test_sum():
 
 def test_count_nonzeros():
     col = DoubleColumn(); col.append(0.0); col.append(1.0); col.append(0.0); col.append(5.0)
-    check('count_nonzeros', col.count_nonzeros() == 2)
+    check('count_nonzeros', col._count_nonzeros() == 2)
 
 def test_idxmax():
     col = DoubleColumn(); col.append(1.5); col.append(5.5); col.append(3.5)
@@ -369,12 +369,12 @@ def test_roll_quantile_1d():
 def test_roll_apply_weights_1d():
     col = _make_1d([1, 2, 3, 4, 5])
     # weights = [1, 1, 1] -> same as roll_sum(3)
-    r = col.roll_apply_weights([1.0, 1.0, 1.0])
+    r = col._roll_apply_weights([1.0, 1.0, 1.0])
     check('roll_weights_1d equal', _approx(r[2], 6.0))
     check('roll_weights_1d equal [4]', _approx(r[4], 12.0))
 
     # weights = [1, 2, 3] -> 1*x[i-2] + 2*x[i-1] + 3*x[i]
-    r = col.roll_apply_weights([1.0, 2.0, 3.0])
+    r = col._roll_apply_weights([1.0, 2.0, 3.0])
     # i=2: 1*1 + 2*2 + 3*3 = 1+4+9=14
     check('roll_weights_1d weighted [2]', _approx(r[2], 14.0))
     # i=4: 1*3 + 2*4 + 3*5 = 3+8+15=26
@@ -383,46 +383,46 @@ def test_roll_apply_weights_1d():
 def test_roll_custom_1d():
     col = _make_1d([1, 2, 3, 4, 5])
     # custom func: sum of window
-    r = col.roll_custom(3, lambda w: w.sum())
+    r = col._roll_custom(3, lambda w: w.sum())
     check('roll_custom_1d sum [2]', _approx(r[2], 6.0))
     check('roll_custom_1d sum [4]', _approx(r[4], 12.0))
 
     # custom func: max - min (range)
-    r = col.roll_custom(3, lambda w: w.max() - w.min())
+    r = col._roll_custom(3, lambda w: w.max() - w.min())
     check('roll_custom_1d range [2]', _approx(r[2], 2.0))
     check('roll_custom_1d range [3]', _approx(r[3], 2.0))
 
 def test_roll_dispatch_1d():
     col = _make_1d([1, 2, 3, 4, 5, 6, 7, 8])
-    r = col.roll(3, 'mean')
+    r = col._roll(3, 'mean')
     check('roll_dispatch_1d mean', _approx(r[2], 2.0))
 
-    r = col.roll(3, 'sum')
+    r = col._roll(3, 'sum')
     check('roll_dispatch_1d sum', _approx(r[2], 6.0))
 
-    r = col.roll(3, 'min')
+    r = col._roll(3, 'min')
     check('roll_dispatch_1d min', _approx(r[2], 1.0))
 
-    r = col.roll(3, 'max')
+    r = col._roll(3, 'max')
     check('roll_dispatch_1d max', _approx(r[2], 3.0))
 
-    r = col.roll(4, 'std', ddof=True)
+    r = col._roll(4, 'std', ddof=True)
     check('roll_dispatch_1d std', _approx(r[3], math.sqrt(5.0/3.0), 1e-6))
 
-    r = col.roll(4, 'var', ddof=False)
+    r = col._roll(4, 'var', ddof=False)
     check('roll_dispatch_1d var', _approx(r[3], 5.0/4.0, 1e-6))
 
-    r = col.roll(3, 'median')
+    r = col._roll(3, 'median')
     check('roll_dispatch_1d median', _approx(r[2], 2.0))
 
-    r = col.roll(4, 'quantile', q=0.5)
+    r = col._roll(4, 'quantile', q=0.5)
     check('roll_dispatch_1d quantile', _approx(r[3], 2.5, 1e-6))
 
 def test_roll_error_1d():
     col = _make_1d([1, 2, 3])
     check('roll_error w<0 raises', expect_exception(ValueError, col.roll_mean, -1))
     check('roll_error var w<2', expect_exception(ValueError, col.roll_var, 1))
-    check('roll_error bad method', expect_exception(ValueError, col.roll, 2, 'invalid'))
+    check('roll_error bad method', expect_exception(ValueError, col._roll, 2, 'invalid'))
 
 # ============================================================
 #  Roll 系列函数测试 (2D 列优先)
@@ -508,7 +508,7 @@ def test_roll_quantile_2d():
 
 def test_roll_apply_weights_2d():
     col = _make_2d(4, [[1, 2, 3, 4], [10, 20, 30, 40]])
-    r = col.roll_apply_weights([1.0, 1.0, 1.0])
+    r = col._roll_apply_weights([1.0, 1.0, 1.0])
     # col0: 1+2+3=6, 2+3+4=9
     check('roll_weights_2d c0 [2]', _approx(r[2], 6.0))
     check('roll_weights_2d c0 [3]', _approx(r[3], 9.0))
@@ -518,25 +518,25 @@ def test_roll_apply_weights_2d():
 
 def test_roll_custom_2d():
     col = _make_2d(4, [[1, 2, 3, 4], [10, 20, 30, 40]])
-    r = col.roll_custom(3, lambda w: w.sum())
+    r = col._roll_custom(3, lambda w: w.sum())
     check('roll_custom_2d c0 [2]', _approx(r[2], 6.0))
     check('roll_custom_2d c1 [6]', _approx(r[6], 60.0))
 
 def test_roll_dispatch_2d():
     col = _make_2d(4, [[1, 2, 3, 4], [10, 20, 30, 40]])
-    r = col.roll(3, 'mean')
+    r = col._roll(3, 'mean')
     check('roll_dispatch_2d mean c0', _approx(r[2], 2.0))
     check('roll_dispatch_2d mean c1', _approx(r[6], 20.0))
 
-    r = col.roll(3, 'sum')
+    r = col._roll(3, 'sum')
     check('roll_dispatch_2d sum c0', _approx(r[2], 6.0))
     check('roll_dispatch_2d sum c1', _approx(r[6], 60.0))
 
-    r = col.roll(3, 'min')
+    r = col._roll(3, 'min')
     check('roll_dispatch_2d min c0', _approx(r[2], 1.0))
     check('roll_dispatch_2d min c1', _approx(r[6], 10.0))
 
-    r = col.roll(3, 'max')
+    r = col._roll(3, 'max')
     check('roll_dispatch_2d max c0', _approx(r[2], 3.0))
     check('roll_dispatch_2d max c1', _approx(r[6], 30.0))
 
@@ -590,7 +590,7 @@ def test_roll_single_element_window_2d():
 def test_load_from_1d_array():
     import array
     arr = array.array('d', [1.0, 2.0, 3.0, 4.0, 5.0])
-    col = DoubleColumn.load_from_1d_array(arr)
+    col = DoubleColumn._load_from_1d_array(arr)
     check('load_1d length', col.length == 5)
     check('load_1d [0]', col[0] == 1.0)
     check('load_1d [4]', col[4] == 5.0)
@@ -615,7 +615,7 @@ def test_load_from_2d_array():
         return
     # 4 rows x 2 cols, column-major (Fortran order)
     arr = np.array([[1, 10], [2, 20], [3, 30], [4, 40]], dtype=np.float64, order='F')
-    cols_dict = DoubleColumn.load_from_2d_array(arr, ['A', 'B'])
+    cols_dict = DoubleColumn._load_from_2d_array(arr, ['A', 'B'])
     check('load_2d keys', set(cols_dict.keys()) == {'A', 'B'})
 
     col_a = cols_dict['A']
@@ -643,7 +643,7 @@ def test_load_from_2d_array():
 
     # 错误: col_names 长度不匹配
     check('load_2d col_mismatch',
-          expect_exception(ValueError, DoubleColumn.load_from_2d_array, arr, ['A']))
+          expect_exception(ValueError, DoubleColumn._load_from_2d_array, arr, ['A']))
 
 def test_load_from_2d_array_empty():
     try:
@@ -651,7 +651,7 @@ def test_load_from_2d_array_empty():
     except ImportError:
         return
     arr = np.zeros((0, 0), dtype=np.float64, order='F')
-    result = DoubleColumn.load_from_2d_array(arr, [])
+    result = DoubleColumn._load_from_2d_array(arr, [])
     check('load_2d empty', result == {})
 
 def test_create_view_via_roll():
@@ -662,7 +662,7 @@ def test_create_view_via_roll():
         return
     arr = np.array([[1, 100], [2, 200], [3, 300], [4, 400], [5, 500]],
                    dtype=np.float64, order='F')
-    cols_dict = DoubleColumn.load_from_2d_array(arr, ['X', 'Y'])
+    cols_dict = DoubleColumn._load_from_2d_array(arr, ['X', 'Y'])
     cx = cols_dict['X']
     cy = cols_dict['Y']
 
@@ -691,11 +691,11 @@ def test_prod():
 
 def test_nunique():
     col = _make_1d([1.0, 2.0, 2.0, 3.0, 3.0, 3.0])
-    check('nunique', col.nunique() == 3)
+    check('nunique', col._nunique() == 3)
 
 def test_value_counts():
     col = _make_1d([1.0, 2.0, 2.0, 3.0])
-    vc = col.value_counts()
+    vc = col._value_counts()
     check('value_counts 2.0', vc[2.0] == 2)
     check('value_counts 1.0', vc[1.0] == 1)
 
@@ -748,7 +748,7 @@ def test_diff():
 
 def test_pct_change():
     col = _make_1d([10.0, 20.0, 40.0])
-    r = col.pct_change(1)
+    r = col._pct_change(1)
     check('pct_change nan0', _is_nan(r[0]))
     check('pct_change [1]', _approx(r[1], 1.0))  # (20-10)/10
     check('pct_change [2]', _approx(r[2], 1.0))  # (40-20)/20
@@ -771,7 +771,7 @@ def test_sem():
 
 def test_describe():
     col = _make_1d([1.0, 2.0, 3.0, 4.0, 5.0])
-    d = col.describe()
+    d = col._describe()
     check('describe count', d['count'] == 5)
     check('describe mean', _approx(d['mean'], 3.0))
     check('describe min', d['min'] == 1.0)
@@ -858,8 +858,8 @@ def test_drop_row():
 def test_distances():
     a = _make_1d([1.0, 2.0, 3.0])
     b = _make_1d([4.0, 5.0, 6.0])
-    check('pearson_corr', _approx(a.pearson_corr_with(b), 1.0))
-    check('pearson_cov', a.pearson_cov_with(b) > 0)
+    check('pearson_corr', _approx(a._pearson_corr_with(b), 1.0))
+    check('pearson_cov', a._pearson_cov_with(b) > 0)
     check('euclidean', _approx(a.euclidean_dist(b), math.sqrt(27.0)))
     check('manhattan', _approx(a.manhattan_dist(b), 9.0))
     cd = a.cosine_dist(b)
@@ -953,33 +953,33 @@ def test_df_roll_apply_weights():
     df = FastDataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5])
     df.df_length = 5
-    r = df['A'].roll_apply_weights([1.0, 1.0, 1.0])
+    r = df['A']._roll_apply_weights([1.0, 1.0, 1.0])
     check('df_roll_weights [2]', _approx(r[2], 6.0))
 
 def test_df_roll_custom():
     df = FastDataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5])
     df.df_length = 5
-    r = df['A'].roll_custom(3, lambda w: w.sum())
+    r = df['A']._roll_custom(3, lambda w: w.sum())
     check('df_roll_custom [2]', _approx(r[2], 6.0))
 
 def test_df_roll_dispatch():
     df = FastDataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5, 6, 7, 8])
     df.df_length = 8
-    r = df['A'].roll(3, 'mean')
+    r = df['A']._roll(3, 'mean')
     check('df_roll_dispatch mean', _approx(r[2], 2.0))
-    r = df['A'].roll(3, 'sum')
+    r = df['A']._roll(3, 'sum')
     check('df_roll_dispatch sum', _approx(r[2], 6.0))
-    r = df['A'].roll(3, 'min')
+    r = df['A']._roll(3, 'min')
     check('df_roll_dispatch min', _approx(r[2], 1.0))
-    r = df['A'].roll(3, 'max')
+    r = df['A']._roll(3, 'max')
     check('df_roll_dispatch max', _approx(r[2], 3.0))
-    r = df['A'].roll(3, 'median')
+    r = df['A']._roll(3, 'median')
     check('df_roll_dispatch median', _approx(r[2], 2.0))
-    r = df['A'].roll(4, 'var', ddof=False)
+    r = df['A']._roll(4, 'var', ddof=False)
     check('df_roll_dispatch var', _approx(r[3], 1.25, 1e-6))
-    r = df['A'].roll(4, 'quantile', q=0.5)
+    r = df['A']._roll(4, 'quantile', q=0.5)
     check('df_roll_dispatch quantile', _approx(r[3], 2.5, 1e-6))
 
 def test_df_rolling_vs_direct_roll():
@@ -1186,13 +1186,13 @@ def test_2d_clip():
 
 def test_2d_unique_nunique():
     col = _make_2d(3, [[1, 2, 1], [10, 10, 20]])
-    check('2d nunique', col.nunique() == 4)  # {1, 2, 10, 20}
+    check('2d nunique', col._nunique() == 4)  # {1, 2, 10, 20}
     u = col.unique()
     check('2d unique len', len(u) == 4)
 
 def test_2d_describe():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])
-    d = col.describe()
+    d = col._describe()
     # flat: [1, 2, 3, 10, 20, 30], mean = 11.0
     check('2d describe count', d['count'] == 6)
     check('2d describe mean', _approx(d['mean'], 11.0))

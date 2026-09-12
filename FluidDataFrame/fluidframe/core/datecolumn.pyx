@@ -17,7 +17,7 @@ from fluidframe.core._base cimport (
     TYPE_BOOL, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
-    _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
+    _col_shift_right_2d_int, _col_shift_left_2d, _col_concat_2d,
     _col_gather_zero, _col_gather_2d_zero, _col_memcpy,
 )
 from fluidframe.core.intcolumn cimport IntColumn
@@ -454,7 +454,7 @@ cdef class DateColumn(BaseColumn):
     # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def year(self):
+    def _year(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -469,7 +469,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def month(self):
+    def _month(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -484,7 +484,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def day(self):
+    def _day(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -499,7 +499,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def quarter(self):
+    def _quarter(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -747,7 +747,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def is_weekend(self):
+    def _is_weekend(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -780,7 +780,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def days_in_month(self):
+    def _days_in_month(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -795,7 +795,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def is_leap_year(self):
+    def _is_leap_year(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -810,7 +810,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def is_month_start(self):
+    def _is_month_start(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -825,7 +825,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def is_month_end(self):
+    def _is_month_end(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -840,7 +840,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def is_year_start(self):
+    def _is_year_start(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -855,7 +855,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def is_year_end(self):
+    def _is_year_end(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -870,7 +870,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def is_quarter_start(self):
+    def _is_quarter_start(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
@@ -885,7 +885,7 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def is_quarter_end(self):
+    def _is_quarter_end(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c

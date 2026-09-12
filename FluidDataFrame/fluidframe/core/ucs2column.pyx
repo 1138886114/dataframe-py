@@ -9,7 +9,7 @@ cimport cython
 from libc.string cimport memcpy, memmove
 from libc.stdio cimport snprintf
 import re
-from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target, _c_shift_left
+from fluidframe.core._base cimport BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free, TYPE_UCS2, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_BOOL, TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME, _resolve_astype_target
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -1187,7 +1187,7 @@ cdef class UCS2Column(BaseColumn):
         return col
 
     @property
-    def str(self):
+    def _str(self):
         # 快路径：缓存命中直接返回（均摊实例化开销为 0）
         if self._str_cache is not None:
             return self._str_cache

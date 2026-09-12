@@ -1469,7 +1469,7 @@ cdef class AsciiColumn(BaseColumn):
         return col
 
     @property
-    def str(self):
+    def _str(self):
         if self._str_cache is not None:
             return self._str_cache
         self._str_cache = _make_ascii_str_accessor(self)

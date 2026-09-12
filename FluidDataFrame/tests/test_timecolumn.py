@@ -55,17 +55,17 @@ class TestTimeColumnExtractors:
 
     def test_hour(self):
         col = self._make()
-        r = col.hour()
+        r = col._hour()
         check('hour', r[0] == 10 and r[1] == 14)
 
     def test_minute(self):
         col = self._make()
-        r = col.minute()
+        r = col._minute()
         check('minute', r[0] == 30 and r[1] == 0)
 
     def test_second(self):
         col = self._make()
-        r = col.second()
+        r = col._second()
         check('second', r[0] == 45 and r[1] == 0)
 
 
