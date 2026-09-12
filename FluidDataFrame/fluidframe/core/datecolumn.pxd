@@ -27,6 +27,4 @@ cdef class DateColumn(BaseColumn):
     cdef DateColumn create_view(int32_t* ptr, Py_ssize_t length, object base_obj)
     @staticmethod
     cdef DateColumn create_view_2d(int32_t* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj)
-    cdef inline void _max_2d_c(self, double* out_buf) noexcept nogil
-    cdef inline void _min_2d_c(self, double* out_buf) noexcept nogil
     cdef IntColumn _cmp_op(self, object val, int op)

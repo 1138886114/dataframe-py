@@ -19,7 +19,6 @@ from fluidframe.core._base cimport (
     _col_drop_row, _col_gather,
     _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
     _col_gather_zero, _col_gather_2d_zero, _col_memcpy,
-    _max_2d_c, _min_2d_c
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -796,12 +795,6 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.binding(False)
     def __len__(self):
         return self.length
-
-    cdef inline void _max_2d_c(self, double* out_buf) noexcept nogil:
-        _max_2d_c(<long long*>self.data_c, self._get_rows_c(), self.num_cols, out_buf)
-
-    cdef inline void _min_2d_c(self, double* out_buf) noexcept nogil:
-        _min_2d_c(<long long*>self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     # ------------------------------------------------------------
     # astype: 纯 C 单指令转换与截断

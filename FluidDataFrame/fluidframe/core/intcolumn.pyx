@@ -24,7 +24,6 @@ from fluidframe.core._base cimport (
     _col_drop_row, _col_gather,
     _col_shift_right_2d_int, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
     _col_gather_zero, _col_gather_2d_zero, _col_count_nonzeros, _col_memcpy,
-    _max_2d_c, _min_2d_c, _sum_2d_c, _mean_2d_c, _prod_2d_c, _var_2d_c, _std_2d_c,
     _col_abs
 )
 from fluidframe.core.doublecolumn cimport DoubleColumn
@@ -605,27 +604,6 @@ cdef class IntColumn(BaseColumn):
             else:
                 return <double>a[k]
         return <double>a[k]
-
-    cdef inline void _max_2d_c(self, double* out_buf) noexcept nogil:
-        _max_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
-
-    cdef inline void _min_2d_c(self, double* out_buf) noexcept nogil:
-        _min_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
-
-    cdef inline void _sum_2d_c(self, double* out_buf) noexcept nogil:
-        _sum_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
-
-    cdef inline void _mean_2d_c(self, double* out_buf) noexcept nogil:
-        _mean_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
-
-    cdef inline void _prod_2d_c(self, double* out_buf) noexcept nogil:
-        _prod_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
-
-    cdef inline void _var_2d_c(self, double* out_buf) noexcept nogil:
-        _var_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
-
-    cdef inline void _std_2d_c(self, double* out_buf) noexcept nogil:
-        _std_2d_c(self.data_c, self._get_rows_c(), self.num_cols, out_buf)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
