@@ -22,13 +22,10 @@ cdef class IntColumn(BaseColumn):
     cdef double _std_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
 
     cdef IntColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
-    cpdef IntColumn clip(self, double lower, double upper, bint inplace=*)
-    cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=*)
-    cpdef IntColumn mask(self, IntColumn cond, int other, bint inplace=*)
 
     cdef void to_double_buffer(self, double* out, Py_ssize_t n)
     cdef IntColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, int sentinel)
-    cpdef Py_ssize_t count_nonzero(self)
+    cdef Py_ssize_t count_nonzero(self)
     cdef void gather_zero_to(self, Py_ssize_t* out)
     cdef void _central_moments(self, double* out_mean, double* out_m2, double* out_m3, double* out_m4) noexcept nogil
     cdef double _quickselect(self, int* data, Py_ssize_t n, Py_ssize_t k) noexcept nogil

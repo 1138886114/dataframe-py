@@ -1406,6 +1406,7 @@ cdef class UCS2Column(BaseColumn):
         snprintf(err_buf, sizeof(err_buf), "Failed to cast UCS2 column to internal type id: %d", target_type)
         raise TypeError(err_buf.decode('ascii'))
 
+    @cython.binding(False)
     def str_split(self, sep=None, int maxsplit=-1):
         cdef list res = []
         cdef Py_ssize_t i
@@ -1417,6 +1418,8 @@ cdef class UCS2Column(BaseColumn):
                 res.append(s.split(sep))
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def str_getitem(self, key):
         cdef list res = []
         cdef Py_ssize_t i
@@ -1464,170 +1467,217 @@ cdef class UCS2StringAccessor:
 
     # ==================== Search / Match ====================
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def contains(self, object pat):
         return self._col.contains(pat)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def startswith(self, prefix):
         return self._col.startswith(prefix)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def endswith(self, suffix):
         return self._col.endswith(suffix)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def find(self, str sub):
         return self._col.find(sub)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def rfind(self, str sub):
         return self._col.rfind(sub)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def index(self, str sub):
         return self._col.find(sub)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def rindex(self, str sub):
         return self._col.rindex(sub)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def count(self, str sub):
         return self._col.count(sub)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def match(self, str pattern):
         return self._col.match(pattern)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def fullmatch(self, str pattern):
         return self._col.fullmatch(pattern)
 
     # ==================== Extract / Findall ====================
 
+    @cython.binding(False)
     def extract(self, str pattern, int group=1):
         return self._col.extract(pattern, group)
 
+    @cython.binding(False)
     def extractall(self, str pattern, int group=1):
         return self._col.extractall(pattern, group)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def findall(self, str pattern):
         return self._col.findall(pattern)
 
     # ==================== Type Check ====================
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def isalpha(self):
         return self._col.isalpha()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def isnumeric(self):
         return self._col.isnumeric()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def isalnum(self):
         return self._col.isalnum()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def isdigit(self):
         return self._col.isdigit()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def isdecimal(self):
         return self._col.isdecimal()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def islower(self):
         return self._col.islower()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def isupper(self):
         return self._col.isupper()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def isspace(self):
         return self._col.isspace()
 
     # ==================== Case Conversion ====================
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def upper(self):
         return self._col.upper()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def lower(self):
         return self._col.lower()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def title(self):
         return self._col.title()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def capitalize(self):
         return self._col.capitalize()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def swapcase(self):
         return self._col.swapcase()
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def casefold(self):
         return self._col.casefold()
 
     # ==================== Strip / Pad ====================
 
+    @cython.binding(False)
     def strip(self, chars=None):
         return self._col.strip(chars) if chars is not None else self._col.strip()
 
+    @cython.binding(False)
     def lstrip(self, chars=None):
         return self._col.lstrip(chars) if chars is not None else self._col.lstrip()
 
+    @cython.binding(False)
     def rstrip(self, chars=None):
         return self._col.rstrip(chars) if chars is not None else self._col.rstrip()
 
+    @cython.binding(False)
     def center(self, int width, str fillchar=' '):
         return self._col.center(width, fillchar)
 
+    @cython.binding(False)
     def ljust(self, int width, str fillchar=' '):
         return self._col.ljust(width, fillchar)
 
+    @cython.binding(False)
     def rjust(self, int width, str fillchar=' '):
         return self._col.rjust(width, fillchar)
 
+    @cython.binding(False)
     def pad(self, int width, str side='left', str fillchar=' '):
         return self._col.pad(width, side, fillchar)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def zfill(self, int width):
         return self._col.zfill(width)
 
     # ==================== Replace ====================
 
+    @cython.binding(False)
     def replace(self, str old, str new, int count=-1):
         return self._col.replace(old, new)
 
     # ==================== Split ====================
 
+    @cython.binding(False)
     def split(self, str sep=None, int maxsplit=-1):
         return self._col.str_split(sep, maxsplit)
 
+    @cython.binding(False)
     def rsplit(self, str sep=None, int maxsplit=-1):
         return self._col.rsplit(sep, maxsplit)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def partition(self, str sep):
         return self._col.partition(sep)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def rpartition(self, str sep):
         return self._col.rpartition(sep)
 
     # ==================== Slicing / Access ====================
 
+    @cython.binding(False)
     def get(self, int index, str default=''):
         return self._col.get(index, default)
 
+    @cython.binding(False)
     def slice(self, int start=0, int stop=-1, int step=1):
         return self._col.slice(start, stop, step)
 
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def len(self):
         return self._col.len()
@@ -1637,23 +1687,27 @@ cdef class UCS2StringAccessor:
 
     # ==================== Concat ====================
 
+    @cython.binding(False)
     def cat(self, other, str sep=''):
         return self._col.cat(other, sep)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def prefix(self, str pre):
         return self._col.prefix(pre)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def suffix(self, str suf):
         return self._col.suffix(suf)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def repeat(self, int repeats):
         return self._col.repeat(repeats)
 
 
 cdef inline UCS2StringAccessor _make_ucs2_str_accessor(UCS2Column col):
-    # C 级工厂：__new__ 无参调用直接命中 tp_new，彻底绕过 Python 参数打包/解包
-    # （与 fastdataframe.pyx 的 _make_metric_accessor 同一模式）
     cdef UCS2StringAccessor acc = <UCS2StringAccessor>UCS2StringAccessor.__new__(UCS2StringAccessor)
-    # 直接写底层 C 结构体字段（Cython 自动处理 Py_INCREF）
     acc._col = col
     return acc

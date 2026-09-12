@@ -22,9 +22,6 @@ cdef class DoubleColumn(BaseColumn):
     cdef double _var_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
     cdef double _std_rows(self, Py_ssize_t* indices, Py_ssize_t n) noexcept nogil
     cdef DoubleColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
-    cpdef DoubleColumn clip(self, double lower, double upper, bint inplace=*)
-    cpdef DoubleColumn where(self, IntColumn cond, double other, bint inplace=*)
-    cpdef DoubleColumn mask(self, IntColumn cond, double other, bint inplace=*)
 
     cdef void to_double_buffer(self, double* out, Py_ssize_t n)
     cdef double corr_with(self, double* other, Py_ssize_t n)

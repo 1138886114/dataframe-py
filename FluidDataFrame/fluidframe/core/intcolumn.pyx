@@ -154,6 +154,8 @@ cdef class IntColumn(BaseColumn):
         return res
 
     @staticmethod
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def from_2d(object values, Py_ssize_t rows, Py_ssize_t cols):
         cdef Py_ssize_t total = rows * cols
         if len(values) != total: raise ValueError(f"len(values)={len(values)} != rows*cols={total}")
@@ -168,6 +170,8 @@ cdef class IntColumn(BaseColumn):
         return col
 
     @staticmethod
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def load_from_1d_array(object arr):
         cdef int[::1] view
         try:
@@ -188,6 +192,8 @@ cdef class IntColumn(BaseColumn):
         return col
 
     @staticmethod
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def load_from_2d_array(object arr, list col_names):
         cdef int[::1, :] view
         try:
@@ -1740,7 +1746,8 @@ cdef class IntColumn(BaseColumn):
             self._base_obj = None
             return self
 
-    cpdef IntColumn clip(self, double lower, double upper, bint inplace=False):
+    @cython.binding(False)
+    def clip(self, double lower, double upper, bint inplace=False):
         cdef IntColumn col = self if inplace else self.copy()
         cdef int* ptr = col.data_c
         cdef Py_ssize_t i, n = col.length
@@ -1757,13 +1764,16 @@ cdef class IntColumn(BaseColumn):
                 ptr[i] = val
         return col
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def abs(self):
         cdef IntColumn new_col = self.copy()
         if new_col.length > 0:
             _col_abs(new_col.data_c, new_col.data_c, new_col.length)
         return new_col
 
-    cpdef IntColumn where(self, IntColumn cond, int other, bint inplace=False):
+    @cython.binding(False)
+    def where(self, IntColumn cond, int other, bint inplace=False):
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t r = self._get_rows_c()
         cdef Py_ssize_t ccols = self.num_cols
@@ -1851,7 +1861,8 @@ cdef class IntColumn(BaseColumn):
                 col_ptr[i] = (self_ptr[i] & m) | (fill_val & ~m)
         return col
 
-    cpdef IntColumn mask(self, IntColumn cond, int other, bint inplace=False):
+    @cython.binding(False)
+    def mask(self, IntColumn cond, int other, bint inplace=False):
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t r = self._get_rows_c()
         cdef Py_ssize_t ccols = self.num_cols
@@ -2079,7 +2090,7 @@ cdef class IntColumn(BaseColumn):
                 res_ptr[i] = src_ptr[idx] if (idx >= 0 and idx < my_len) else sentinel
         return new_col
 
-    cpdef Py_ssize_t count_nonzero(self):
+    cdef Py_ssize_t count_nonzero(self):
         return self.count_nonzeros()
 
     cdef void gather_zero_to(self, Py_ssize_t* out):
@@ -2201,6 +2212,8 @@ cdef class IntColumn(BaseColumn):
         snprintf(err_buf, sizeof(err_buf), "Failed to cast INT column to internal type id: %d", target_type)
         raise TypeError(err_buf.decode('ascii'))
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_mean(self, Py_ssize_t window):
         if window < 0:
             raise ValueError("window must be >= 0")
@@ -2224,6 +2237,8 @@ cdef class IntColumn(BaseColumn):
                     dst[offset + i] = s * inv_w
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_sum(self, Py_ssize_t window):
         if window < 0:
             raise ValueError("window must be >= 0")
@@ -2246,6 +2261,8 @@ cdef class IntColumn(BaseColumn):
                     dst[offset + i] = s
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_min(self, Py_ssize_t window):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2279,6 +2296,8 @@ cdef class IntColumn(BaseColumn):
             os_aligned_free(q)
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_max(self, Py_ssize_t window):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2312,6 +2331,7 @@ cdef class IntColumn(BaseColumn):
             os_aligned_free(q)
         return res
 
+    @cython.binding(False)
     def roll_var(self, Py_ssize_t window, bint ddof=True):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2354,6 +2374,7 @@ cdef class IntColumn(BaseColumn):
                         dst[offset + i] = var_val / w
         return res
 
+    @cython.binding(False)
     def roll_std(self, Py_ssize_t window, bint ddof=True):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2369,6 +2390,8 @@ cdef class IntColumn(BaseColumn):
                         v[offset + i] = sqrt(v[offset + i])
         return var_col
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_median(self, Py_ssize_t window):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2399,6 +2422,8 @@ cdef class IntColumn(BaseColumn):
             os_aligned_free(buf)
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_quantile(self, Py_ssize_t window, double quantile):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2435,6 +2460,8 @@ cdef class IntColumn(BaseColumn):
             os_aligned_free(buf)
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_apply_weights(self, Py_ssize_t window, list weights):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2468,6 +2495,8 @@ cdef class IntColumn(BaseColumn):
             os_aligned_free(wbuf)
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_custom(self, Py_ssize_t window, object func):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2487,6 +2516,8 @@ cdef class IntColumn(BaseColumn):
                 dst[offset + i] = <double>func(tmp)
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_skew(self, Py_ssize_t window):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2518,6 +2549,8 @@ cdef class IntColumn(BaseColumn):
                         dst[offset + i] = 0.0
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_kurt(self, Py_ssize_t window):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2549,6 +2582,8 @@ cdef class IntColumn(BaseColumn):
                         dst[offset + i] = 0.0
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_corr(self, Py_ssize_t window, object other):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2618,6 +2653,8 @@ cdef class IntColumn(BaseColumn):
                     dst[offset + i] = cov_xy / denom if (denom > 0.0) else 0.0
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_cov(self, Py_ssize_t window, object other):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2676,6 +2713,7 @@ cdef class IntColumn(BaseColumn):
                     dst[offset + i] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
         return res
 
+    @cython.binding(False)
     def roll(self, Py_ssize_t window, str method="mean", bint ddof=True, double quantile=0.5, list weights=None, object func=None):
         if method == "mean":
             return self.roll_mean(window)

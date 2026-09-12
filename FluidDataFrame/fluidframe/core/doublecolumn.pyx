@@ -185,6 +185,8 @@ cdef class DoubleColumn(BaseColumn):
         return col
 
     @staticmethod
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def from_2d(object values, Py_ssize_t rows, Py_ssize_t cols):
         """
         从一维扁平数据结构构建可 owns 的 2D（列优先）DoubleColumn。
@@ -205,6 +207,8 @@ cdef class DoubleColumn(BaseColumn):
         return col
 
     @staticmethod
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def load_from_1d_array(object arr):
         """零拷贝加载 1D 连续数组 (支持 NumPy、PyTorch 等任意实现 Buffer 协议的对象)"""
         cdef double[::1] view
@@ -226,6 +230,8 @@ cdef class DoubleColumn(BaseColumn):
         return col
 
     @staticmethod
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def load_from_2d_array(object arr, list col_names):
         """零拷贝加载 2D 列优先数组 (Fortran-contiguous)"""
         cdef double[::1, :] view
@@ -1460,7 +1466,8 @@ cdef class DoubleColumn(BaseColumn):
     # ------------------------------------------------------------
     # 无分支 clip 优化 (直接映射 vmaxpd/vminpd)
     # ------------------------------------------------------------
-    cpdef DoubleColumn clip(self, double lower, double upper, bint inplace=False):
+    @cython.binding(False)
+    def clip(self, double lower, double upper, bint inplace=False):
         cdef DoubleColumn col = self if inplace else self.copy()
         cdef Py_ssize_t i, n = col.length
         cdef double v
@@ -1473,12 +1480,16 @@ cdef class DoubleColumn(BaseColumn):
                 ptr[i] = v
         return col
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def abs(self):
         cdef DoubleColumn new_col = self.copy()
         if new_col.length > 0:
             _col_abs(new_col.data_c, new_col.data_c, new_col.length)
         return new_col
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def round(self, int decimals=0):
         cdef DoubleColumn new_col = self.copy()
         cdef double factor
@@ -1487,6 +1498,8 @@ cdef class DoubleColumn(BaseColumn):
             _col_round(new_col.data_c, new_col.data_c, new_col.length, factor)
         return new_col
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def ffill(self):
         cdef DoubleColumn new_col = self.copy()
         cdef Py_ssize_t i
@@ -1498,6 +1511,8 @@ cdef class DoubleColumn(BaseColumn):
                 _col_ffill_double(new_col.data_c, new_col.length)
         return new_col
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def bfill(self):
         cdef DoubleColumn new_col = self.copy()
         cdef Py_ssize_t i
@@ -1509,7 +1524,8 @@ cdef class DoubleColumn(BaseColumn):
                 _col_bfill_double(new_col.data_c, new_col.length)
         return new_col
 
-    cpdef DoubleColumn where(self, IntColumn cond, double other, bint inplace=False):
+    @cython.binding(False)
+    def where(self, IntColumn cond, double other, bint inplace=False):
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t r = self._get_rows_c()
         cdef Py_ssize_t ccols = self.num_cols
@@ -1588,7 +1604,8 @@ cdef class DoubleColumn(BaseColumn):
                 col_ptr[i] = self_ptr[i] if mask_ptr[i] != 0 else fill_val
         return col
 
-    cpdef DoubleColumn mask(self, IntColumn cond, double other, bint inplace=False):
+    @cython.binding(False)
+    def mask(self, IntColumn cond, double other, bint inplace=False):
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t r = self._get_rows_c()
         cdef Py_ssize_t ccols = self.num_cols
@@ -2266,6 +2283,8 @@ cdef class DoubleColumn(BaseColumn):
     # ============================================================
     # 8. roll_skew / roll_kurt / roll_corr / roll_cov
     # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_skew(self, Py_ssize_t window):
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
@@ -2296,6 +2315,8 @@ cdef class DoubleColumn(BaseColumn):
                         dst[offset + i] = 0.0
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_kurt(self, Py_ssize_t window):
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
@@ -2326,6 +2347,8 @@ cdef class DoubleColumn(BaseColumn):
                         dst[offset + i] = 0.0
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_corr(self, Py_ssize_t window, object other):
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
@@ -2374,6 +2397,8 @@ cdef class DoubleColumn(BaseColumn):
                     dst[offset + i] = cov_xy / denom if (denom > 0.0) else 0.0
         return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_cov(self, Py_ssize_t window, object other):
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols

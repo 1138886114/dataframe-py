@@ -772,6 +772,8 @@ cdef class FastDataFrame:
             elif self._c_cols[i].dtype == TYPE_UCS2:
                 (<UCS2Column>self._c_cols[i].col_obj).undo_nolen()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def add_rows_from_list(self, list rows):
         """
         如果你有一个 list of tuples (如示例中)，直接调用这个方法，能省去大量 Python 函数调用栈的开销。
@@ -1110,39 +1112,59 @@ cdef class FastDataFrame:
     # ─── Thin delegate methods ───
 
     # CRUD
+    @cython.binding(False)
     def eval(self, str expr, bint inplace=False):
         return _eval_impl(self, expr, inplace)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def query(self, str expr):
         return _query_impl(self, expr)
 
+    @cython.binding(False)
     def append_row(self, **kwargs):
         return _append_row_impl(self, kwargs)
 
+    @cython.binding(False)
     def append(self, row, bint ignore_index=False):
         return _append_impl(self, row, ignore_index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def copy(self):
         return _copy_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pop_front(self):
         return _pop_front_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pop_back(self):
         return _pop_back_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def rename(self, dict mapper):
         return _rename_impl(self, mapper)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def reset_index(self):
         return _reset_index_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def reindex(self, list new_index):
         return _reindex_impl(self, new_index)
 
+    @cython.binding(False)
     def insert_row(self, Py_ssize_t pos, **kwargs):
         return _insert_row_impl(self, pos, kwargs)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def drop(self, col_names):
         if isinstance(col_names, str):
             col_names = [col_names]
@@ -1159,121 +1181,172 @@ cdef class FastDataFrame:
             new_df.index = self.index
         return new_df
 
+    @cython.binding(False)
     def drop_with_index(self, list drop_indices, bint inplace=False):
         return _drop_with_index_impl(self, drop_indices, inplace)
 
+    @cython.binding(False)
     def drop_index(self, object labels, bint inplace=False):
         return _drop_index_impl(self, labels, inplace)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def drop_raw(self, Py_ssize_t row_idx):
         return _drop_raw_impl(self, row_idx)
 
+    @cython.binding(False)
     def insert_column(self, str col_name, object col_data, Py_ssize_t pos=-1):
         return _insert_column_impl(self, col_name, col_data, pos)
 
+    @cython.binding(False)
     def duplicate_column(self, str src_name, str new_name=None):
         _duplicate_column_impl(self, src_name, new_name)
 
+    @cython.binding(False)
     def duplicate_rows(self, list indices=None):
         return _duplicate_rows_impl(self, indices)
 
     # Aggregation
+    @cython.binding(False)
     def mean(self, col_names=None):
         return _numeric_agg_impl(self, 'mean', col_names)
 
+    @cython.binding(False)
     def sum(self, col_names=None):
         return _numeric_agg_impl(self, 'sum', col_names)
 
+    @cython.binding(False)
     def min(self, col_names=None):
         return _numeric_agg_impl(self, 'min', col_names)
 
+    @cython.binding(False)
     def max(self, col_names=None):
         return _numeric_agg_impl(self, 'max', col_names)
 
+    @cython.binding(False)
     def std(self, col_names=None):
         return _numeric_agg_impl(self, 'std', col_names)
 
+    @cython.binding(False)
     def var(self, col_names=None):
         return _numeric_agg_impl(self, 'var', col_names)
 
+    @cython.binding(False)
     def median(self, col_names=None):
         return _numeric_agg_impl(self, 'median', col_names)
 
+    @cython.binding(False)
     def quantile(self, q=0.5, col_names=None):
         return _numeric_agg_arg_impl(self, 'quantile', col_names, q)
 
+    @cython.binding(False)
     def mode(self, col_names=None):
         return _mode_impl(self, col_names)
 
     # 逐子列聚合（2D 列每个子列独立聚合，1D 列与普通聚合一致）
+    @cython.binding(False)
     def mean_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'mean', col_names)
 
+    @cython.binding(False)
     def sum_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'sum', col_names)
 
+    @cython.binding(False)
     def min_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'min', col_names)
 
+    @cython.binding(False)
     def max_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'max', col_names)
 
+    @cython.binding(False)
     def std_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'std', col_names)
 
+    @cython.binding(False)
     def var_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'var', col_names)
 
+    @cython.binding(False)
     def median_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'median', col_names)
 
+    @cython.binding(False)
     def quantile_withcol(self, q=0.5, col_names=None):
         return _numeric_agg_arg_withcol_impl(self, 'quantile', col_names, q)
 
+    @cython.binding(False)
     def mode_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'mode', col_names)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def describe_withcol(self):
         return _describe_withcol_impl(self)
 
+    @cython.binding(False)
     def count(self, col_names=None):
         return _count_impl(self, col_names)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def describe(self):
         return _describe_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def value_counts(self, str col_name):
         return _value_counts_impl(self, col_name)
 
+    @cython.binding(False)
     def nunique(self, str col_name=None):
         return _nunique_impl(self, col_name)
 
     # Cumulative aggregations
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cumsum(self):
         return _numeric_agg_impl(self, 'cumsum')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cumprod(self):
         return _numeric_agg_impl(self, 'cumprod')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cummax(self):
         return _numeric_agg_impl(self, 'cummax')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cummin(self):
         return _numeric_agg_impl(self, 'cummin')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def skew(self):
         return _numeric_agg_impl(self, 'skew')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def kurt(self):
         return _numeric_agg_impl(self, 'kurt')
 
     # Column-level delegates
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def argmax(self, str col_name):
         return self.columns[col_name].idxmax()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def argmin(self, str col_name):
         return self.columns[col_name].idxmin()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self, str col_name):
         return self.columns[col_name].unique()
 
@@ -1284,160 +1357,239 @@ cdef class FastDataFrame:
     def __repr__(self):
         return _to_string_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_string(self):
         return _to_string_impl(self)
 
+    @cython.binding(False)
     def print(self, max_rows=80):
         print(self.to_string())
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_pickle(self, str path):
         return _to_pickle_impl(self, path)
 
+    @cython.binding(False)
     def to_csv(self, str path, str sep=','):
         return _to_csv_impl(self, path, sep)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_tsv(self, filename):
         return self.to_csv(filename, sep='\t')
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_dict(self):
         return _to_dict_impl(self)
 
+    @cython.binding(False)
     def to_json(self, bint orient_records=True):
         return _to_json_impl(self, orient_records)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_numpy(self):
         return _to_numpy_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def info(self):
         return _info_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def _dtype_summary(self):
         return _dtype_summary_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def memory_usage(self):
         return _memory_usage_impl(self)
 
     # Merge
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def concat(self, FastDataFrame other):
         return _concat_impl(self, other)
 
+    @cython.binding(False)
     def merge(self, FastDataFrame right, object on=None, str how='inner'):
         if isinstance(on, str):
             on = [on]
         return _merge_impl(self, right, on, how)
 
+    @cython.binding(False)
     def duplicated(self, list subset=None, str keep='first'):
         return _duplicated_impl(self, subset, keep)
 
+    @cython.binding(False)
     def drop_duplicates(self, list subset=None, str keep='first', bint inplace=False):
         return _drop_duplicates_impl(self, subset, keep, inplace)
 
     # Transform
+    @cython.binding(False)
     def argsort_by(self, str col_name, bint reverse=False):
         return _argsort_by_impl(self, col_name, reverse)
 
+    @cython.binding(False)
     def sort_values(self, str col_name, bint reverse=False, bint inplace=False):
         return _sort_values_impl(self, col_name, reverse, inplace)
 
+    @cython.binding(False)
     def sort_index(self, bint ascending=True, bint inplace=False):
         if 'index' not in self.columns:
             raise KeyError("No 'index' column found. Call reset_index() first.")
         return self.sort_values('index', reverse=not ascending, inplace=inplace)
 
+    @cython.binding(False)
     def diff(self, str col_name, int periods=1):
         return _diff_impl(self, col_name, periods)
 
+    @cython.binding(False)
     def apply(self, object func, str axis='columns'):
         return _apply_impl(self, func, axis)
 
+    @cython.binding(False)
     def clip_column(self, str col_name, double lower, double upper, bint inplace=False):
         return _clip_column_impl(self, col_name, lower, upper, inplace)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def where_column(self, str col_name, str cond_col, object other):
         return _where_column_impl(self, col_name, cond_col, other)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mask_column(self, str col_name, str cond_col, object other):
         return _mask_column_impl(self, col_name, cond_col, other)
 
+    @cython.binding(False)
     def where_row(self, IntColumn mask, object fill=0):
         return _where_row_impl(self, mask, fill)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isnull(self):
         return _isnull_impl(self)
 
+    @cython.binding(False)
     def fillna(self, double value, col_names=None):
         return _fillna_impl(self, value, col_names)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def dropna(self):
         return _dropna_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def abs(self):
         return _abs_impl(self)
 
+    @cython.binding(False)
     def round(self, int decimals=0):
         return _round_impl(self, decimals)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def all(self):
         return _all_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def any(self):
         return _any_impl(self)
 
+    @cython.binding(False)
     def pct_change(self, int periods=1):
         return _pct_change_impl(self, periods)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def replace(self, to_replace, value):
         return _replace_impl(self, to_replace, value)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def ffill(self):
         return _ffill_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def bfill(self):
         return _bfill_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def head(self, Py_ssize_t n=5):
         return _head_impl(self, n)
 
+    @cython.binding(False)
     def tail(self, Py_ssize_t n=5):
         return _tail_impl(self, n)
 
+    @cython.binding(False)
     def sample(self, Py_ssize_t n=0, double frac=0.0, bint replace=False, int seed=-1):
         return _sample_impl(self, n, frac, replace, seed)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def nsmallest(self, Py_ssize_t n, str col_name):
         return _nsmallest_impl(self, n, col_name)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def nlargest(self, Py_ssize_t n, str col_name):
         return _nlargest_impl(self, n, col_name)
 
+    @cython.binding(False)
     def pipe(self, object func, *args, **kwargs):
         return _pipe_impl(self, func, args, kwargs)
 
+    @cython.binding(False)
     def assign(self, **kwargs):
         return _assign_impl(self, kwargs)
 
+    @cython.binding(False)
     def select_dtypes(self, list include_types=None, list exclude_types=None):
         return _select_dtypes_impl(self, include_types, exclude_types)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def astype(self, dict dtype_dict):
         return _astype_impl(self, dtype_dict)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def add(self, tuple col_names):
         return _add_impl(self, col_names)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sub(self, tuple col_names):
         return _sub_impl(self, col_names)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mul(self, tuple col_names):
         return _mul_impl(self, col_names)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def div(self, tuple col_names):
         return _div_impl(self, col_names)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def reshape(self, Py_ssize_t rows, Py_ssize_t cols):
         return _reshape_impl(self, rows, cols)
 
     @property
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def T(self):
         return _T_impl(self)
 
@@ -1451,21 +1603,33 @@ cdef class FastDataFrame:
         self._metric_cache = _make_metric_accessor(self)
         return self._metric_cache
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def euclidean_dist_withcols(self, col1, col2):
         return _euclidean_dist_withcols_impl(self, col1, col2)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def manhattan_dist_withcols(self, col1, col2):
         return _manhattan_dist_withcols_impl(self, col1, col2)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cosine_dist_withcols(self, col1, col2):
         return _cosine_dist_withcols_impl(self, col1, col2)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cosine_similarity_withcols(self, col1, col2):
         return _cosine_similarity_withcols_impl(self, col1, col2)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def jaccard_sim_withcols(self, col1, col2):
         return _jaccard_sim_withcols_impl(self, col1, col2)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def hamming_dist_withcols(self, col1, col2):
         return _hamming_dist_withcols_impl(self, col1, col2)
 
@@ -1477,137 +1641,201 @@ cdef class FastDataFrame:
         self._linalg_cache = _make_linalg_accessor(self)
         return self._linalg_cache
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def dot(self, FastDataFrame b):
         return _linalg_dot(self, b)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def matmul(self, FastDataFrame b):
         return _linalg_dot(self, b)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def transpose(self):
         return _linalg_transpose(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def det(self):
         return _linalg_det(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def inv(self):
         return _linalg_inv(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def solve(self, FastDataFrame b):
         return _linalg_solve(self, b)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def norm(self, str ord_type="frobenius"):
         return _linalg_norm(self, ord_type)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def euclidean_dist_matrix(self):
         return _linalg_euclidean_dist(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def manhattan_dist_matrix(self):
         return _linalg_manhattan_dist(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cosine_dist_matrix(self):
         return _linalg_cosine_dist(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def hamming_dist_matrix(self):
         return _linalg_hamming_dist(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def jaccard_sim_matrix(self):
         return _linalg_jaccard_sim(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cosine_similarity_matrix(self):
         return _linalg_cosine_similarity(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def corr(self):
         return _corr_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cov(self):
         return _cov_impl(self)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def corrwith(self, other):
         return _corrwith_impl(self, other)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def corrcoef(self, col_a, col_b):
         return _corrcoef_impl(self, col_a, col_b)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cov_withcols(self, col_a, col_b):
         return _cov_withcols_impl(self, col_a, col_b)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pearson_sim(self):
         return _pearson_sim_impl(self)
 
     # Factory
     @staticmethod
+    @cython.binding(False)
     def from_dict(data, schema=None, columns=None):
         return _from_dict_impl(data, schema, columns)
 
     @staticmethod
+    @cython.binding(False)
     def from_list(rows, schema, columns=None):
         return _from_list_impl(rows, schema, columns)
 
     @staticmethod
+    @cython.binding(False)
     def from_arrays(arrays, schema, columns=None):
         return _from_arrays_impl(arrays, schema, columns)
 
     @staticmethod
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def arange(n):
         return _arange_impl(n)
 
     @staticmethod
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def zeros(*args):
         if len(args) == 1:
             return _zeros_impl(args[0], 1)
         return _zeros_impl(args[0], args[1])
 
     @staticmethod
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def ones(*args):
         if len(args) == 1:
             return _ones_impl(args[0], 1)
         return _ones_impl(args[0], args[1])
 
     @staticmethod
+    @cython.binding(False)
     def randn(*args):
         if len(args) == 1:
             return _randn_impl(args[0], 1)
         return _randn_impl(args[0], args[1])
 
     @staticmethod
+    @cython.binding(False)
     def rand(*args):
         if len(args) == 1:
             return _rand_impl(args[0], 1)
         return _rand_impl(args[0], args[1])
 
     # Rolling
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def rolling(self, Py_ssize_t window, str col_name):
         return _rolling_impl(self, window, col_name)
 
     # DataFrame-level shift (delegates to cdef _shift_impl in .pxi)
+    @cython.binding(False)
     def shift(self, Py_ssize_t periods=1, str axis='index'):
         return _shift_impl(self, periods, axis)
 
     # DataFrame-level diff for all numeric columns
+    @cython.binding(False)
     def diff_all(self, int periods=1):
         return _diff_column_all_impl(self, periods)
 
     # DataFrame-level rank
+    @cython.binding(False)
     def rank(self, str col_name, str method='average', bint ascending=True, str na_option='keep'):
         return _rank_impl(self, col_name, method, ascending, na_option)
 
     # DataFrame-level cut
+    @cython.binding(False)
     def cut(self, str col_name, list bins, bint include_lowest=False, str right='right'):
         return _cut_impl(self, col_name, bins, include_lowest, right)
 
     # DataFrame-level qcut
+    @cython.binding(False)
     def qcut(self, str col_name, int q=4, str labels='True', double precision=3):
         return _qcut_impl(self, col_name, q, labels, precision)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pivot(self, str index, str columns, str values):
         return _pivot_impl(self, index, columns, values)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def melt(self, list id_vars=None, list value_vars=None, str var_name='variable', str value_name='value'):
         return _melt_impl(self, id_vars, value_vars, var_name, value_name)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def expanding_sum(self, str col_name):
         return _expanding_sum_impl(self, col_name)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def ewm_mean(self, str col_name, double span):
         return _ewm_mean_impl(self, col_name, span)
 
