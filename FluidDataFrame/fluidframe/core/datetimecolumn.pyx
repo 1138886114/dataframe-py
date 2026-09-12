@@ -325,27 +325,57 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def max(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef int64_t max_val = (<int64_t*>self.data_c)[0]
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         cdef int64_t* ptr = <int64_t*>self.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(1, n):
-                if ptr[i] > max_val:
-                    max_val = ptr[i]
-        return max_val
+        cdef Py_ssize_t i, j, base
+        cdef int64_t max_val
+
+        if not self.is_2d or c <= 1:
+            max_val = ptr[0]
+            with nogil:
+                for i in range(1, self.length):
+                    if ptr[i] > max_val:
+                        max_val = ptr[i]
+            return max_val
+
+        cdef list results = [None] * c
+        for j in range(c):
+            base = j * r
+            max_val = ptr[base]
+            for i in range(1, r):
+                if ptr[base + i] > max_val:
+                    max_val = ptr[base + i]
+            results[j] = max_val
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def min(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef int64_t min_val = (<int64_t*>self.data_c)[0]
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         cdef int64_t* ptr = <int64_t*>self.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(1, n):
-                if ptr[i] < min_val:
-                    min_val = ptr[i]
-        return min_val
+        cdef Py_ssize_t i, j, base
+        cdef int64_t min_val
+
+        if not self.is_2d or c <= 1:
+            min_val = ptr[0]
+            with nogil:
+                for i in range(1, self.length):
+                    if ptr[i] < min_val:
+                        min_val = ptr[i]
+            return min_val
+
+        cdef list results = [None] * c
+        for j in range(c):
+            base = j * r
+            min_val = ptr[base]
+            for i in range(1, r):
+                if ptr[base + i] < min_val:
+                    min_val = ptr[base + i]
+            results[j] = min_val
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -412,7 +442,7 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def year(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -429,7 +459,7 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def month(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -446,7 +476,7 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def day(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -463,7 +493,7 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def hour(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -481,7 +511,7 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def minute(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -499,7 +529,7 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def second(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int64_t* ptr = <int64_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -541,6 +571,8 @@ cdef class DateTimeColumn(BaseColumn):
     def isin(self, set values):
         cdef Py_ssize_t n = self.length
         cdef BoolColumn res = BoolColumn(max(n, 1))
+        res.num_cols = self.num_cols
+        res.is_2d = self.is_2d
         res.length = n
         if n == 0: return res
 
@@ -680,7 +712,7 @@ cdef class DateTimeColumn(BaseColumn):
     # ------------------------------------------------------------
     cdef IntColumn _cmp_op(self, object val, int op):
         cdef Py_ssize_t i, n = self.length
-        cdef IntColumn res = IntColumn(max(n, 1))
+        cdef IntColumn res = IntColumn(max(n, 1), cols=self.num_cols)
         res.length = n
 
         cdef int64_t* s_ptr = <int64_t*>self.data_c

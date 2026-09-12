@@ -823,3 +823,116 @@ cdef inline void _col_bfill_double(double* data, Py_ssize_t n) noexcept nogil:
             next_val = data[i]
         elif not isnan(next_val):
             data[i] = next_val
+
+
+# ============================================================
+#  Fused-type aggregate helpers (nogil, zero-overhead)
+#  Used by IntColumn/DoubleColumn for unified 2D support.
+# ============================================================
+
+cdef inline double _c_max(NumericType* ptr, Py_ssize_t n) noexcept nogil:
+    """Return max of ptr[0..n). Caller must ensure n > 0."""
+    cdef Py_ssize_t i
+    cdef NumericType max_val = ptr[0]
+    cdef NumericType val
+    for i in range(1, n):
+        val = ptr[i]
+        if NumericType is double:
+            if not isnan(val) and (isnan(max_val) or val > max_val):
+                max_val = val
+        else:
+            if val > max_val:
+                max_val = val
+    return <double>max_val
+
+cdef inline double _c_min(NumericType* ptr, Py_ssize_t n) noexcept nogil:
+    """Return min of ptr[0..n). Caller must ensure n > 0."""
+    cdef Py_ssize_t i
+    cdef NumericType min_val = ptr[0]
+    cdef NumericType val
+    for i in range(1, n):
+        val = ptr[i]
+        if NumericType is double:
+            if not isnan(val) and (isnan(min_val) or val < min_val):
+                min_val = val
+        else:
+            if val < min_val:
+                min_val = val
+    return <double>min_val
+
+cdef inline double _c_sum(NumericType* ptr, Py_ssize_t n) noexcept nogil:
+    """Return sum of ptr[0..n). Uses int64 accumulator for int types."""
+    cdef Py_ssize_t i
+    cdef double total = 0.0
+    cdef long long total_i = 0
+    if NumericType is double:
+        for i in range(n):
+            if not isnan(ptr[i]):
+                total += ptr[i]
+        return total
+    else:
+        for i in range(n):
+            total_i += <long long>ptr[i]
+        return <double>total_i
+
+cdef inline double _c_prod(NumericType* ptr, Py_ssize_t n) noexcept nogil:
+    """Return product of ptr[0..n). Skips NaN for double."""
+    cdef Py_ssize_t i
+    cdef double total = 1.0
+    cdef bint has_valid = False
+    for i in range(n):
+        if NumericType is double:
+            if not isnan(ptr[i]):
+                total *= <double>ptr[i]
+                has_valid = True
+        else:
+            total *= <double>ptr[i]
+            has_valid = True
+    return total if has_valid else NAN
+
+cdef inline Py_ssize_t _c_idxmax(NumericType* ptr, Py_ssize_t n) noexcept nogil:
+    """Return index of max in ptr[0..n). Caller must ensure n > 0."""
+    cdef Py_ssize_t i, max_idx = 0
+    cdef NumericType max_val = ptr[0]
+    cdef NumericType val
+    for i in range(1, n):
+        val = ptr[i]
+        if NumericType is double:
+            if not isnan(val) and (isnan(max_val) or val > max_val):
+                max_val = val; max_idx = i
+        else:
+            if val > max_val:
+                max_val = val; max_idx = i
+    return max_idx
+
+cdef inline Py_ssize_t _c_idxmin(NumericType* ptr, Py_ssize_t n) noexcept nogil:
+    """Return index of min in ptr[0..n). Caller must ensure n > 0."""
+    cdef Py_ssize_t i, min_idx = 0
+    cdef NumericType min_val = ptr[0]
+    cdef NumericType val
+    for i in range(1, n):
+        val = ptr[i]
+        if NumericType is double:
+            if not isnan(val) and (isnan(min_val) or val < min_val):
+                min_val = val; min_idx = i
+        else:
+            if val < min_val:
+                min_val = val; min_idx = i
+    return min_idx
+
+cdef inline double _c_var(NumericType* ptr, Py_ssize_t n, double mean_val) noexcept nogil:
+    """Return sample variance of ptr[0..n) given pre-computed mean."""
+    cdef Py_ssize_t i
+    cdef double sum_sq = 0.0, diff
+    for i in range(n):
+        diff = <double>ptr[i] - mean_val
+        sum_sq += diff * diff
+    return sum_sq / <double>(n - 1) if n > 1 else 0.0
+
+cdef inline double _c_mad(NumericType* ptr, Py_ssize_t n, double mean_val) noexcept nogil:
+    """Return mean absolute deviation of ptr[0..n) given pre-computed mean."""
+    cdef Py_ssize_t i
+    cdef double total_dev = 0.0
+    for i in range(n):
+        total_dev += fabs(<double>ptr[i] - mean_val)
+    return total_dev / <double>n if n > 0 else NAN

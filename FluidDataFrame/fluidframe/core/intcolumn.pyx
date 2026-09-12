@@ -718,30 +718,23 @@ cdef class IntColumn(BaseColumn):
     def nunique(self):
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
-
         if r == 0:
             if not self.is_2d or c <= 1: return 0
-            return [0] * c
-
+            return 0
         cdef int* ptr = self.data_c
         cdef Py_ssize_t i, j, base
         cdef set seen
         cdef int val
-
-        if not self.is_2d or c <= 1:
-            seen = set()
+        seen = set()
+        if self.is_2d and c > 1:
+            for j in range(c):
+                base = j * r
+                for i in range(r):
+                    seen.add(ptr[base + i])
+        else:
             for i in range(r):
                 seen.add(ptr[i])
-            return len(seen)
-
-        cdef list results = [None] * c
-        for j in range(c):
-            base = j * r
-            seen = set()
-            for i in range(r):
-                seen.add(ptr[base + i])
-            results[j] = len(seen)
-        return results
+        return len(seen)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -925,6 +918,7 @@ cdef class IntColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def diff(self, int periods=1):
         cdef IntColumn res = IntColumn(max(self.capacity, 1), cols=self.cols)
         res.length = self.length
@@ -951,6 +945,7 @@ cdef class IntColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pct_change(self, int periods=1):
         cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.cols)
         res.length = self.length
@@ -1747,6 +1742,7 @@ cdef class IntColumn(BaseColumn):
             return self
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def clip(self, double lower, double upper, bint inplace=False):
         cdef IntColumn col = self if inplace else self.copy()
         cdef int* ptr = col.data_c
@@ -1773,6 +1769,7 @@ cdef class IntColumn(BaseColumn):
         return new_col
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def where(self, IntColumn cond, int other, bint inplace=False):
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t r = self._get_rows_c()
@@ -1862,6 +1859,7 @@ cdef class IntColumn(BaseColumn):
         return col
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mask(self, IntColumn cond, int other, bint inplace=False):
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t r = self._get_rows_c()
@@ -2332,6 +2330,7 @@ cdef class IntColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_var(self, Py_ssize_t window, bint ddof=True):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2375,6 +2374,7 @@ cdef class IntColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_std(self, Py_ssize_t window, bint ddof=True):
         if window <= 0:
             raise ValueError("window must be > 0")
@@ -2714,6 +2714,7 @@ cdef class IntColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll(self, Py_ssize_t window, str method="mean", bint ddof=True, double quantile=0.5, list weights=None, object func=None):
         if method == "mean":
             return self.roll_mean(window)

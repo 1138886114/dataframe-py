@@ -1060,11 +1060,11 @@ def test_div_val():
 # ============================================================
 def test_argmax():
     col = _make_1d([1.0, 5.0, 3.0])
-    check('argmax', col.argmax() == 1)
+    check('idxmax', col.idxmax() == 1)
 
 def test_argmin():
     col = _make_1d([5.0, 1.0, 3.0])
-    check('argmin', col.argmin() == 1)
+    check('idxmin', col.idxmin() == 1)
 
 # ============================================================
 #  属性: cols / rows / is_2d / get_size

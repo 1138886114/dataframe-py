@@ -1243,6 +1243,18 @@ cdef class FastDataFrame:
     def mode(self, col_names=None):
         return _mode_impl(self, col_names)
 
+    @cython.binding(False)
+    def prod(self, col_names=None):
+        return _numeric_agg_impl(self, 'prod', col_names)
+
+    @cython.binding(False)
+    def sem(self, col_names=None):
+        return _numeric_agg_impl(self, 'sem', col_names)
+
+    @cython.binding(False)
+    def mad(self, col_names=None):
+        return _numeric_agg_impl(self, 'mad', col_names)
+
     # 逐子列聚合（2D 列每个子列独立聚合，1D 列与普通聚合一致）
     @cython.binding(False)
     def mean_withcol(self, col_names=None):
@@ -1279,6 +1291,18 @@ cdef class FastDataFrame:
     @cython.binding(False)
     def mode_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'mode', col_names)
+
+    @cython.binding(False)
+    def prod_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'prod', col_names)
+
+    @cython.binding(False)
+    def sem_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'sem', col_names)
+
+    @cython.binding(False)
+    def mad_withcol(self, col_names=None):
+        return _numeric_agg_withcol_impl(self, 'mad', col_names)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1349,6 +1373,14 @@ cdef class FastDataFrame:
     @cython.always_allow_keywords(False)
     def unique(self, str col_name):
         return self.columns[col_name].unique()
+
+    @cython.binding(False)
+    def isin(self, str col_name, set values):
+        return self.columns[col_name].isin(values)
+
+    @cython.binding(False)
+    def between(self, str col_name, low, high):
+        return self.columns[col_name].between(low, high)
 
     # I/O
     def __str__(self):

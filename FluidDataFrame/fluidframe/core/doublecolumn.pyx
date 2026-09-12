@@ -26,7 +26,8 @@ from fluidframe.core._base cimport (
     _col_shift_right_2d_double, _col_shift_left_2d, _col_gather_2d, _col_concat_2d,
     _col_gather_nan, _col_gather_2d_nan, _col_count_nonzeros, _col_memcpy,
     _max_2d_c, _min_2d_c, _sum_2d_c, _mean_2d_c, _prod_2d_c, _var_2d_c, _std_2d_c,
-    _col_abs, _col_round, _col_ffill_double, _col_bfill_double
+    _col_abs, _col_round, _col_ffill_double, _col_bfill_double,
+    _c_max, _c_min, _c_sum, _c_prod, _c_idxmax, _c_idxmin, _c_var, _c_mad
 )
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.boolcolumn cimport BoolColumn
@@ -364,9 +365,17 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def max(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         if self.length == 0: raise ValueError("empty column")
-        cdef double max_val = self.data_c[0]
         cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(_c_max(&ptr[j * r], r))
+            return result
+        cdef double max_val = ptr[0]
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(1, n):
@@ -377,9 +386,17 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def min(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         if self.length == 0: raise ValueError("empty column")
-        cdef double min_val = self.data_c[0]
         cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(_c_min(&ptr[j * r], r))
+            return result
+        cdef double min_val = ptr[0]
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(1, n):
@@ -390,9 +407,17 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sum(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         cdef Py_ssize_t n = self.length
         if n == 0: return 0.0
         cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(_c_sum(&ptr[j * r], r))
+            return result
         cdef double s0 = 0.0, s1 = 0.0, s2 = 0.0, s3 = 0.0
         cdef Py_ssize_t i
         cdef Py_ssize_t n_unrolled = n - (n % 4)
@@ -411,26 +436,58 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mean(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         if self.length == 0: return NAN
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(_c_sum(&ptr[j * r], r) / <double>r)
+            return result
         return self.sum() / <double>self.length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def var(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         if self.length < 2: return 0.0
-        cdef double m = self.mean()
-        cdef double sum_sq = 0.0, diff
         cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef double m, v
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                m = _c_sum(&ptr[j * r], r) / <double>r
+                v = _c_var(&ptr[j * r], r, m)
+                result.append(v)
+            return result
+        cdef double m1 = self.mean()
+        cdef double sum_sq = 0.0, diff
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
-                diff = ptr[i] - m
+                diff = ptr[i] - m1
                 sum_sq += diff * diff
         return sum_sq / <double>(n - 1)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def std(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef double m, v
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                m = _c_sum(&ptr[j * r], r) / <double>r
+                v = _c_var(&ptr[j * r], r, m)
+                result.append(sqrt(v))
+            return result
         return sqrt(self.var())
 
     @cython.binding(False)
@@ -488,11 +545,19 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def idxmax(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         if self.length == 0: raise ValueError("empty column")
-        cdef Py_ssize_t max_idx = 0
-        cdef double max_val = self.data_c[0]
-        cdef Py_ssize_t i, n = self.length
         cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(_c_idxmax(&ptr[j * r], r))
+            return result
+        cdef Py_ssize_t max_idx = 0
+        cdef double max_val = ptr[0]
+        cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(1, n):
                 if ptr[i] > max_val:
@@ -503,11 +568,19 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def idxmin(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         if self.length == 0: raise ValueError("empty column")
-        cdef Py_ssize_t min_idx = 0
-        cdef double min_val = self.data_c[0]
-        cdef Py_ssize_t i, n = self.length
         cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(_c_idxmin(&ptr[j * r], r))
+            return result
+        cdef Py_ssize_t min_idx = 0
+        cdef double min_val = ptr[0]
+        cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(1, n):
                 if ptr[i] < min_val:
@@ -580,28 +653,64 @@ cdef class DoubleColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def median(self):
         if self.length == 0: return NAN
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(self.quantile_per_subcol(ptr + j * r, r, 0.5))
+            return result
         cdef double* temp = <double*>aligned_malloc(self.length * sizeof(double))
         if not temp: raise MemoryError()
         memcpy(temp, self.data_c, self.length * sizeof(double))
         cdef Py_ssize_t mid = self.length // 2
-        cdef double v1, v2, result
+        cdef double v1, v2, res
         try:
             if self.length % 2 == 0:
                 v1 = self._quickselect(temp, self.length, mid - 1)
                 v2 = self._quickselect(temp, self.length, mid)
                 return (v1 + v2) * 0.5
-            result = self._quickselect(temp, self.length, mid)
-            return result
+            res = self._quickselect(temp, self.length, mid)
+            return res
         finally:
             os_aligned_free(temp)
+
+    cdef double quantile_per_subcol(self, double* col_ptr, Py_ssize_t n, double q) noexcept:
+        cdef double* temp = <double*>aligned_malloc(n * sizeof(double))
+        if not temp: return NAN
+        memcpy(temp, col_ptr, n * sizeof(double))
+        cdef double pos = q * (n - 1)
+        cdef Py_ssize_t idx = <Py_ssize_t>pos
+        cdef double frac = pos - idx
+        cdef double v1, v2, result
+        try:
+            if idx >= n - 1:
+                result = self._quickselect(temp, n, n - 1)
+            else:
+                v1 = self._quickselect(temp, n, idx)
+                v2 = self._quickselect(temp, n, idx + 1)
+                result = v1 + frac * (v2 - v1)
+        finally:
+            os_aligned_free(temp)
+        return result
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mad(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         if self.length == 0: return NAN
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(_c_mad(&ptr[j * r], r, _c_sum(&ptr[j * r], r) / <double>r))
+            return result
         cdef double m = self.mean()
         cdef double total_dev = 0.0
-        cdef double* ptr = self.data_c
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
@@ -611,9 +720,17 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def prod(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         if self.length == 0: return NAN
-        cdef double total = 1.0
         cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(_c_prod(&ptr[j * r], r))
+            return result
+        cdef double total = 1.0
         cdef Py_ssize_t i, n = self.length
         with nogil:
             for i in range(n):
@@ -623,34 +740,79 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def nunique(self):
-        if self.length == 0: return 0
-        cdef set seen = set()
-        cdef Py_ssize_t i, n = self.length
-        for i in range(n):
-            seen.add(self.data_c[i])
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
+        if r == 0:
+            if not self.is_2d or c <= 1: return 0
+            return 0
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t i, j, base
+        cdef set seen
+        seen = set()
+        if self.is_2d and c > 1:
+            for j in range(c):
+                base = j * r
+                for i in range(r): seen.add(ptr[base + i])
+        else:
+            for i in range(r): seen.add(ptr[i])
         return len(seen)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def value_counts(self):
-        cdef dict counts = {}
-        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t i, j, base
         cdef double val
+        cdef list result
+        cdef dict counts
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                counts = {}
+                base = j * r
+                for i in range(r):
+                    val = ptr[base + i]
+                    counts[val] = counts.get(val, 0) + 1
+                result.append(counts)
+            return result
+        counts = {}
+        cdef Py_ssize_t n = self.length
         for i in range(n):
-            val = self.data_c[i]
+            val = ptr[i]
             counts[val] = counts.get(val, 0) + 1
         return counts
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mode(self):
-        if self.length == 0: return []
-        cdef dict counts = {}
-        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t i, j, base
         cdef double val
-        cdef int count, max_count = 0
+        cdef int count, max_count
+        cdef list result
+        cdef dict counts
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                counts = {}
+                max_count = 0
+                base = j * r
+                for i in range(r):
+                    val = ptr[base + i]
+                    count = counts.get(val, 0) + 1
+                    counts[val] = count
+                    if count > max_count:
+                        max_count = count
+                result.append([k for k, v in counts.items() if v == max_count])
+            return result
+        if self.length == 0: return []
+        counts = {}
+        cdef Py_ssize_t n = self.length
+        max_count = 0
         for i in range(n):
-            val = self.data_c[i]
+            val = ptr[i]
             count = counts.get(val, 0) + 1
             counts[val] = count
             if count > max_count:
@@ -662,6 +824,15 @@ cdef class DoubleColumn(BaseColumn):
     def quantile(self, double q):
         if self.length == 0: return NAN
         if q < 0.0 or q > 1.0: raise ValueError("q must be between 0 and 1")
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(self.quantile_per_subcol(ptr + j * r, r, q))
+            return result
         cdef double* temp = <double*>aligned_malloc(self.length * sizeof(double))
         if not temp: raise MemoryError()
         memcpy(temp, self.data_c, self.length * sizeof(double))
@@ -744,6 +915,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def diff(self, int periods=1):
         cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
@@ -770,6 +942,7 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pct_change(self, int periods=1):
         cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
@@ -825,36 +998,101 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def skew(self):
-        if self.length < 3: return NAN
         cdef double m, m2, m3, m4
+        cdef double n, var_sample
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t j, i
+        cdef double* sub_ptr
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                sub_ptr = ptr + j * r
+                m = _c_sum(sub_ptr, r) / <double>r
+                m2 = _c_var(sub_ptr, r, m) * <double>(r - 1) / <double>r
+                if m2 <= 1e-14:
+                    result.append(NAN)
+                    continue
+                n = <double>r
+                var_sample = m2 / (n - 1)
+                m3 = 0.0
+                for i in range(r):
+                    m3 += (sub_ptr[i] - m) ** 3
+                m3 = m3 / n
+                result.append((n * m3) / ((n - 1) * (n - 2) * (var_sample * sqrt(var_sample))))
+            return result
+        if self.length < 3: return NAN
         self._central_moments(&m, &m2, &m3, &m4)
         if m2 <= 1e-14: return NAN
-        cdef double n = <double>self.length
-        cdef double var_sample = m2 / (n - 1)
+        n = <double>self.length
+        var_sample = m2 / (n - 1)
         return (n * m3) / ((n - 1) * (n - 2) * (var_sample * sqrt(var_sample)))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def kurt(self):
-        if self.length < 4: return NAN
         cdef double m, m2, m3, m4
+        cdef double n, var_sample
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t j, i
+        cdef double* sub_ptr
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                sub_ptr = ptr + j * r
+                m = _c_sum(sub_ptr, r) / <double>r
+                m2 = _c_var(sub_ptr, r, m) * <double>(r - 1) / <double>r
+                if m2 <= 1e-14:
+                    result.append(NAN)
+                    continue
+                n = <double>r
+                var_sample = m2 / (n - 1)
+                m4 = 0.0
+                for i in range(r):
+                    m4 += (sub_ptr[i] - m) ** 4
+                m4 = m4 / n
+                result.append((m4 / (n - 1)) / (var_sample * var_sample) - 3.0)
+            return result
+        if self.length < 4: return NAN
         self._central_moments(&m, &m2, &m3, &m4)
         if m2 <= 1e-14: return NAN
-        cdef double n = <double>self.length
-        cdef double var_sample = m2 / (n - 1)
+        n = <double>self.length
+        var_sample = m2 / (n - 1)
         return (m4 / (n - 1)) / (var_sample * var_sample) - 3.0
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sem(self):
-        if self.length < 2: return NAN
         cdef double m, m2, m3, m4
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t j
+        cdef double* sub_ptr
+        cdef list result
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                sub_ptr = ptr + j * r
+                m = _c_sum(sub_ptr, r) / <double>r
+                m2 = _c_var(sub_ptr, r, m) * <double>(r - 1) / <double>r
+                result.append(sqrt(m2 / ((<double>(r - 1)) * <double>r)))
+            return result
+        if self.length < 2: return NAN
         self._central_moments(&m, &m2, &m3, &m4)
         return sqrt(m2 / ((<double>self.length - 1) * <double>self.length))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def count(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(r)
+            return result
         return self.length
 
     @cython.binding(False)
@@ -879,6 +1117,36 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def describe(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t j, i, base
+        cdef double total_count, total_sum, total_min, total_max, val
+        cdef double total_sq_sum, total_mean, total_std
+
+        if self.is_2d and c > 1:
+            total_count = <double>(r * c)
+            total_sum = 0.0
+            total_sq_sum = 0.0
+            total_min = ptr[0]
+            total_max = ptr[0]
+            with nogil:
+                for j in range(c):
+                    base = j * r
+                    for i in range(r):
+                        val = ptr[base + i]
+                        total_sum += val
+                        total_sq_sum += val * val
+                        if val < total_min: total_min = val
+                        if val > total_max: total_max = val
+            total_mean = total_sum / total_count
+            total_std = sqrt((total_sq_sum / total_count) - (total_mean * total_mean)) if total_count > 1 else NAN
+            return {
+                "count": <int>total_count,
+                "mean": total_mean,
+                "std": total_std,
+                "min": total_min,
+                "max": total_max,
+            }
         if self.length == 0:
             return {"count": 0, "mean": NAN, "std": NAN, "min": NAN,
                     "25%": NAN, "50%": NAN, "75%": NAN, "max": NAN}
@@ -1130,6 +1398,8 @@ cdef class DoubleColumn(BaseColumn):
         if isinstance(other, (DoubleColumn, IntColumn)): return self.add(other)
         return NotImplemented
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __radd__(self, object other): return self.__add__(other)
 
     @cython.always_allow_keywords(False)
@@ -1139,6 +1409,8 @@ cdef class DoubleColumn(BaseColumn):
         if isinstance(other, (DoubleColumn, IntColumn)): return self.sub(other)
         return NotImplemented
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __rsub__(self, object other):
         cdef Py_ssize_t n = self.length
         cdef DoubleColumn res
@@ -1165,6 +1437,8 @@ cdef class DoubleColumn(BaseColumn):
         if isinstance(other, (DoubleColumn, IntColumn)): return self.mul(other)
         return NotImplemented
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __rmul__(self, object other): return self.__mul__(other)
 
     @cython.always_allow_keywords(False)
@@ -1174,6 +1448,8 @@ cdef class DoubleColumn(BaseColumn):
         if isinstance(other, (DoubleColumn, IntColumn)): return self.div(other)
         return NotImplemented
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __rtruediv__(self, object other):
         cdef Py_ssize_t n = self.length
         cdef DoubleColumn res
@@ -1197,15 +1473,29 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def unique(self):
-        cdef set seen = set()
-        cdef list result = []
-        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        cdef double* ptr = self.data_c
+        cdef Py_ssize_t i, j, base, n
         cdef double val
-        for i in range(n):
-            val = self.data_c[i]
-            if val not in seen:
-                seen.add(val)
-                result.append(val)
+        cdef set seen
+        cdef list result
+        seen = set()
+        result = []
+        if self.is_2d and c > 1:
+            for j in range(c):
+                base = j * r
+                for i in range(r):
+                    val = ptr[base + i]
+                    if val not in seen:
+                        seen.add(val)
+                        result.append(val)
+        else:
+            n = self.length
+            for i in range(n):
+                val = ptr[i]
+                if val not in seen:
+                    seen.add(val)
+                    result.append(val)
         return result
 
     # ------------------------------------------------------------
@@ -1467,6 +1757,7 @@ cdef class DoubleColumn(BaseColumn):
     # 无分支 clip 优化 (直接映射 vmaxpd/vminpd)
     # ------------------------------------------------------------
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def clip(self, double lower, double upper, bint inplace=False):
         cdef DoubleColumn col = self if inplace else self.copy()
         cdef Py_ssize_t i, n = col.length
@@ -1525,6 +1816,7 @@ cdef class DoubleColumn(BaseColumn):
         return new_col
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def where(self, IntColumn cond, double other, bint inplace=False):
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t r = self._get_rows_c()
@@ -1605,6 +1897,7 @@ cdef class DoubleColumn(BaseColumn):
         return col
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mask(self, IntColumn cond, double other, bint inplace=False):
         cdef Py_ssize_t n = self.length
         cdef Py_ssize_t r = self._get_rows_c()
@@ -2207,6 +2500,7 @@ cdef class DoubleColumn(BaseColumn):
     # 6. 自定义权重滤波 (roll_apply_weights) - 极速 FIR / 卷积滤波
     # ============================================================
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_apply_weights(self, object weights):
         """
         滚动权重内积滤波 (用于加权移动平均 WMA、高斯平滑等)
@@ -2250,6 +2544,7 @@ cdef class DoubleColumn(BaseColumn):
     # 7. 纯自定义函数滚动 (roll_custom) - 支持外部 Python 回调
     # ============================================================
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll_custom(self, Py_ssize_t window, object func):
         """
         通用滚动自定义滤波。每次滑窗时切片构建一个临时视图传递给 func(slice_col)。
@@ -2441,6 +2736,7 @@ cdef class DoubleColumn(BaseColumn):
     # 9. 统一动态分发入口 (roll)
     # ============================================================
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def roll(self, Py_ssize_t window, str method="mean", **kwargs):
         cdef str m = method.lower()
         if m == "mean":

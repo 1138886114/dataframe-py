@@ -159,11 +159,11 @@ def test_idxmin():
 
 def test_argmax():
     col = IntColumn(); col.append(1); col.append(5)
-    check('argmax', col.argmax() == 1)
+    check('idxmax', col.idxmax() == 1)
 
 def test_argmin():
     col = IntColumn(); col.append(5); col.append(1)
-    check('argmin', col.argmin() == 1)
+    check('idxmin', col.idxmin() == 1)
 
 def test_median():
     col = IntColumn(); col.append(3); col.append(1); col.append(2)

@@ -339,27 +339,57 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def max(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef int32_t max_val = (<int32_t*>self.data_c)[0]
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         cdef int32_t* ptr = <int32_t*>self.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(1, n):
-                if ptr[i] > max_val:
-                    max_val = ptr[i]
-        return self._to_ymd_int(max_val)
+        cdef Py_ssize_t i, j, base
+        cdef int32_t max_val
+
+        if not self.is_2d or c <= 1:
+            max_val = ptr[0]
+            with nogil:
+                for i in range(1, self.length):
+                    if ptr[i] > max_val:
+                        max_val = ptr[i]
+            return self._to_ymd_int(max_val)
+
+        cdef list results = [None] * c
+        for j in range(c):
+            base = j * r
+            max_val = ptr[base]
+            for i in range(1, r):
+                if ptr[base + i] > max_val:
+                    max_val = ptr[base + i]
+            results[j] = self._to_ymd_int(max_val)
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def min(self):
         if self.length == 0: raise ValueError("empty column")
-        cdef int32_t min_val = (<int32_t*>self.data_c)[0]
+        cdef Py_ssize_t c = self.num_cols
+        cdef Py_ssize_t r = self._get_rows_c()
         cdef int32_t* ptr = <int32_t*>self.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(1, n):
-                if ptr[i] < min_val:
-                    min_val = ptr[i]
-        return self._to_ymd_int(min_val)
+        cdef Py_ssize_t i, j, base
+        cdef int32_t min_val
+
+        if not self.is_2d or c <= 1:
+            min_val = ptr[0]
+            with nogil:
+                for i in range(1, self.length):
+                    if ptr[i] < min_val:
+                        min_val = ptr[i]
+            return self._to_ymd_int(min_val)
+
+        cdef list results = [None] * c
+        for j in range(c):
+            base = j * r
+            min_val = ptr[base]
+            for i in range(1, r):
+                if ptr[base + i] < min_val:
+                    min_val = ptr[base + i]
+            results[j] = self._to_ymd_int(min_val)
+        return results
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -426,7 +456,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def year(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -441,7 +471,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def month(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -456,7 +486,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def day(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -471,7 +501,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def quarter(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -507,7 +537,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def filter_greater(self, date):
         cdef int32_t target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -521,7 +551,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def filter_greater_equal(self, date):
         cdef int32_t target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -535,7 +565,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def filter_less(self, date):
         cdef int32_t target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -549,7 +579,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def filter_less_equal(self, date):
         cdef int32_t target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -563,7 +593,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def filter_equal(self, date):
         cdef int32_t target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -577,7 +607,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def filter_not_equal(self, date):
         cdef int32_t target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -592,7 +622,7 @@ cdef class DateColumn(BaseColumn):
     def filter_between(self, start, end):
         cdef int32_t lo = self._resolve_date(start)
         cdef int32_t hi = self._resolve_date(end)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -629,7 +659,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def add_days(self, int n):
         cdef Py_ssize_t length = self.length
-        cdef DateColumn res = DateColumn(max(length, 1))
+        cdef DateColumn res = DateColumn(max(length, 1), cols=self.num_cols)
         res.length = length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int32_t* res_ptr = <int32_t*>res.data_c
@@ -648,7 +678,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def add_months(self, int n):
         cdef Py_ssize_t length = self.length
-        cdef DateColumn res = DateColumn(max(length, 1))
+        cdef DateColumn res = DateColumn(max(length, 1), cols=self.num_cols)
         res.length = length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int32_t* res_ptr = <int32_t*>res.data_c
@@ -678,7 +708,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def add_years(self, int n):
         cdef Py_ssize_t length = self.length
-        cdef DateColumn res = DateColumn(max(length, 1))
+        cdef DateColumn res = DateColumn(max(length, 1), cols=self.num_cols)
         res.length = length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int32_t* res_ptr = <int32_t*>res.data_c
@@ -706,7 +736,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def day_of_week(self):
         """返回 0=Monday .. 6=Sunday"""
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -719,7 +749,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def is_weekend(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -734,7 +764,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def day_of_year(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -752,7 +782,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def days_in_month(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -767,7 +797,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def is_leap_year(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -782,7 +812,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def is_month_start(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -797,7 +827,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def is_month_end(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -812,7 +842,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def is_year_start(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -827,7 +857,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def is_year_end(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -842,7 +872,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def is_quarter_start(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -857,7 +887,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def is_quarter_end(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -898,7 +928,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def week_of_year(self):
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -943,7 +973,7 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def last_day_of_month(self):
-        cdef DateColumn res = DateColumn(max(self.length, 1))
+        cdef DateColumn res = DateColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int32_t* res_ptr = <int32_t*>res.data_c
@@ -959,9 +989,9 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def iso_calendar(self):
-        cdef IntColumn res_y = IntColumn(max(self.length, 1))
-        cdef IntColumn res_w = IntColumn(max(self.length, 1))
-        cdef IntColumn res_d = IntColumn(max(self.length, 1))
+        cdef IntColumn res_y = IntColumn(max(self.length, 1), cols=self.num_cols)
+        cdef IntColumn res_w = IntColumn(max(self.length, 1), cols=self.num_cols)
+        cdef IntColumn res_d = IntColumn(max(self.length, 1), cols=self.num_cols)
         res_y.length = self.length
         res_w.length = self.length
         res_d.length = self.length
@@ -985,7 +1015,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def diff_days(self, date):
         cdef int32_t target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -999,7 +1029,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def diff_months(self, date):
         cdef int32_t target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -1016,7 +1046,7 @@ cdef class DateColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def diff_years(self, date):
         cdef int32_t target = self._resolve_date(date)
-        cdef IntColumn res = IntColumn(max(self.length, 1))
+        cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
         cdef int* res_ptr = res.data_c
@@ -1034,7 +1064,7 @@ cdef class DateColumn(BaseColumn):
     # ------------------------------------------------------------
     cdef IntColumn _cmp_op(self, val, int op):
         cdef Py_ssize_t i, n = self.length
-        cdef IntColumn res = IntColumn(max(n, 1))
+        cdef IntColumn res = IntColumn(max(n, 1), cols=self.num_cols)
         res.length = n
 
         cdef int32_t* s_ptr = <int32_t*>self.data_c
