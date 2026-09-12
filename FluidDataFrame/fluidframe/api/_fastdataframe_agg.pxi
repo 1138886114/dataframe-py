@@ -438,16 +438,12 @@ cdef _describe_impl(FastDataFrame self):
     return stats
 
 
-cdef list _col_to_keys_tuple(BaseColumn col):
-    """返回长度为 rows 的 list，2D 列每项为 hashable 的 tuple 行键，1D 列每项为标量。"""
-    return _col_to_keys(col)
-
 cdef _value_counts_impl(FastDataFrame self, str col_name):
     if col_name not in self.columns:
         raise KeyError(f"Column '{col_name}' not found")
     cdef BaseColumn col = self.columns[col_name]
 
-    cdef list keys = _col_to_keys_tuple(col)
+    cdef list keys = _col_to_keys(col)
     cdef Py_ssize_t n = len(keys)
     cdef Py_ssize_t i
 
@@ -488,7 +484,7 @@ cdef _nunique_impl(FastDataFrame self, str col_name=None):
         if col_name not in self.columns:
             raise KeyError(f"Column '{col_name}' not found")
         col = self.columns[col_name]
-        return len(set(_col_to_keys_tuple(col)))
+        return len(set(_col_to_keys(col)))
     for name, col in self.columns.items():
-        result[name] = len(set(_col_to_keys_tuple(col)))
+        result[name] = len(set(_col_to_keys(col)))
     return result

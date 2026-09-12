@@ -159,6 +159,10 @@ cdef _clip_column_impl(FastDataFrame self, str col_name, double lower, double up
 cdef _where_column_impl(FastDataFrame self, str col_name, str cond_col, object other):
     cdef BaseColumn src = self.columns[col_name]
     cdef BaseColumn cond = self.columns[cond_col]
+    cdef bint src_is_2d = src.is_2d and src.num_cols > 1
+    cdef bint cond_is_2d = cond.is_2d and cond.num_cols > 1
+    if src_is_2d and cond_is_2d:
+        raise ValueError("where does not support 2D condition column; use a 1D condition")
     if src.dtype == TYPE_DOUBLE and cond.dtype == TYPE_INT:
         return (<DoubleColumn>src).where(<IntColumn>cond, <double>other)
     elif src.dtype == TYPE_INT and cond.dtype == TYPE_INT:
@@ -168,6 +172,10 @@ cdef _where_column_impl(FastDataFrame self, str col_name, str cond_col, object o
 cdef _mask_column_impl(FastDataFrame self, str col_name, str cond_col, object other):
     cdef BaseColumn src = self.columns[col_name]
     cdef BaseColumn cond = self.columns[cond_col]
+    cdef bint src_is_2d = src.is_2d and src.num_cols > 1
+    cdef bint cond_is_2d = cond.is_2d and cond.num_cols > 1
+    if src_is_2d and cond_is_2d:
+        raise ValueError("mask does not support 2D condition column; use a 1D condition")
     if src.dtype == TYPE_DOUBLE and cond.dtype == TYPE_INT:
         return (<DoubleColumn>src).mask(<IntColumn>cond, <double>other)
     elif src.dtype == TYPE_INT and cond.dtype == TYPE_INT:

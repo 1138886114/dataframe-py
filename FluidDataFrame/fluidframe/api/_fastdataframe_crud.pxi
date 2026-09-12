@@ -810,14 +810,6 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
             self._shift_left(self.columns[cn], pos)
         raise
 
-cdef _drop_impl(FastDataFrame self, list col_names):
-    cdef FastDataFrame result = _copy_impl(self)
-    cdef str name
-    for name in col_names:
-        if name in result.columns:
-            del result.columns[name]
-    return result
-
 cdef _drop_with_index_impl(FastDataFrame self, list drop_indices, bint inplace):
     cdef Py_ssize_t n_orig = self.df_length
     if n_orig == 0:
