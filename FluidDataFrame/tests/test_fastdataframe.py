@@ -741,8 +741,8 @@ def test_unique():
 
 def test_argmax_argmin():
     df = make_complex_df()
-    check('idxmax score', df.idxmax('score') == 8)
-    check('idxmin score', df.idxmin('score') == 9)
+    check('argmax score', df.argmax('score') == 8)
+    check('argmin score', df.argmin('score') == 9)
 
 
 # =====================================================================

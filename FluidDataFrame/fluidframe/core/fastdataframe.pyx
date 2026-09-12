@@ -142,11 +142,11 @@ from fluidframe.core._base cimport (
 )
 from fluidframe.core.asciicolumn cimport AsciiColumn
 from fluidframe.core.ucs2column cimport UCS2Column
-from fluidframe.core.datecolumn cimport DateColumn, _days_to_ymd, _ymd_to_days
+from fluidframe.core.datecolumn cimport DateColumn, _days_to_ymd, _ymd_to_days, _parse_date_str
 from fluidframe.core.boolcolumn cimport BoolColumn
 from fluidframe.core.categorycolumn cimport CategoryColumn
-from fluidframe.core.datetimecolumn cimport DateTimeColumn
-from fluidframe.core.timecolumn cimport TimeColumn
+from fluidframe.core.datetimecolumn cimport DateTimeColumn, _parse_datetime_str
+from fluidframe.core.timecolumn cimport TimeColumn, _parse_time_str
 from fluidframe.core.index cimport IndexBase, RangeIndex, IntIndex, MultiIndex, INDEX_RANGE, INDEX_INT, INDEX_MULTI
 from fluidframe.core.indexers import _ILocIndexer, _LocIndexer
 from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Time, _parse_schema

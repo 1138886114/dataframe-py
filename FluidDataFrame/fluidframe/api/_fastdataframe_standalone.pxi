@@ -291,23 +291,28 @@ def read_json(filename, dict schema):
     return df
 
 
-cdef object _default_val_standalone(BaseColumn col):
-    if isinstance(col, IntColumn): return 0
-    if isinstance(col, DoubleColumn): return float('nan')
-    if isinstance(col, DateColumn): return 0
-    return ''
-
-
-cdef BaseColumn _empty_col_standalone(BaseColumn col):
+cdef inline BaseColumn _empty_col_for(BaseColumn col):
     if isinstance(col, IntColumn): return IntColumn()
     if isinstance(col, DoubleColumn): return DoubleColumn()
-    if isinstance(col, AsciiColumn): return AsciiColumn()
     if isinstance(col, DateColumn): return DateColumn()
-    return UCS2Column()
+    if isinstance(col, TimeColumn): return TimeColumn()
+    if isinstance(col, DateTimeColumn): return DateTimeColumn()
+    if isinstance(col, AsciiColumn): return AsciiColumn()
+    if isinstance(col, UCS2Column): return UCS2Column()
+    if isinstance(col, BoolColumn): return BoolColumn()
+    if isinstance(col, CategoryColumn): return CategoryColumn()
+    return IntColumn()
+
+
+cdef inline void _set_2d_shape(BaseColumn col, Py_ssize_t c) noexcept:
+    col.num_cols = <int>c
+    col.is_2d = True
+    col.owns_data = True
 
 
 def concat_outer(list dfs):
-    """纵向拼接多个 DataFrame（外连接：取所有列的并集），重置索引"""
+    """纵向拼接多个 DataFrame（外连接：取所有列的并集），重置索引。
+    2D 列：使用列级 concat 保持二维维度结构不变。"""
     if not dfs: return FastDataFrame()
     all_cols = set()
     for df in dfs:
@@ -315,24 +320,58 @@ def concat_outer(list dfs):
     all_cols = list(all_cols)
 
     result = FastDataFrame()
-    col_types = {}
+    col_refs = {}
     for name in all_cols:
         for df in dfs:
             if name in df.columns:
-                col_types[name] = df.columns[name]
+                col_refs[name] = df.columns[name]
                 break
 
     for name in all_cols:
-        result.columns[name] = _empty_col_standalone(col_types[name])
+        result.columns[name] = _empty_col_for(col_refs[name])
 
     for df in dfs:
-        for i in range(df.df_length):
-            for name in all_cols:
-                col = result.columns[name]
-                if name in df.columns:
-                    col.append(df.columns[name][i])
-                else:
-                    col.append(_default_val_standalone(col_types[name]))
+        for name in all_cols:
+            if name in df.columns:
+                result.columns[name].concat(df.columns[name])
+            else:
+                ref = col_refs[name]
+                is2d, c, r = _col_shape_probe(ref)
+                fill_rows = df.df_length
+                if fill_rows == 0:
+                    continue
+                total = fill_rows * c if (is2d and c > 1) else fill_rows
+                if ref.dtype == TYPE_INT:
+                    fill_col = IntColumn()
+                    for _ in range(total): fill_col.append(0)
+                elif ref.dtype == TYPE_DOUBLE:
+                    fill_col = DoubleColumn()
+                    for _ in range(total): fill_col.append(NAN)
+                elif ref.dtype == TYPE_DATE:
+                    fill_col = DateColumn()
+                    for _ in range(total): fill_col.append(0)
+                elif ref.dtype == TYPE_DATETIME:
+                    fill_col = DateTimeColumn()
+                    for _ in range(total): fill_col.append(0)
+                elif ref.dtype == TYPE_TIME:
+                    fill_col = TimeColumn()
+                    for _ in range(total): fill_col.append(0)
+                elif ref.dtype == TYPE_BOOL:
+                    fill_col = BoolColumn()
+                    for _ in range(total): fill_col.append(False)
+                elif ref.dtype == TYPE_CHAR256:
+                    fill_col = AsciiColumn()
+                    for _ in range(total): fill_col.append('')
+                elif ref.dtype == TYPE_UCS2:
+                    fill_col = UCS2Column()
+                    for _ in range(total): fill_col.append('')
+                elif ref.dtype == TYPE_CATEGORY:
+                    fill_col = CategoryColumn()
+                    for _ in range(total): fill_col.append(None)
+                if is2d and c > 1:
+                    _set_2d_shape(fill_col, c)
+                result.columns[name].concat(fill_col)
+
         result.df_length += df.df_length
 
     result.reset_index()
@@ -340,7 +379,8 @@ def concat_outer(list dfs):
 
 
 def concat_inner(list dfs):
-    """纵向拼接多个 DataFrame（内连接：仅取所有列的交集），重置索引"""
+    """纵向拼接多个 DataFrame（内连接：仅取所有列的交集），重置索引。
+    2D 列：使用列级 concat 保持二维维度结构不变。"""
     if not dfs: return FastDataFrame()
     common = set(dfs[0].columns.keys())
     for df in dfs[1:]:
@@ -349,12 +389,11 @@ def concat_inner(list dfs):
 
     result = FastDataFrame()
     for name in common:
-        result.columns[name] = _empty_col_standalone(dfs[0].columns[name])
+        result.columns[name] = _empty_col_for(dfs[0].columns[name])
 
     for df in dfs:
-        for i in range(df.df_length):
-            for name in common:
-                result.columns[name].append(df.columns[name][i])
+        for name in common:
+            result.columns[name].concat(df.columns[name])
         result.df_length += df.df_length
 
     result.reset_index()
@@ -421,24 +460,26 @@ def to_datetime(column, str fmt='', errors='coerce'):
     is2d, c, r = _col_shape_probe(column)
 
     cdef bint is_2d_c = is2d and c > 1
-    cdef DateTimeColumn res = DateTimeColumn(max(r * c if is_2d_c else r, 1))
+    cdef Py_ssize_t alloc = r * c if is_2d_c else r
+    cdef DateTimeColumn res = DateTimeColumn(max(alloc, 1))
     cdef bint raise_err = (errors == 'raise')
-    cdef Py_ssize_t i, j
+    cdef Py_ssize_t i, j, idx = 0
 
     if is_2d_c:
-        # 2D 扁平缓冲为列主序：追加顺序须为 col0 全部行 → col1 全部行…
-        for j in range(c):
-            for i in range(r):
-                s = str(column[j * r + i])
-                try:
-                    res.append(s)
-                except (ValueError, TypeError):
-                    if raise_err:
-                        raise ValueError(f"Could not convert '{s}' to datetime")
-                    res.append(0)
+        res.length = alloc
         res.num_cols = <int>c
         res.is_2d = True
         res.owns_data = True
+        for j in range(c):
+            for i in range(r):
+                idx = j * r + i
+                s = str(column[idx])
+                try:
+                    res.data_c[idx] = _parse_datetime_str(s)
+                except (ValueError, TypeError):
+                    if raise_err:
+                        raise ValueError(f"Could not convert '{s}' to datetime")
+                    res.data_c[idx] = 0
     else:
         for i in range(r):
             s = str(column[i])
@@ -459,24 +500,26 @@ def to_date(column, str fmt='', errors='coerce'):
     is2d, c, r = _col_shape_probe(column)
 
     cdef bint is_2d_c = is2d and c > 1
-    cdef DateColumn res = DateColumn(max(r * c if is_2d_c else r, 1))
+    cdef Py_ssize_t alloc = r * c if is_2d_c else r
+    cdef DateColumn res = DateColumn(max(alloc, 1))
     cdef bint raise_err = (errors == 'raise')
-    cdef Py_ssize_t i, j
+    cdef Py_ssize_t i, j, idx = 0
 
     if is_2d_c:
-        # 2D 扁平缓冲为列主序：追加顺序须为 col0 全部行 → col1 全部行…
-        for j in range(c):
-            for i in range(r):
-                s = str(column[j * r + i])
-                try:
-                    res.append(s)
-                except (ValueError, TypeError):
-                    if raise_err:
-                        raise ValueError(f"Could not convert '{s}' to date")
-                    res.append(0)
+        res.length = alloc
         res.num_cols = <int>c
         res.is_2d = True
         res.owns_data = True
+        for j in range(c):
+            for i in range(r):
+                idx = j * r + i
+                s = str(column[idx])
+                try:
+                    res.data_c[idx] = _parse_date_str(s)
+                except (ValueError, TypeError):
+                    if raise_err:
+                        raise ValueError(f"Could not convert '{s}' to date")
+                    res.data_c[idx] = 0
     else:
         for i in range(r):
             s = str(column[i])
@@ -497,24 +540,26 @@ def to_time(column, str fmt='', errors='coerce'):
     is2d, c, r = _col_shape_probe(column)
 
     cdef bint is_2d_c = is2d and c > 1
-    cdef TimeColumn res = TimeColumn(max(r * c if is_2d_c else r, 1))
+    cdef Py_ssize_t alloc = r * c if is_2d_c else r
+    cdef TimeColumn res = TimeColumn(max(alloc, 1))
     cdef bint raise_err = (errors == 'raise')
-    cdef Py_ssize_t i, j
+    cdef Py_ssize_t i, j, idx = 0
 
     if is_2d_c:
-        # 2D 扁平缓冲为列主序：追加顺序须为 col0 全部行 → col1 全部行…
-        for j in range(c):
-            for i in range(r):
-                s = str(column[j * r + i])
-                try:
-                    res.append(s)
-                except (ValueError, TypeError):
-                    if raise_err:
-                        raise ValueError(f"Could not convert '{s}' to time")
-                    res.append(0)
+        res.length = alloc
         res.num_cols = <int>c
         res.is_2d = True
         res.owns_data = True
+        for j in range(c):
+            for i in range(r):
+                idx = j * r + i
+                s = str(column[idx])
+                try:
+                    res.data_c[idx] = _parse_time_str(s)
+                except (ValueError, TypeError):
+                    if raise_err:
+                        raise ValueError(f"Could not convert '{s}' to time")
+                    res.data_c[idx] = 0
     else:
         for i in range(r):
             s = str(column[i])

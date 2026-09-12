@@ -236,11 +236,14 @@ cdef _isnull_impl(FastDataFrame self):
     return result
 
 cdef _fillna_impl(FastDataFrame self, object value, col_names):
-    """【语义修复】：参数 value 必须是 object，以支持字符串等各种类型填充"""
+    """【语义修复】：参数 value 必须是 object，以支持字符串等各种类型填充。
+    2D 列：数值类型使用 flat 迭代（isnan 逐元素检测，与布局无关）；
+    字符串类型按 2D 子列边界逐子列填充。"""
     cdef FastDataFrame result = _copy_impl(self)
     cdef str name
     cdef BaseColumn col
-    cdef Py_ssize_t i, total
+    cdef Py_ssize_t i, total, rows, cols, j, base
+    cdef bint is2d
     cdef double* d_ptr
     cdef double d_val
     cdef AsciiColumn ascii_col
@@ -253,6 +256,7 @@ cdef _fillna_impl(FastDataFrame self, object value, col_names):
         if name not in result.columns: continue
         col = result.columns[name]
         total = col.length
+        is2d, cols, rows = _col_shape_probe(col)
 
         if col.dtype == TYPE_DOUBLE and isinstance(value, (int, float)):
             d_ptr = (<DoubleColumn>col).data_c
@@ -825,9 +829,12 @@ cdef _replace_impl(FastDataFrame self, object to_replace, object value):
     cdef int* i_ptr
     cdef double* d_ptr
     cdef UCS2Column new_col
+    cdef bint is2d
+    cdef Py_ssize_t c_out, r_out
 
     for name, col in result.columns.items():
         total = col.length
+        is2d, c_out, r_out = _col_shape_probe(col)
         if col.dtype == TYPE_INT and isinstance(to_replace, (int, float)) and isinstance(value, (int, float)):
             i_target = <int>to_replace
             i_val = <int>value
@@ -855,6 +862,10 @@ cdef _replace_impl(FastDataFrame self, object to_replace, object value):
                     new_col.append(str(value))
                 else:
                     new_col.append(str(col[i]))
+            if is2d and c_out > 1:
+                new_col.num_cols = <int>c_out
+                new_col.is_2d = True
+                new_col.owns_data = True
             result.columns[name] = new_col
     return result
 
