@@ -580,6 +580,28 @@ def _series_notna(BaseColumn col):
     return mask_col
 
 
+def _series_factorize(BaseColumn col):
+    """列级 factorize（对标 pandas Series.factorize）：返回
+    (codes, uniques)，uniques 按首次出现顺序、codes 与行数等长。
+    2D 列按行键（子列元组）编码。"""
+    cdef list keys = _col_to_keys(col)
+    cdef Py_ssize_t n = len(keys)
+    cdef Py_ssize_t i
+    cdef object k, code
+    cdef dict seen = {}
+    cdef list uniques = []
+    cdef list codes_list = [None] * n
+    for i in range(n):
+        k = keys[i]
+        code = seen.get(k, -1)
+        if code == -1:
+            code = len(uniques)
+            seen[k] = code
+            uniques.append(k)
+        codes_list[i] = code
+    return codes_list, uniques
+
+
 def _series_map(BaseColumn col, object func):
     """列级元素映射（对标 pandas Series.map）：逐存储单元应用 func。
     2D 列按列主序逐 cell 应用，数值结果保持 cols 维度。"""

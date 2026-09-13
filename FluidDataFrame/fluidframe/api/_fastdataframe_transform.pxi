@@ -1143,3 +1143,154 @@ cdef _ewm_mean_impl(FastDataFrame self, str col_name, double span):
                     acc = acc * (1.0 - alpha) + <double>i_in[base + i] * alpha
                     d_out[base + i] = acc
     return res
+
+
+# ============================================================
+#  reshape：explode / stack / unstack
+# ============================================================
+
+cdef _explode_impl(FastDataFrame self, str col_name):
+    """DataFrame.explode：将 col_name 中 list/tuple 元素纵向展开为多行，
+    其余列按行重复对齐；空 list/tuple 行被丢弃，标量行保持原样。
+    源列可以是 BaseColumn（Typed 列只接受标量，通常用于字符串形态），
+    也可以直接用 Python list（含 list 元素）赋给 df[col_name]。"""
+    cdef Py_ssize_t n = self.df_length
+    cdef Py_ssize_t i, j, k
+    cdef long total
+    cdef str name
+    cdef BaseColumn scol
+    cdef object src_val
+
+    if col_name not in self.columns:
+        raise KeyError(f"Column '{col_name}' not found")
+    src = self.columns[col_name]
+    scol = src if isinstance(src, BaseColumn) else None
+    cdef list col_names = list(self.columns.keys())
+
+    cdef list counts = [0] * n
+    total = 0
+    for i in range(n):
+        src_val = scol[i] if scol is not None else src[i]
+        if isinstance(src_val, (list, tuple)):
+            counts[i] = len(src_val)
+        else:
+            counts[i] = 1
+        total += counts[i]
+
+    cdef FastDataFrame result = FastDataFrame()
+    result.df_length = total
+    result.index = RangeIndex(0, total)
+
+    # explode 列：逐元素展开
+    cdef list explode_vals = [None] * total
+    k = 0
+    for i in range(n):
+        src_val = scol[i] if scol is not None else src[i]
+        if isinstance(src_val, (list, tuple)):
+            for j in range(len(src_val)):
+                explode_vals[k] = src_val[j]
+                k += 1
+        else:
+            explode_vals[k] = src_val
+            k += 1
+    result.columns[col_name] = _column_from_list_impl(result, col_name, explode_vals)
+
+    # 其余列：按行重复 counts[i] 次
+    for name in col_names:
+        if name == col_name:
+            continue
+        other = self.columns[name]
+        ocol = other if isinstance(other, BaseColumn) else None
+        flat = []
+        for i in range(n):
+            v = ocol[i] if ocol is not None else other[i]
+            for _ in range(counts[i]):
+                flat.append(v)
+        result.columns[name] = _column_from_list_impl(result, name, flat)
+    return result
+
+
+cdef _stack_impl(FastDataFrame self):
+    """FluidDataFrame.stack：将 2D 列展平为 1D 列，
+    index 变为两级 MultiIndex（行号, 子列号，按列主序）。
+    1D 列在展平后每个 (row, 子列) 取同一值。
+    要求至少存在一个 2D 列；可被 unstack() 逆操作（数值/日期类列）。"""
+    cdef Py_ssize_t rows = self.df_length
+    cdef Py_ssize_t cols = 0
+    cdef Py_ssize_t total, i, j
+    cdef bint has2d = False
+    cdef str name
+    cdef BaseColumn col
+    cdef int* p0
+    cdef int* p1
+
+    for name, col in self.columns.items():
+        _, c, r = _col_shape_probe(col)
+        if c > 1:
+            has2d = True
+            if c > cols:
+                cols = c
+    if not has2d:
+        raise ValueError("stack() requires at least one 2D column")
+
+    total = rows * cols
+    cdef IntColumn codes0 = IntColumn(max(total, 1))
+    cdef IntColumn codes1 = IntColumn(max(total, 1))
+    codes0.length = total
+    codes1.length = total
+    p0 = codes0.data_c
+    p1 = codes1.data_c
+    with nogil:
+        for i in range(total):
+            p0[i] = <int>(i // cols)
+            p1[i] = <int>(i % cols)
+
+    cdef FastDataFrame result = FastDataFrame()
+    result.df_length = total
+    result.index = MultiIndex([list(range(rows)), list(range(cols))],
+                              [codes0, codes1],
+                              [None, None])
+
+    for name, col in self.columns.items():
+        cc = (<int>col.num_cols) if (col.is_2d and col.num_cols > 1) else 1
+        if cc > 1:
+            # 2D 列：列主序天然即展平顺序
+            flat = [col[i] for i in range(col.length)]
+            if cc < cols:
+                # 子列数小于统一 cols 的缺口以 None 填充
+                flat = flat + [None] * (rows * (cols - cc))
+        else:
+            flat = [None] * total
+            for j in range(cols):
+                base = j * rows
+                for i in range(rows):
+                    flat[base + i] = col[i]
+        result.columns[name] = _column_from_list_impl(result, name, flat)
+    return result
+
+
+cdef _unstack_impl(FastDataFrame self):
+    """FluidDataFrame.unstack：stack() 的逆操作。
+    要求 index 为两级 MultiIndex（奇数子列数按列主序），
+    将每列 flat buffer 重建为 2D 列（子列数 = level1 长度，行数 = level0 长度）。
+    数值 / Date / DateTime / Time 列可逆；字符串 / 布尔列不支持 2D 会抛错。"""
+    cdef object idx = self.index
+    if not isinstance(idx, MultiIndex) or idx.nlevels != 2:
+        raise ValueError("unstack() requires a 2-level MultiIndex index (created by stack())")
+    cdef MultiIndex mi = <MultiIndex>idx
+    cdef Py_ssize_t rows_out = len(<list>mi.levels[0])
+    cdef Py_ssize_t cols_out = len(<list>mi.levels[1])
+    cdef Py_ssize_t total = self.df_length
+    cdef str name
+    cdef BaseColumn col
+
+    cdef FastDataFrame result = FastDataFrame()
+    result.df_length = rows_out
+    result.index = RangeIndex(0, rows_out)
+
+    for name, col in self.columns.items():
+        if col.is_2d and col.num_cols > 1:
+            raise ValueError("unstack() requires 1D (flat) columns from stack()")
+        flat = [col[i] for i in range(total)]
+        result.columns[name] = _column_from_2d_list_impl(flat, rows_out, cols_out)
+    return result

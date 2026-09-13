@@ -301,3 +301,72 @@ cdef _to_json_impl(FastDataFrame self, bint orient_records=True):
             row_dict[col_names[j]] = cols_data[j][i]
         records[i] = row_dict
     return json.dumps(records)
+
+
+cdef str _html_escape(object val):
+    """HTML 特殊字符转义（合并进 to_html 内调用，避免额外 Cython 开销）。"""
+    cdef str s = str(val)
+    return (s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+             .replace('"', '&quot;').replace("'", '&#39;'))
+
+
+cdef str _to_html_impl(FastDataFrame self, Py_ssize_t max_rows=80):
+    """导出为 HTML 表格字符串（<table class="dataframe">）。"""
+    cdef Py_ssize_t n = self.df_length
+    cdef list row_indices = []
+    cdef Py_ssize_t half, r
+
+    if n <= max_rows:
+        row_indices = list(range(n))
+    else:
+        half = max_rows // 2
+        row_indices = list(range(half)) + [-1] + list(range(n - half, n))
+
+    cdef list names = self._get_header_strings()[0]
+    cdef Py_ssize_t num_display_cols = len(names)
+
+    cdef list rows = []
+    for r in row_indices:
+        rows.append(["..."] * num_display_cols if r == -1 else self._get_row_strings(r))
+
+    cdef list out = ['<table class="dataframe">\n  <thead>', '    <tr>']
+    for c in range(num_display_cols):
+        out.append(f"      <th>{_html_escape(names[c])}</th>")
+    out.append('    </tr>\n    </thead>')
+    out.append('  <tbody>')
+    for row in rows:
+        out.append('    <tr>')
+        for c in range(num_display_cols):
+            out.append(f"      <td>{_html_escape(row[c])}</td>")
+        out.append('    </tr>')
+    out.append('  </tbody>')
+    out.append('</table>')
+    return '\n'.join(out)
+
+
+cdef _to_excel_impl(FastDataFrame self, object filename, str sheet_name='Sheet1'):
+    """导出为 xlsx 文件（openpyxl 懒加载；未安装时抛 ImportError 提示）。"""
+    try:
+        import openpyxl
+    except ImportError:
+        raise ImportError("to_excel() requires 'openpyxl'. Install with: pip install openpyxl")
+
+    cdef list col_names = list(self.columns.keys())
+    cdef Py_ssize_t num_cols = len(col_names)
+    cdef Py_ssize_t n = self.df_length
+    cdef Py_ssize_t i, j
+
+    cdef list cols_data = [_col_to_list(self.columns[name]) for name in col_names]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+    ws.append([c for c in col_names])
+    for i in range(n):
+        row = [None] * num_cols
+        for j in range(num_cols):
+            v = cols_data[j][i]
+            row[j] = v if v is not None else ''
+        ws.append(row)
+    wb.save(filename)
+    return filename

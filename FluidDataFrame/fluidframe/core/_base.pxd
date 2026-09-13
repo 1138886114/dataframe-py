@@ -61,6 +61,8 @@ cdef class BaseColumn:
     # 懒加载缓存的 Series 访问器（见 BaseColumn.series property）。
     # 与 str accessor 同理：col._series_cache <-> acc._col 构成循环引用，需 GC 追踪。
     cdef SeriesAccessor _series_cache
+    # 懒加载缓存的 date/datetime/time 访问器（见 BaseColumn.dt property）。
+    cdef DateTimeAccessor _dt_cache
 
 # ============================================================
 #  Series accessor（pandas 风格列级访问器）
@@ -69,6 +71,14 @@ cdef class SeriesAccessor:
     cdef BaseColumn _col
 
 cdef SeriesAccessor _make_series_accessor(BaseColumn col)
+
+# ============================================================
+#  date/datetime/time accessor（pandas 风格 .dt 访问器）
+# ============================================================
+cdef class DateTimeAccessor:
+    cdef BaseColumn _col
+
+cdef DateTimeAccessor _make_dt_accessor(BaseColumn col)
 
 # ============================================================
 #  Astype helper

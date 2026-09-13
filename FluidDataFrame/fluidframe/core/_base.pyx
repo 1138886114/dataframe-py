@@ -104,6 +104,17 @@ cdef class BaseColumn:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
+    def __contains__(self, object val):
+        """元素级成员检测：`val in col`（对标 pandas Series.__contains__）。"""
+        cdef Py_ssize_t i
+        cdef object getitem = self.__getitem__
+        for i in range(self.length):
+            if getitem(i) == val:
+                return True
+        return False
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def copy(self):
         raise NotImplementedError("Subclasses must implement copy()")
 
@@ -132,6 +143,11 @@ cdef class BaseColumn:
     def map(self, object func):
         return self.series.map(func)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def factorize(self):
+        return self.series.factorize()
+
     # ------------------------------------------------------------
     # Series accessor 懒加载（同 .str accessor 模式）
     # ------------------------------------------------------------
@@ -142,6 +158,20 @@ cdef class BaseColumn:
             return self._series_cache
         self._series_cache = _make_series_accessor(self)
         return self._series_cache
+
+    # ------------------------------------------------------------
+    # .dt accessor 懒加载（仅 date/datetime/time 列有意义）
+    # ------------------------------------------------------------
+
+    @property
+    def dt(self):
+        if self.dtype != TYPE_DATE and self.dtype != TYPE_DATETIME and self.dtype != TYPE_TIME:
+            raise AttributeError(
+                f"`dt` accessor valid only for date/datetime/time columns, got dtype={self.dtype}")
+        if self._dt_cache is not None:
+            return self._dt_cache
+        self._dt_cache = _make_dt_accessor(self)
+        return self._dt_cache
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -283,8 +313,79 @@ cdef class SeriesAccessor:
     def map(self, object func):
         return _series_module()._series_map(self._col, func)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def factorize(self):
+        return _series_module()._series_factorize(self._col)
+
 
 cdef inline SeriesAccessor _make_series_accessor(BaseColumn col):
     cdef SeriesAccessor acc = <SeriesAccessor>SeriesAccessor.__new__(SeriesAccessor)
+    acc._col = col
+    return acc
+
+
+# ============================================================
+#  date/datetime/time accessor（pandas 风格 .dt）
+# ============================================================
+# 属性化白名单：列上同名零参方法在 .dt 下以属性返回值列。
+# 覆盖 Date / DateTime / Time 三列各自的公开访问器。
+cdef list _DT_ATTRS = [
+    'year', 'month', 'day', 'hour', 'minute', 'second', 'quarter',
+    'week_of_year', 'day_of_week', 'day_of_year', 'days_in_month',
+    'is_leap_year', 'is_weekend',
+    'is_month_start', 'is_month_end', 'is_year_start', 'is_year_end',
+    'is_quarter_start', 'is_quarter_end',
+    'day_name', 'month_name',
+]
+
+
+@cython.final
+cdef class DateTimeAccessor:
+    """pandas 风格 .dt 访问器。
+    由 BaseColumn.dt property 懒加载缓存；属性将列上的零参日期访问器
+    （year()/month()/...）转为返回值列的形式：
+        df['d'].dt.year       -> DateColumn/DateTimeColumn.year()
+        df['t'].dt.hour       -> Time/DateTime 的 hour()
+    weekday 相关（is_weekend 等）同理。非日期列访问 .dt 抛 AttributeError。"""
+
+    def __cinit__(self):
+        pass
+
+    def __getattr__(self, object name):
+        cdef object fn
+        if name.startswith('_'):
+            raise AttributeError(f"'DateTimeAccessor' object has no attribute '{name}'")
+        if name not in _DT_ATTRS:
+            raise AttributeError(f"'DateTimeAccessor' object has no attribute '{name}'")
+        fn = getattr(self._col, name, None)
+        if fn is None or not callable(fn):
+            raise AttributeError(
+                f"`.dt.{name}` not supported for column type {type(self._col).__name__}")
+        return fn()
+
+    @cython.binding(False)
+    def weekday(self):
+        return self._col.day_of_week()
+
+    @cython.binding(False)
+    def dayofweek(self):
+        return self._col.day_of_week()
+
+    @cython.binding(False)
+    def dayofyear(self):
+        return self._col.day_of_year()
+
+    @cython.binding(False)
+    def weekofyear(self):
+        return self._col.week_of_year()
+
+    @cython.binding(False)
+    def strftime(self, str fmt):
+        return getattr(self._col, 'strftime')(fmt)
+
+
+cdef inline DateTimeAccessor _make_dt_accessor(BaseColumn col):
+    cdef DateTimeAccessor acc = <DateTimeAccessor>DateTimeAccessor.__new__(DateTimeAccessor)
     acc._col = col
     return acc

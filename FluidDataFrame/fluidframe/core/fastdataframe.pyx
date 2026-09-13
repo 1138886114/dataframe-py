@@ -1385,6 +1385,11 @@ cdef class FastDataFrame:
         return self.columns[col_name].unique()
 
     @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def factorize(self, str col_name):
+        return self.columns[col_name].factorize()
+
+    @cython.binding(False)
     def isin(self, str col_name, set values):
         return self.columns[col_name].isin(values)
 
@@ -1407,6 +1412,16 @@ cdef class FastDataFrame:
     @cython.binding(False)
     def print(self, max_rows=80):
         print(self.to_string())
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def to_html(self, Py_ssize_t max_rows=80):
+        return _to_html_impl(self, max_rows)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def to_excel(self, object filename, str sheet_name='Sheet1'):
+        return _to_excel_impl(self, filename, sheet_name)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1493,6 +1508,10 @@ cdef class FastDataFrame:
     @cython.binding(False)
     def apply(self, object func, str axis='columns'):
         return _apply_impl(self, func, axis)
+
+    @cython.binding(False)
+    def applymap(self, object func):
+        return _apply_impl(self, func, 'columns')
 
     @cython.binding(False)
     def clip_column(self, str col_name, double lower, double upper, bint inplace=False):
@@ -1642,6 +1661,21 @@ cdef class FastDataFrame:
     @cython.always_allow_keywords(False)
     def reshape(self, Py_ssize_t rows, Py_ssize_t cols):
         return _reshape_impl(self, rows, cols)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def explode(self, str col_name):
+        return _explode_impl(self, col_name)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def stack(self):
+        return _stack_impl(self)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def unstack(self):
+        return _unstack_impl(self)
 
     @property
     @cython.binding(False)
