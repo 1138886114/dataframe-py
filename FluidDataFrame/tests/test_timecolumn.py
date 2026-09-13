@@ -138,10 +138,14 @@ class TestTimeColumnOps2:
         check('where_mask', r[1] == '00:00:00')
 
     def test_reorder(self):
+        df = FastDataFrame()
         col = TimeColumn()
         col.append('08:00:00'); col.append('10:30:45'); col.append('14:00:00')
-        col._reorder_impl([2, 0, 1])
-        check('reorder', col[0] == '14:00:00')
+        df['x'] = col
+        df.df_length = 3
+        df = df.iloc[[2, 0, 1]]
+        c = df['x']
+        check('reorder', c[0] == '14:00:00')
 
 
 class TestTimeColumnOwnership:

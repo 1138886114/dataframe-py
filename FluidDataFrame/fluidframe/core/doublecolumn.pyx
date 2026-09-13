@@ -166,21 +166,7 @@ cdef class DoubleColumn(BaseColumn):
         col.owns_data = False
         return col
 
-    @staticmethod
-    cdef DoubleColumn create_view_2d(double* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj):
-        """零拷贝 2D 矩阵块视图"""
-        cdef DoubleColumn col = DoubleColumn.__new__(DoubleColumn)
-        cdef Py_ssize_t total = rows * cols
-        col.dtype = TYPE_DOUBLE
-        col.capacity = total
-        col.length = total
-        col.data_c = ptr
-        col._base_obj = base_obj
-        # cols 列, owns_data=False, is_2d=True
-        col.num_cols = <int>cols
-        col.is_2d = True
-        col.owns_data = False
-        return col
+    
 
     @staticmethod
     @cython.binding(False)
@@ -486,46 +472,6 @@ cdef class DoubleColumn(BaseColumn):
                 result.append(sqrt(v))
             return result
         return sqrt(self.var())
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def _reorder_impl(self, list indices):
-        cdef Py_ssize_t n = len(indices)
-        cdef char err_buf[128]
-        if n != self.length:
-            snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
-            raise ValueError(err_buf.decode('ascii'))
-        if n == 0: return
-
-        cdef Py_ssize_t new_cap = max(n, 1)
-        cdef double* new_data = <double*>aligned_malloc(new_cap * sizeof(double))
-        if not new_data: raise MemoryError()
-        cdef Py_ssize_t idx, i
-        cdef Py_ssize_t* c_indices = <Py_ssize_t*>aligned_malloc(n * sizeof(Py_ssize_t))
-        if not c_indices:
-            os_aligned_free(new_data)
-            raise MemoryError()
-        try:
-            for i in range(n):
-                idx = <Py_ssize_t>indices[i]
-                if idx < 0: idx += self.length
-                if idx < 0 or idx >= self.length:
-                    snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
-                    raise IndexError(err_buf.decode('ascii'))
-                c_indices[i] = idx
-            _col_gather(new_data, self.data_c, c_indices, n, sizeof(double))
-        except Exception:
-            os_aligned_free(new_data)
-            os_aligned_free(c_indices)
-            raise
-        os_aligned_free(c_indices)
-
-        if self.owns_data and self.data_c != NULL:
-            os_aligned_free(self.data_c)
-        self.data_c = new_data
-        self.capacity = new_cap
-        self.length = n
-        self._base_obj = None
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1972,32 +1918,6 @@ cdef class DoubleColumn(BaseColumn):
     cdef void to_double_buffer(self, double* out, Py_ssize_t n):
         if n > 0:
             memcpy(out, self.data_c, n * sizeof(double))
-
-    cdef double corr_with(self, double* other, Py_ssize_t n):
-        return _vec_pearson_corr(self.data_c, other, n)
-
-    cdef double cov_with(self, double* other, Py_ssize_t n):
-        return _vec_pearson_cov(self.data_c, other, n)
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def _pearson_corr_with(self, other):
-        cdef Py_ssize_t n = min(self.length, other.length)
-        if n < 2: return NAN
-        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
-        temp.length = n
-        _col_to_double(other, temp.data_c, n)
-        return self.corr_with(temp.data_c, n)
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def _pearson_cov_with(self, other):
-        cdef Py_ssize_t n = min(self.length, other.length)
-        if n < 2: return NAN
-        cdef DoubleColumn temp = DoubleColumn(max(n, 1))
-        temp.length = n
-        _col_to_double(other, temp.data_c, n)
-        return self.cov_with(temp.data_c, n)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

@@ -179,39 +179,7 @@ cdef class CategoryColumn(BaseColumn):
             memcpy(col.codes_c, self.codes_c, self.length * sizeof(int))
         return col
 
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def _reorder_impl(self, list indices):
-        cdef Py_ssize_t n = len(indices)
-        cdef char err_buf[128]
-        if n != self.length:
-            snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
-            raise ValueError(err_buf.decode('ascii'))
-
-        if n == 0:
-            return
-
-        cdef int* new_data = <int*>aligned_malloc(n * sizeof(int))
-        if not new_data: raise MemoryError()
-        cdef int* self_codes = self.codes_c
-        cdef Py_ssize_t i, idx
-        try:
-            for i in range(n):
-                idx = <Py_ssize_t>indices[i]
-                if idx < 0: idx += self.length
-                if idx < 0 or idx >= self.length:
-                    snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
-                    raise IndexError(err_buf.decode('ascii'))
-                new_data[i] = self_codes[idx]
-        except Exception:
-            os_aligned_free(new_data)
-            raise
-        if self._owns_data and self.codes_c != NULL:
-            os_aligned_free(self.codes_c)
-        self.codes_c = new_data
-        self.capacity = n
-        self._owns_data = True
-        self._base_obj = None
+    
 
     @property
     def _cate(self):

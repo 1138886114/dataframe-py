@@ -1,6 +1,7 @@
 import sys
 sys.path.insert(0, '.')
 from fluidframe.core.ucs2column import UCS2Column
+from fluidframe.core.fastdataframe import FastDataFrame
 
 passed = 0
 failed = 0
@@ -110,11 +111,15 @@ def test_growth():
     check('growth [199]', col[199] == "str_199")
 
 def test_reorder():
+    df = FastDataFrame()
     col = UCS2Column(); col.append("a"); col.append("b"); col.append("c")
-    col._reorder_impl([2, 0, 1])
-    check('reorder [0]', col[0] == "c")
-    check('reorder [1]', col[1] == "a")
-    check('reorder [2]', col[2] == "b")
+    df['x'] = col
+    df.df_length = 3
+    df = df.iloc[[2, 0, 1]]
+    c = df['x']
+    check('reorder [0]', c[0] == "c")
+    check('reorder [1]', c[1] == "a")
+    check('reorder [2]', c[2] == "b")
 
 
 # =====================================================================

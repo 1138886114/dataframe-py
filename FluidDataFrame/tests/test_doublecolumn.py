@@ -858,8 +858,12 @@ def test_drop_row():
 def test_distances():
     a = _make_1d([1.0, 2.0, 3.0])
     b = _make_1d([4.0, 5.0, 6.0])
-    check('pearson_corr', _approx(a._pearson_corr_with(b), 1.0))
-    check('pearson_cov', a._pearson_cov_with(b) > 0)
+    df = FastDataFrame()
+    df['a'] = a
+    df['b'] = b
+    df.df_length = 3
+    check('pearson_corr', _approx(df.corrcoef(df['a'], df['b']), 1.0))
+    check('pearson_cov', df.cov_withcols(df['a'], df['b']) > 0)
     check('euclidean', _approx(a.euclidean_dist(b), math.sqrt(27.0)))
     check('manhattan', _approx(a.manhattan_dist(b), 9.0))
     cd = a.cosine_dist(b)
@@ -868,11 +872,15 @@ def test_distances():
     check('cosine_sim -1<=cs<=1', -1.0 <= cs <= 1.0)
 
 def test_reorder():
+    df = FastDataFrame()
     col = _make_1d([10.0, 20.0, 30.0])
-    col._reorder_impl([2, 0, 1])
-    check('reorder [0]', col[0] == 30.0)
-    check('reorder [1]', col[1] == 10.0)
-    check('reorder [2]', col[2] == 20.0)
+    df['x'] = col
+    df.df_length = 3
+    df = df.iloc[[2, 0, 1]]
+    c = df['x']
+    check('reorder [0]', c[0] == 30.0)
+    check('reorder [1]', c[1] == 10.0)
+    check('reorder [2]', c[2] == 20.0)
 
 def test_count():
     col = _make_1d([1.0, 2.0, 3.0])

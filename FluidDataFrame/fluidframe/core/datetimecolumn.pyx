@@ -193,19 +193,7 @@ cdef class DateTimeColumn(BaseColumn):
         col.owns_data = False
         return col
 
-    @staticmethod
-    cdef DateTimeColumn create_view_2d(int64_t* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj):
-        cdef DateTimeColumn col = DateTimeColumn.__new__(DateTimeColumn)
-        cdef Py_ssize_t total = rows * cols
-        col.dtype = TYPE_DATETIME
-        col.capacity = total
-        col.length = total
-        col.data_c = ptr
-        col._base_obj = base_obj
-        col.num_cols = <int>cols
-        col.is_2d = True
-        col.owns_data = False
-        return col
+    
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -375,44 +363,6 @@ cdef class DateTimeColumn(BaseColumn):
                     min_val = ptr[base + i]
             results[j] = min_val
         return results
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def _reorder_impl(self, list indices):
-        cdef Py_ssize_t n = len(indices)
-        cdef char err_buf[128]
-        if n != self.length:
-            snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
-            raise ValueError(err_buf.decode('ascii'))
-        if n == 0: return
-
-        cdef int64_t* new_data = <int64_t*>aligned_malloc(n * sizeof(int64_t))
-        if not new_data: raise MemoryError()
-        cdef Py_ssize_t i, idx
-        cdef Py_ssize_t* c_indices = <Py_ssize_t*>aligned_malloc(n * sizeof(Py_ssize_t))
-        if not c_indices:
-            os_aligned_free(new_data)
-            raise MemoryError()
-        try:
-            for i in range(n):
-                idx = <Py_ssize_t>indices[i]
-                if idx < 0: idx += self.length
-                if idx < 0 or idx >= self.length:
-                    snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
-                    raise IndexError(err_buf.decode('ascii'))
-                c_indices[i] = idx
-            _col_gather(new_data, self.data_c, c_indices, n, sizeof(int64_t))
-        except Exception:
-            os_aligned_free(new_data)
-            os_aligned_free(c_indices)
-            raise
-        os_aligned_free(c_indices)
-
-        if self.owns_data and self.data_c != NULL:
-            os_aligned_free(self.data_c)
-        self.data_c = new_data
-        self.capacity = n
-        self._base_obj = None
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

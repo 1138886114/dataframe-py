@@ -837,12 +837,9 @@ cdef _replace_impl(FastDataFrame self, object to_replace, object value):
     cdef int* i_ptr
     cdef double* d_ptr
     cdef UCS2Column new_col
-    cdef bint is2d
-    cdef Py_ssize_t c_out, r_out
 
     for name, col in result.columns.items():
         total = col.length
-        is2d, c_out, r_out = _col_shape_probe(col)
         if col.dtype == TYPE_INT and isinstance(to_replace, (int, float)) and isinstance(value, (int, float)):
             i_target = <int>to_replace
             i_val = <int>value
@@ -870,10 +867,6 @@ cdef _replace_impl(FastDataFrame self, object to_replace, object value):
                     new_col.append(str(value))
                 else:
                     new_col.append(str(col[i]))
-            if is2d and c_out > 1:
-                new_col.num_cols = <int>c_out
-                new_col.is_2d = True
-                new_col.owns_data = True
             result.columns[name] = new_col
     return result
 

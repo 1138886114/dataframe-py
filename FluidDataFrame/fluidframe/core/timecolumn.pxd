@@ -16,6 +16,4 @@ cdef class TimeColumn(BaseColumn):
     cdef TimeColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
     @staticmethod
     cdef TimeColumn create_view(int32_t* ptr, Py_ssize_t length, object base_obj)
-    @staticmethod
-    cdef TimeColumn create_view_2d(int32_t* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj)
     cdef IntColumn _cmp_op(self, object val, int op)

@@ -1,6 +1,8 @@
 import sys
 sys.path.insert(0, '.')
 from fluidframe.core.datecolumn import DateColumn
+from fluidframe.core.intcolumn import IntColumn
+from fluidframe.core.fastdataframe import FastDataFrame
 
 passed = 0
 failed = 0
@@ -273,9 +275,13 @@ class TestDateColumnMisc:
         check('growth', col.length == 100)
 
     def test_reorder(self):
+        df = FastDataFrame()
         col = DateColumn(); col.append(20160101); col.append(20231225); col.append(20200615)
-        col._reorder_impl([2, 0, 1])
-        check('reorder', [col[i] for i in range(3)] == [20200615, 20160101, 20231225])
+        df['x'] = col
+        df.df_length = 3
+        df = df.iloc[[2, 0, 1]]
+        c = df['x']
+        check('reorder', [c[i] for i in range(3)] == [20200615, 20160101, 20231225])
 
     def test_large(self):
         col = DateColumn(); col.append(99991231)

@@ -16,9 +16,9 @@ from fluidframe.core._base cimport (
     TYPE_DATE, TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
     BaseColumn, aligned_malloc, aligned_realloc, os_aligned_free,
     _resolve_astype_target, NumericType,
-    _vec_pearson_corr, _vec_pearson_cov, _vec_euclidean_dist,
+    _vec_euclidean_dist,
     _vec_manhattan_dist, _vec_cosine_sim, _vec_jaccard_sim, _vec_hamming_dist,
-    _int_double_pearson_corr, _int_double_pearson_cov, _int_double_euclidean_dist,
+    _int_double_euclidean_dist,
     _int_double_manhattan_dist, _int_double_cosine_sim, _int_double_jaccard_sim, _int_double_hamming_dist,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
     _col_drop_row, _col_gather,
@@ -127,19 +127,7 @@ cdef class IntColumn(BaseColumn):
         col.owns_data = False
         return col
 
-    @staticmethod
-    cdef IntColumn create_view_2d(int* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj):
-        cdef IntColumn col = IntColumn.__new__(IntColumn)
-        cdef Py_ssize_t total = rows * cols
-        col.dtype = TYPE_INT
-        col.capacity = total
-        col.length = total
-        col.data_c = ptr
-        col._base_obj = base_obj
-        col.num_cols = <int>cols
-        col.is_2d = True
-        col.owns_data = False
-        return col
+    
 
     cdef inline DoubleColumn _make_like_nan_dbl(self):
         cdef Py_ssize_t c = self.num_cols
@@ -1462,46 +1450,6 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def _reorder_impl(self, list indices):
-        cdef Py_ssize_t n = len(indices)
-        cdef char err_buf[128]
-        if n != self.length:
-            snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
-            raise ValueError(err_buf.decode('ascii'))
-        if n == 0: return
-
-        cdef Py_ssize_t new_cap = max(n, 1)
-        cdef int* new_data = <int*>aligned_malloc(new_cap * sizeof(int))
-        if not new_data: raise MemoryError()
-        cdef Py_ssize_t i, idx
-        cdef Py_ssize_t* c_indices = <Py_ssize_t*>aligned_malloc(n * sizeof(Py_ssize_t))
-        if not c_indices:
-            os_aligned_free(new_data)
-            raise MemoryError()
-        try:
-            for i in range(n):
-                idx = <Py_ssize_t>indices[i]
-                if idx < 0: idx += self.length
-                if idx < 0 or idx >= self.length:
-                    snprintf(err_buf, sizeof(err_buf), "Index out of bounds: %zd", idx)
-                    raise IndexError(err_buf.decode('ascii'))
-                c_indices[i] = idx
-            _col_gather(new_data, self.data_c, c_indices, n, sizeof(int))
-        except Exception:
-            os_aligned_free(new_data)
-            raise
-        finally:
-            os_aligned_free(c_indices)
-
-        if self.owns_data and self.data_c != NULL:
-            os_aligned_free(self.data_c)
-        self.data_c = new_data
-        self.capacity = new_cap
-        self.length = n
-        self._base_obj = None
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError("Index out of range")
@@ -2013,28 +1961,6 @@ cdef class IntColumn(BaseColumn):
         with nogil:
             for i in range(n):
                 out[i] = <double>ptr[i]
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def _pearson_corr_with(self, other):
-        cdef Py_ssize_t n = min(self.length, other.length)
-        if isinstance(other, IntColumn):
-            return _vec_pearson_corr(self.data_c, (<IntColumn>other).data_c, n)
-        elif isinstance(other, DoubleColumn):
-            return _int_double_pearson_corr(self.data_c, (<DoubleColumn>other).data_c, n)
-        else:
-            raise TypeError(f"Unsupported type: {type(other)}")
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def _pearson_cov_with(self, other):
-        cdef Py_ssize_t n = min(self.length, other.length)
-        if isinstance(other, IntColumn):
-            return _vec_pearson_cov(self.data_c, (<IntColumn>other).data_c, n)
-        elif isinstance(other, DoubleColumn):
-            return _int_double_pearson_cov(self.data_c, (<DoubleColumn>other).data_c, n)
-        else:
-            raise TypeError(f"Unsupported type: {type(other)}")
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

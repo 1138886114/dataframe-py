@@ -177,8 +177,10 @@ cdef tuple _col_shape_probe(BaseColumn col):
 
 cdef BaseColumn _col_from_keys_2d(BaseColumn src, list keys):
     """由整行键（_col_row_key 输出，各为定长子列取值）重建保持 cols 维的 2D 列。
-    Int/Double 用公开 from_2d 工厂；Date 键为 ymd int，转回 days 存储；
-    其余 2D 类型无对应存储，明确 NotImpl。"""
+    Int/Double 用公开 from_2d 工厂；
+    Date 键为 ymd int，DateTime 键为 str（_datetime_to_str 格式），Time 键为 str
+    （_time_to_str 格式），各自转回内部存储（days / us / sec）；
+    其余 dtype（字符串/布尔/类别）不承载 2D 语义，明确 NotImpl。"""
     cdef int dtype = src.dtype
     cdef Py_ssize_t nkeys = len(keys)
     if nkeys == 0:
@@ -198,8 +200,13 @@ cdef BaseColumn _col_from_keys_2d(BaseColumn src, list keys):
     cdef Py_ssize_t k, j
     cdef object flat = []
     cdef DateColumn dcol
+    cdef DateTimeColumn dtcol
+    cdef TimeColumn tcol
     cdef int32_t* dptr
+    cdef int64_t* dtptr
+    cdef int32_t* tptr
     cdef int ymd
+    cdef object v
     # from_2d 输入为列优先（先 col0 全部行，再 col1…），行键需转置
     for j in range(c):
         for k in range(nkeys):
@@ -221,7 +228,41 @@ cdef BaseColumn _col_from_keys_2d(BaseColumn src, list keys):
                 ymd = <int>keys[k][j]
                 dptr[j * nkeys + k] = _ymd_to_days(ymd // 10000, (ymd // 100) % 100, ymd % 100)
         return dcol
-    raise NotImplementedError(f"value_counts on 2D column not supported for dtype {dtype}")
+    elif dtype == TYPE_DATETIME:
+        dtcol = DateTimeColumn(max(total, 1), cols=c)
+        dtcol.length = total
+        dtcol.num_cols = <int>c
+        dtcol.is_2d = True
+        dtcol.owns_data = True
+        dtptr = <int64_t*>dtcol.data_c
+        for k in range(nkeys):
+            for j in range(c):
+                v = keys[k][j]
+                if isinstance(v, str):
+                    dtptr[j * nkeys + k] = _parse_datetime_str(<str>v)
+                else:
+                    dtptr[j * nkeys + k] = <int64_t>v
+        return dtcol
+    elif dtype == TYPE_TIME:
+        tcol = TimeColumn(max(total, 1), cols=c)
+        tcol.length = total
+        tcol.num_cols = <int>c
+        tcol.is_2d = True
+        tcol.owns_data = True
+        tptr = <int32_t*>tcol.data_c
+        for k in range(nkeys):
+            for j in range(c):
+                v = keys[k][j]
+                if isinstance(v, str):
+                    tptr[j * nkeys + k] = _parse_time_str(<str>v)
+                else:
+                    tptr[j * nkeys + k] = <int32_t>v
+        return tcol
+    raise NotImplementedError(
+        f"value_counts on a 2D column is not supported for dtype code {dtype}: "
+        "only Int/Double/Date/DateTime/Time carry 2D semantics; "
+        "string/bool/category columns are always 1D"
+    )
 
 cdef _eval_impl(FastDataFrame self, str expr, bint inplace):
     cdef FastDataFrame target_df = self if inplace else self.copy()

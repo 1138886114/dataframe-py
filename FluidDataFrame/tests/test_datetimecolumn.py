@@ -159,10 +159,14 @@ class TestDateTimeColumnOps2:
         check('where_mask fill', '2000' in r[1])
 
     def test_reorder(self):
+        df = FastDataFrame()
         col = DateTimeColumn()
         col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2024-01-01 08:00:00')
-        col._reorder_impl([2, 0, 1])
-        check('reorder', col[0] == '2024-01-01 08:00:00')
+        df['x'] = col
+        df.df_length = 3
+        df = df.iloc[[2, 0, 1]]
+        c = df['x']
+        check('reorder', c[0] == '2024-01-01 08:00:00')
 
 
 class TestDateTimeColumnOwnership:

@@ -8,7 +8,6 @@ from libc.stdint cimport int32_t, int64_t
 # ============================================================
 cdef enum DataType:
     TYPE_INT = 0
-    TYPE_FLOAT = 2
     TYPE_DOUBLE = 2
     TYPE_CHAR256 = 3
     TYPE_UCS2 = 4
@@ -363,40 +362,6 @@ cdef inline double _vec_hamming_dist(NumericType* x, NumericType* y, Py_ssize_t 
 # ============================================================
 #  Vectorized math: int* / NumericType cross-type (inline)
 # ============================================================
-cdef inline double _int_double_pearson_corr(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n < 2: return NAN
-    cdef double sum_x = 0.0, sum_y = 0.0
-    cdef double mean_x, mean_y
-    cdef double cov = 0.0, var_x = 0.0, var_y = 0.0
-    cdef double xi, yi, denom
-    cdef Py_ssize_t i
-    for i in range(n):
-        sum_x += <double>x[i]
-        sum_y += <double>y[i]
-    mean_x = sum_x / <double>n
-    mean_y = sum_y / <double>n
-    for i in range(n):
-        xi = <double>x[i] - mean_x
-        yi = <double>y[i] - mean_y
-        cov += xi * yi
-        var_x += xi * xi
-        var_y += yi * yi
-    denom = sqrt(var_x * var_y)
-    return cov / denom if denom > 1e-15 else NAN
-
-cdef inline double _int_double_pearson_cov(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
-    if n < 2: return NAN
-    cdef double sum_x = 0.0, sum_y = 0.0, sum_xy = 0.0
-    cdef double val_x, val_y
-    cdef Py_ssize_t i
-    for i in range(n):
-        val_x = <double>x[i]
-        val_y = <double>y[i]
-        sum_x += val_x
-        sum_y += val_y
-        sum_xy += val_x * val_y
-    return (sum_xy - (sum_x * sum_y) / <double>n) / <double>(n - 1.0)
-
 cdef inline double _int_double_euclidean_dist(int* x, NumericType* y, Py_ssize_t n) noexcept nogil:
     if n == 0: return NAN
     cdef double sum_sq = 0.0, diff

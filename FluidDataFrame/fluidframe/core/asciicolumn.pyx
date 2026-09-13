@@ -306,59 +306,6 @@ cdef class AsciiColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def _reorder_impl(self, list indices):
-        cdef Py_ssize_t n = len(indices)
-        if n != self.length:
-            raise ValueError("Length of indices must match column length")
-        if n == 0: return
-
-        cdef Py_ssize_t req_bytes = 0
-        cdef Py_ssize_t i, idx
-        for i in range(n):
-            idx = <Py_ssize_t>indices[i]
-            if idx < 0: idx += self.length
-            if idx < 0 or idx >= self.length:
-                raise IndexError("Index out of bounds")
-            req_bytes += self.offsets_c[idx + 1] - self.offsets_c[idx]
-
-        cdef Py_ssize_t req_byte_cap = max(req_bytes, 4096)
-        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
-        if not new_offsets: raise MemoryError()
-        cdef char* new_data = <char*>aligned_malloc(req_byte_cap)
-        if not new_data:
-            os_aligned_free(new_offsets)
-            raise MemoryError()
-
-        new_offsets[0] = 0
-        cdef Py_ssize_t current_byte_len = 0
-        cdef Py_ssize_t start, end, str_len
-
-        try:
-            for i in range(n):
-                idx = <Py_ssize_t>indices[i]
-                if idx < 0: idx += self.length
-                start = self.offsets_c[idx]
-                end = self.offsets_c[idx + 1]
-                str_len = end - start
-                if str_len > 0:
-                    memcpy(new_data + current_byte_len, self.data_c + start, str_len)
-                current_byte_len += str_len
-                new_offsets[i + 1] = current_byte_len
-        except Exception:
-            os_aligned_free(new_offsets)
-            os_aligned_free(new_data)
-            raise
-
-        os_aligned_free(self.offsets_c)
-        os_aligned_free(self.data_c)
-        self.offsets_c = new_offsets
-        self.data_c = new_data
-        self.byte_length = current_byte_len
-        self.byte_capacity = req_byte_cap
-        self.capacity = n
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length:

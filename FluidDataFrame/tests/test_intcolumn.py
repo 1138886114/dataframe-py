@@ -3,6 +3,7 @@ import sys
 sys.path.insert(0, '..')
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
+from fluidframe.core.fastdataframe import FastDataFrame
 
 passed = 0
 failed = 0
@@ -240,11 +241,15 @@ def test_growth():
     check('growth [99]', col[99] == 99)
 
 def test_reorder():
+    df = FastDataFrame()
     col = IntColumn(); col.append(10); col.append(20); col.append(30)
-    col._reorder_impl([2, 0, 1])
-    check('reorder [0]', col[0] == 30)
-    check('reorder [1]', col[1] == 10)
-    check('reorder [2]', col[2] == 20)
+    df['x'] = col
+    df.df_length = 3
+    df = df.iloc[[2, 0, 1]]
+    c = df['x']
+    check('reorder [0]', c[0] == 30)
+    check('reorder [1]', c[1] == 10)
+    check('reorder [2]', c[2] == 20)
 
 def test_comparison():
     col = IntColumn()
@@ -1004,8 +1009,12 @@ def test_distances_int_int():
     b = IntColumn(3)
     for v in [4, 5, 6]:
         b.append(v)
-    check('pearson_corr int-int', _approx(a._pearson_corr_with(b), 1.0))
-    check('pearson_cov int-int', a._pearson_cov_with(b) > 0)
+    df = FastDataFrame()
+    df['a'] = a
+    df['b'] = b
+    df.df_length = 3
+    check('pearson_corr int-int', _approx(df.corrcoef(df['a'], df['b']), 1.0))
+    check('pearson_cov int-int', df.cov_withcols(df['a'], df['b']) > 0)
     check('euclidean int-int', _approx(a.euclidean_dist(b), math.sqrt(27.0)))
     check('manhattan int-int', _approx(a.manhattan_dist(b), 9.0))
     cd = a.cosine_dist(b)
@@ -1020,8 +1029,12 @@ def test_distances_int_double():
     b = DoubleColumn(3)
     for v in [4.0, 5.0, 6.0]:
         b.append(v)
-    check('pearson_corr int-dbl', _approx(a._pearson_corr_with(b), 1.0))
-    check('pearson_cov int-dbl', a._pearson_cov_with(b) > 0)
+    df = FastDataFrame()
+    df['a'] = a
+    df['b'] = b
+    df.df_length = 3
+    check('pearson_corr int-dbl', _approx(df.corrcoef(df['a'], df['b']), 1.0))
+    check('pearson_cov int-dbl', df.cov_withcols(df['a'], df['b']) > 0)
     check('euclidean int-dbl', _approx(a.euclidean_dist(b), math.sqrt(27.0)))
     check('manhattan int-dbl', _approx(a.manhattan_dist(b), 9.0))
     cd = a.cosine_dist(b)

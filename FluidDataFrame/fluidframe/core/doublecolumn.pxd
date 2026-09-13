@@ -24,15 +24,11 @@ cdef class DoubleColumn(BaseColumn):
     cdef DoubleColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
 
     cdef void to_double_buffer(self, double* out, Py_ssize_t n)
-    cdef double corr_with(self, double* other, Py_ssize_t n)
-    cdef double cov_with(self, double* other, Py_ssize_t n)
     cdef DoubleColumn gather_with_sentinel(self, Py_ssize_t* indices, Py_ssize_t n, double sentinel)
     cdef void _central_moments(self, double* out_mean, double* out_m2, double* out_m3, double* out_m4) noexcept nogil
     cdef double _quickselect(self, double* data, Py_ssize_t n, Py_ssize_t k) noexcept nogil
     cdef double quantile_per_subcol(self, double* col_ptr, Py_ssize_t n, double q) noexcept
     @staticmethod
     cdef DoubleColumn create_view(double* ptr, Py_ssize_t length, object base_obj)
-    @staticmethod
-    cdef DoubleColumn create_view_2d(double* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj)
     cdef inline DoubleColumn _make_like_nan(self)
     cdef IntColumn _cmp_op(self, object val, int op)

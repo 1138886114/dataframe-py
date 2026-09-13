@@ -230,59 +230,6 @@ cdef class UCS2Column(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def _reorder_impl(self, list indices):
-        cdef Py_ssize_t n = len(indices)
-        cdef char err_buf[256]
-        if n != self.length:
-            snprintf(err_buf, sizeof(err_buf), "Length of indices (%zd) must match column length (%zd)", n, self.length)
-            raise ValueError(err_buf.decode('ascii'))
-
-        cdef Py_ssize_t req_char_len = 0
-        cdef Py_ssize_t i, idx
-        for i in range(n):
-            idx = <Py_ssize_t>indices[i]
-            if idx < 0: idx += self.length
-            if idx < 0 or idx >= self.length:
-                raise IndexError("Index out of bounds")
-            req_char_len += self.offsets_c[idx + 1] - self.offsets_c[idx]
-
-        cdef Py_ssize_t req_char_cap = max(req_char_len, 1024)
-        cdef Py_ssize_t* new_offsets = <Py_ssize_t*>aligned_malloc((n + 1) * sizeof(Py_ssize_t))
-        if not new_offsets: raise MemoryError()
-        cdef Py_UCS2* new_chars = <Py_UCS2*>aligned_malloc(req_char_cap * sizeof(Py_UCS2))
-        if not new_chars:
-            os_aligned_free(new_offsets)
-            raise MemoryError()
-
-        new_offsets[0] = 0
-        cdef Py_ssize_t current_char_len = 0
-        cdef Py_ssize_t start, end, str_len
-
-        try:
-            for i in range(n):
-                idx = <Py_ssize_t>indices[i]
-                if idx < 0: idx += self.length
-                start = self.offsets_c[idx]
-                end = self.offsets_c[idx + 1]
-                str_len = end - start
-                if str_len > 0:
-                    memcpy(new_chars + current_char_len, self.chars_c + start, str_len * sizeof(Py_UCS2))
-                current_char_len += str_len
-                new_offsets[i + 1] = current_char_len
-        except Exception:
-            os_aligned_free(new_offsets)
-            os_aligned_free(new_chars)
-            raise
-
-        os_aligned_free(self.offsets_c)
-        os_aligned_free(self.chars_c)
-        self.offsets_c = new_offsets
-        self.chars_c = new_chars
-        self.char_length = current_char_len
-        self.char_capacity = req_char_cap
-
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
     def __getitem__(self, Py_ssize_t idx):
         if idx < 0: idx += self.length
         if idx < 0 or idx >= self.length: raise IndexError()

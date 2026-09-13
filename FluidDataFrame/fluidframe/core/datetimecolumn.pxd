@@ -18,6 +18,4 @@ cdef class DateTimeColumn(BaseColumn):
     cdef inline int64_t _resolve_dt(self, val) except *
     @staticmethod
     cdef DateTimeColumn create_view(int64_t* ptr, Py_ssize_t length, object base_obj)
-    @staticmethod
-    cdef DateTimeColumn create_view_2d(int64_t* ptr, Py_ssize_t rows, Py_ssize_t cols, object base_obj)
     cdef IntColumn _cmp_op(self, object val, int op)

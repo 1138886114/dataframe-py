@@ -11,9 +11,6 @@ TYPE_CATEGORY = 7
 TYPE_DATETIME = 8
 TYPE_TIME = 9
 
-# Deprecated: TYPE_FLOAT was never used, kept for backward compatibility
-TYPE_FLOAT = TYPE_DOUBLE
-
 
 class Char256:
     """用于在 Schema 中标记纯 ASCII 256字节定长字符串类型的占位类"""
