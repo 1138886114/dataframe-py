@@ -434,6 +434,94 @@ cdef _reset_index_impl(FastDataFrame self):
     self.index = RangeIndex(0, self.df_length)
     return self
 
+cdef _set_index_impl(FastDataFrame self, str col_name, bint drop=True):
+    """df.set_index：将列提升为索引并（默认）移除。
+    全 int 值 → IntIndex；否则 → 单层 MultiIndex（levels 出现序 + codes）。"""
+    if col_name not in self.columns:
+        raise KeyError(f"Column '{col_name}' not found")
+    cdef BaseColumn src = self.columns[col_name]
+    cdef list keys = _col_to_keys(src)
+    cdef Py_ssize_t i, n = len(keys)
+    cdef object v
+    cdef bint all_int = True
+    cdef IntColumn idx_col
+    cdef IntColumn codes
+    cdef list levels = []
+    cdef dict level_lookup = {}
+    for i in range(n):
+        v = keys[i]
+        if isinstance(v, bool) or not isinstance(v, int):
+            all_int = False
+            break
+
+    if drop:
+        self.columns.pop(col_name)
+
+    if all_int:
+        idx_col = IntColumn(max(n, 1))
+        idx_col.length = n
+        for i in range(n):
+            idx_col.data_c[i] = <int>keys[i]
+        self.index = IntIndex(idx_col)
+        return self
+
+    codes = IntColumn(max(n, 1))
+    codes.length = n
+    for i in range(n):
+        v = keys[i]
+        if v not in level_lookup:
+            level_lookup[v] = len(levels)
+            levels.append(v)
+        codes.data_c[i] = <int>level_lookup[v]
+    self.index = MultiIndex([levels], [codes], [col_name])
+    return self
+
+cdef _get_dummies_impl(FastDataFrame self, col_names, str prefix, bint drop_first):
+    """df.get_dummies：对指定（默认全部字符串/类别）列 Each 唯一值建 0/1 IntColumn。
+    2D 列以行级键 one-hot；原列保留。"""
+    cdef FastDataFrame result = _copy_impl(self)
+    cdef list selected
+    cdef str name
+    cdef BaseColumn col
+    if col_names is None:
+        selected = []
+        for name, col in result.columns.items():
+            if col.dtype == TYPE_CHAR256 or col.dtype == TYPE_UCS2 or col.dtype == TYPE_CATEGORY:
+                selected.append(name)
+    else:
+        selected = list(col_names)
+
+    cdef str pfx, out_name
+    cdef list keys, uniques
+    cdef dict seen
+    cdef object u
+    cdef Py_ssize_t i, nk
+    cdef IntColumn dcol
+
+    for name in selected:
+        if name not in result.columns:
+            raise KeyError(f"Column '{name}' not found")
+        col = result.columns[name]
+        keys = _col_to_keys(col)
+        nk = len(keys)
+        uniques = []
+        seen = {}
+        for v in keys:
+            if v not in seen:
+                seen[v] = 1
+                uniques.append(v)
+        if drop_first and uniques:
+            uniques = uniques[1:]
+        pfx = name if prefix == '' else prefix
+        for u in uniques:
+            out_name = f"{pfx}_{u}"
+            dcol = IntColumn(max(nk, 1))
+            dcol.length = nk
+            for i in range(nk):
+                dcol.data_c[i] = 1 if keys[i] == u else 0
+            result.columns[out_name] = dcol
+    return result
+
 cdef _reindex_impl(FastDataFrame self, list new_index):
     cdef Py_ssize_t new_len = len(new_index)
     cdef dict old_pos = {}

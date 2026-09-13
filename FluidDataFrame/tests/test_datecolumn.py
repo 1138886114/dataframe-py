@@ -98,17 +98,17 @@ class TestDateColumnStats:
 class TestDateColumnExtractors:
     def test_year(self):
         col = DateColumn(); col.append(20160101); col.append(20231225)
-        r = col._year()
+        r = col.year()
         check('year', r[0] == 2016 and r[1] == 2023)
 
     def test_month(self):
         col = DateColumn(); col.append(20160101); col.append(20231225)
-        r = col._month()
+        r = col.month()
         check('month', r[0] == 1 and r[1] == 12)
 
     def test_day(self):
         col = DateColumn(); col.append(20160101); col.append(20231225)
-        r = col._day()
+        r = col.day()
         check('day', r[0] == 1 and r[1] == 25)
 
     def test_strftime(self):
@@ -187,44 +187,44 @@ class TestDateColumnCalendar:
 
     def test_days_in_month(self):
         col = DateColumn(); col.append(20230201); col.append(20240201); col.append(20230401)
-        r = col._days_in_month()
+        r = col.days_in_month()
         check('Feb non-leap', r[0] == 28)
         check('Feb leap', r[1] == 29)
         check('Apr', r[2] == 30)
 
     def test_is_leap_year(self):
         col = DateColumn(); col.append(20200101); col.append(20230101); col.append(24000101)
-        r = col._is_leap_year()
+        r = col.is_leap_year()
         check('leap', r[0] == 1 and r[1] == 0 and r[2] == 1)
 
     def test_is_weekend(self):
         col = DateColumn(); col.append(20220612); col.append(20220611); col.append(20220613)
-        r = col._is_weekend()
+        r = col.is_weekend()
         check('weekend', r[0] == 1 and r[1] == 1 and r[2] == 0)
 
     def test_month_start_end(self):
         col = DateColumn(); col.append(20230101); col.append(20230131); col.append(20230115)
-        check('month_start', col._is_month_start()[0] == 1)
-        check('month_end', col._is_month_end()[1] == 1)
+        check('month_start', col.is_month_start()[0] == 1)
+        check('month_end', col.is_month_end()[1] == 1)
 
     def test_year_start_end(self):
         col = DateColumn(); col.append(20230101); col.append(20231231)
-        check('year_start', col._is_year_start()[0] == 1)
-        check('year_end', col._is_year_end()[1] == 1)
+        check('year_start', col.is_year_start()[0] == 1)
+        check('year_end', col.is_year_end()[1] == 1)
 
     def test_quarter(self):
         col = DateColumn()
         for d in [20240115, 20240415, 20240715, 20241015]: col.append(d)
-        r = col._quarter()
+        r = col.quarter()
         check('quarters', [r[i] for i in range(4)] == [1, 2, 3, 4])
 
     def test_quarter_start_end(self):
         col = DateColumn()
         for d in [20240101, 20240401, 20240701, 20241001]: col.append(d)
-        check('q_start', all(col._is_quarter_start()[i] == 1 for i in range(4)))
+        check('q_start', all(col.is_quarter_start()[i] == 1 for i in range(4)))
         col2 = DateColumn()
         for d in [20240331, 20240630, 20240930, 20241231]: col2.append(d)
-        check('q_end', all(col2._is_quarter_end()[i] == 1 for i in range(4)))
+        check('q_end', all(col2.is_quarter_end()[i] == 1 for i in range(4)))
 
     def test_week_of_year(self):
         col = DateColumn(); col.append(20240101); col.append(20241231)

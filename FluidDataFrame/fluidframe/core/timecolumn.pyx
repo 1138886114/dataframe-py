@@ -388,7 +388,7 @@ cdef class TimeColumn(BaseColumn):
     # ------------------------------------------------------------
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def _hour(self):
+    def hour(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = self.data_c
@@ -401,7 +401,7 @@ cdef class TimeColumn(BaseColumn):
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def _minute(self):
+    def minute(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = self.data_c
@@ -414,7 +414,7 @@ cdef class TimeColumn(BaseColumn):
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
-    def _second(self):
+    def second(self):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef int32_t* ptr = self.data_c

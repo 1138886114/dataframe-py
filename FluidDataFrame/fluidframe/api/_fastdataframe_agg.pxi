@@ -488,3 +488,108 @@ cdef _nunique_impl(FastDataFrame self, str col_name=None):
     for name, col in self.columns.items():
         result[name] = len(set(_col_to_keys(col)))
     return result
+
+
+# ============================================================
+# Series 级方便方法：BaseColumn 全局转发入口（模块级公开 def）
+# 由 _base.BaseColumn 以局部 import 方式调用，语义与 df.value_counts /
+# df.isnull / df.apply 完全对齐（2D 列走行级键，见 crud._col_to_keys）。
+# ============================================================
+
+def _series_value_counts(BaseColumn col, str key_name='value'):
+    """列级 value_counts：行级键计数，2D 列键为子列元组，结果保持 cols 维度。"""
+    cdef list keys = _col_to_keys(col)
+    cdef Py_ssize_t n = len(keys)
+    cdef Py_ssize_t i
+    cdef object v
+
+    cdef dict counts = {}
+    for i in range(n):
+        v = keys[i]
+        counts[v] = counts.get(v, 0) + 1
+
+    cdef list sorted_items = sorted(counts.items(), key=lambda x: -x[1])
+    cdef FastDataFrame result = FastDataFrame()
+    result.df_length = len(sorted_items)
+    result.index = RangeIndex(0, len(sorted_items))
+    cdef list key_list = [k for k, v in sorted_items]
+
+    if _col_is_2d(col):
+        result.columns[key_name] = _col_from_keys_2d(col, key_list)
+    else:
+        result.columns[key_name] = _column_from_list_impl(result, key_name, key_list)
+
+    cdef IntColumn cnt_col = IntColumn(len(sorted_items))
+    cnt_col.length = len(sorted_items)
+    cdef int* cnt_ptr = cnt_col.data_c
+    for i in range(len(sorted_items)):
+        cnt_ptr[i] = sorted_items[i][1]
+    result.columns['count'] = cnt_col
+    return result
+
+
+def _series_isna(BaseColumn col):
+    """列级缺失掩码，语义与 df.isnull 一致：double=NaN、字符串=空串、类别=''，其余恒 False。
+    2D 输入保持 cols 维度（IntColumn 掩码）。"""
+    cdef bint is2d
+    cdef Py_ssize_t c_out, total, i
+    cdef Py_ssize_t* offset_ptr
+    cdef double* d_ptr
+    cdef CategoryColumn cat_col
+    cdef int* out_ptr
+
+    is2d, c_out, _ = _col_shape_probe(col)
+    total = col.length
+    cdef IntColumn new_col = IntColumn(max(total, 1), cols=c_out)
+    new_col.length = total
+    out_ptr = new_col.data_c
+
+    if col.dtype == TYPE_DOUBLE:
+        d_ptr = (<DoubleColumn>col).data_c
+        with nogil:
+            for i in range(total):
+                out_ptr[i] = 1 if isnan(d_ptr[i]) else 0
+    elif col.dtype == TYPE_CHAR256:
+        offset_ptr = (<AsciiColumn>col).offsets_c
+        with nogil:
+            for i in range(total):
+                out_ptr[i] = 1 if offset_ptr[i + 1] == offset_ptr[i] else 0
+    elif col.dtype == TYPE_UCS2:
+        offset_ptr = (<UCS2Column>col).offsets_c
+        with nogil:
+            for i in range(total):
+                out_ptr[i] = 1 if offset_ptr[i + 1] == offset_ptr[i] else 0
+    elif col.dtype == TYPE_CATEGORY:
+        cat_col = <CategoryColumn>col
+        for i in range(total):
+            out_ptr[i] = 1 if cat_col._resolve(i) == '' else 0
+    else:
+        memset(out_ptr, 0, total * sizeof(int))
+    return new_col
+
+
+def _series_notna(BaseColumn col):
+    """列级非缺失掩码：_series_isna 的结果取反。"""
+    cdef object m = _series_isna(col)
+    cdef IntColumn mask_col = <IntColumn>m
+    cdef int* p = mask_col.data_c
+    cdef Py_ssize_t i
+    with nogil:
+        for i in range(mask_col.length):
+            p[i] = 1 - p[i]
+    return mask_col
+
+
+def _series_map(BaseColumn col, object func):
+    """列级元素映射（对标 pandas Series.map）：逐存储单元应用 func。
+    2D 列按列主序逐 cell 应用，数值结果保持 cols 维度。"""
+    cdef Py_ssize_t total = col.length
+    cdef Py_ssize_t i
+    cdef Py_ssize_t rows
+    cdef list out = [None] * total
+    for i in range(total):
+        out[i] = func(col[i])
+    if _col_is_2d(col):
+        rows = col._get_rows_c()
+        return _column_from_2d_list_impl(out, rows, col.num_cols)
+    return _column_from_list_impl(FastDataFrame(), '', out)

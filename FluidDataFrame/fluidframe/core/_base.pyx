@@ -107,6 +107,42 @@ cdef class BaseColumn:
     def copy(self):
         raise NotImplementedError("Subclasses must implement copy()")
 
+    # ------------------------------------------------------------
+    # Series 级便利方法：统一转发到懒加载的 SeriesAccessor
+    # （2D 语义见 SeriesAccessor 及 fastdataframe 编译单元的 _series_*）
+    # ------------------------------------------------------------
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def value_counts(self, str key_name='value'):
+        return self.series.value_counts(key_name)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def isna(self):
+        return self.series.isna()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def notna(self):
+        return self.series.notna()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def map(self, object func):
+        return self.series.map(func)
+
+    # ------------------------------------------------------------
+    # Series accessor 懒加载（同 .str accessor 模式）
+    # ------------------------------------------------------------
+
+    @property
+    def series(self):
+        if self._series_cache is not None:
+            return self._series_cache
+        self._series_cache = _make_series_accessor(self)
+        return self._series_cache
+
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def drop_row(self, Py_ssize_t row_idx):
@@ -198,3 +234,57 @@ cdef int _resolve_astype_target(object target) except -1:
             if _fast_match(c_str, b"timestamp", 9): return TYPE_DATE
 
     raise TypeError(f"Cannot cast to unsupported target type: {target}")
+
+
+# ============================================================
+#  Series accessor（pandas 风格列级访问器）
+# ============================================================
+cdef object _series_fdf_mod = None
+
+
+cdef object _series_module():
+    """惰性缓存 fastdataframe 模块引用：实现体在该模块编译单元（全 dtype
+    keys/重建/类型推断分发），此处只透传。模块名缓存避免反复 import。"""
+    global _series_fdf_mod
+    if _series_fdf_mod is None:
+        import fluidframe.core.fastdataframe as _m
+        _series_fdf_mod = _m
+    return _series_fdf_mod
+
+
+@cython.final
+cdef class SeriesAccessor:
+    """pandas 风格的列级访问器：df['a'].series.value_counts()/isna()/notna()/map()。
+    实例由 BaseColumn.series property 懒加载缓存（同 .str accessor 模式：
+    __new__ C 级工厂绕过参数打包）。方法透传到 fastdataframe 编译单元，语义与
+    df.value_counts / df.isnull / df.apply 完全对齐（2D 列走行级键或逐 cell）。"""
+
+    def __cinit__(self):
+        # 无参 __cinit__：允许工厂函数直接 __new__ 绕过参数打包
+        pass
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def value_counts(self, str key_name='value'):
+        return _series_module()._series_value_counts(self._col, key_name)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def isna(self):
+        return _series_module()._series_isna(self._col)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def notna(self):
+        return _series_module()._series_notna(self._col)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def map(self, object func):
+        return _series_module()._series_map(self._col, func)
+
+
+cdef inline SeriesAccessor _make_series_accessor(BaseColumn col):
+    cdef SeriesAccessor acc = <SeriesAccessor>SeriesAccessor.__new__(SeriesAccessor)
+    acc._col = col
+    return acc

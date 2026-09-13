@@ -156,6 +156,21 @@ cdef _clip_column_impl(FastDataFrame self, str col_name, double lower, double up
     if inplace:
         return self
 
+cdef _clip_all_impl(FastDataFrame self, double lower, double upper, bint inplace):
+    """DataFrame.clip：对所有数值列（Int/Double）统一截断。2D 列由列级 clip 处理。"""
+    cdef FastDataFrame target = self if inplace else _copy_impl(self)
+    cdef list names = []
+    cdef str name
+    cdef BaseColumn col
+    for name, col in target.columns.items():
+        if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+            names.append(name)
+    for name in names:
+        _clip_column_impl(target, name, lower, upper, False)
+    if inplace:
+        return self
+    return target
+
 cdef _where_column_impl(FastDataFrame self, str col_name, str cond_col, object other):
     cdef BaseColumn src = self.columns[col_name]
     cdef BaseColumn cond = self.columns[cond_col]
@@ -241,6 +256,22 @@ cdef _isnull_impl(FastDataFrame self):
         else:
             memset(out_ptr, 0, total * sizeof(int))
         result.columns[name] = new_col
+    return result
+
+cdef _notna_impl(FastDataFrame self):
+    """df.notna：df.isnull 掩码取反。2D 列保持 cols 维度。"""
+    cdef FastDataFrame result = _isnull_impl(self)
+    cdef str name
+    cdef BaseColumn col
+    cdef IntColumn mask_col
+    cdef int* p
+    cdef Py_ssize_t i
+    for name, col in result.columns.items():
+        mask_col = <IntColumn>col
+        p = mask_col.data_c
+        with nogil:
+            for i in range(mask_col.length):
+                p[i] = 1 - p[i]
     return result
 
 cdef _fillna_impl(FastDataFrame self, object value, col_names):

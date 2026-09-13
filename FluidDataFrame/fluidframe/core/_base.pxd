@@ -58,6 +58,18 @@ cdef class BaseColumn:
     cdef Py_ssize_t _get_rows_c(self) noexcept nogil
     cdef void* _get_data_ptr(self) noexcept nogil
 
+    # 懒加载缓存的 Series 访问器（见 BaseColumn.series property）。
+    # 与 str accessor 同理：col._series_cache <-> acc._col 构成循环引用，需 GC 追踪。
+    cdef SeriesAccessor _series_cache
+
+# ============================================================
+#  Series accessor（pandas 风格列级访问器）
+# ============================================================
+cdef class SeriesAccessor:
+    cdef BaseColumn _col
+
+cdef SeriesAccessor _make_series_accessor(BaseColumn col)
+
 # ============================================================
 #  Astype helper
 # ============================================================

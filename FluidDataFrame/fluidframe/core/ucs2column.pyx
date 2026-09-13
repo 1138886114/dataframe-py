@@ -1134,7 +1134,7 @@ cdef class UCS2Column(BaseColumn):
         return col
 
     @property
-    def _str(self):
+    def str(self):
         # 快路径：缓存命中直接返回（均摊实例化开销为 0）
         if self._str_cache is not None:
             return self._str_cache

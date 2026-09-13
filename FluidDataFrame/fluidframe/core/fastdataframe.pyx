@@ -1156,6 +1156,16 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
+    def set_index(self, str col_name, bint drop=True):
+        return _set_index_impl(self, col_name, drop)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def get_dummies(self, col_names=None, str prefix='', bint drop_first=False):
+        return _get_dummies_impl(self, col_names, prefix, drop_first)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def reindex(self, list new_index):
         return _reindex_impl(self, new_index)
 
@@ -1489,6 +1499,10 @@ cdef class FastDataFrame:
         return _clip_column_impl(self, col_name, lower, upper, inplace)
 
     @cython.binding(False)
+    def clip(self, double lower, double upper, bint inplace=False):
+        return _clip_all_impl(self, lower, upper, inplace)
+
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def where_column(self, str col_name, str cond_col, object other):
         return _where_column_impl(self, col_name, cond_col, other)
@@ -1506,6 +1520,16 @@ cdef class FastDataFrame:
     @cython.always_allow_keywords(False)
     def isnull(self):
         return _isnull_impl(self)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def isna(self):
+        return _isnull_impl(self)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def notna(self):
+        return _notna_impl(self)
 
     @cython.binding(False)
     def fillna(self, double value, col_names=None):
