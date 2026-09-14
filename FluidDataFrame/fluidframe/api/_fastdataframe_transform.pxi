@@ -100,7 +100,7 @@ cdef _diff_impl(FastDataFrame self, str col_name, int periods):
     cdef BaseColumn col = self._columns[col_name]
     return self._diff_column(col, periods)
 
-cdef _apply_impl(FastDataFrame self, object func, str axis):
+cdef _apply_impl(FastDataFrame self, object func, str axis, bint raw):
     cdef str col_name
     cdef BaseColumn col_obj
     cdef Py_ssize_t c_out, r_out, total, i, j
@@ -109,6 +109,7 @@ cdef _apply_impl(FastDataFrame self, object func, str axis):
     cdef dict row
     cdef FastDataFrame result
     cdef bint is2d
+    import numpy as np
 
     if axis == 'columns':
         result = FastDataFrame()
@@ -117,8 +118,16 @@ cdef _apply_impl(FastDataFrame self, object func, str axis):
         for col_name, col_obj in self._columns.items():
             _probe_shape(col_obj, &is2d, &c_out, &r_out)
             total = col_obj.length
-            flat_data = [col_obj[idx] for idx in range(total)]
-            new_vals = [func(v) for v in flat_data]
+            if raw:
+                # Convert to numpy array and pass directly to func
+                arr = np.array([col_obj[idx] for idx in range(total)])
+                new_vals = [func(arr)]
+                if not isinstance(new_vals[0], (list, np.ndarray)):
+                    raise ValueError("When raw=True, func must return an array-like")
+                new_vals = list(new_vals[0]) if isinstance(new_vals[0], (list, np.ndarray)) else [new_vals[0]]
+            else:
+                flat_data = [col_obj[idx] for idx in range(total)]
+                new_vals = [func(v) for v in flat_data]
 
             if is2d and c_out > 1:
                 result._columns[col_name] = _column_from_2d_list_impl(new_vals, r_out, c_out)
@@ -133,22 +142,28 @@ cdef _apply_impl(FastDataFrame self, object func, str axis):
         n = self.df_length
         result_vals = [None] * n
         for i in range(n):
-            row = {}
-            for j in range(num_cols):
-                row[col_names[j]] = cols_data[j][i]
-            result_vals[i] = func(row)
+            if raw:
+                row_arr = np.array([cols_data[j][i] for j in range(num_cols)])
+                result_vals[i] = func(row_arr)
+            else:
+                row = {}
+                for j in range(num_cols):
+                    row[col_names[j]] = cols_data[j][i]
+                result_vals[i] = func(row)
         return result_vals
 
     raise ValueError(f"axis must be 'columns' or 'index', got '{axis}'")
 
-cdef _clip_column_impl(FastDataFrame self, str col_name, double lower, double upper, bint inplace):
+cdef _clip_column_impl(FastDataFrame self, str col_name, object lower, object upper, bint inplace):
     cdef BaseColumn col = self._columns[col_name]
+    cdef double lower_val = float('-inf') if lower is None else <double>lower
+    cdef double upper_val = float('inf') if upper is None else <double>upper
     if col.dtype == TYPE_INT:
-        new_col = (<IntColumn>col).clip(lower, upper, inplace)
+        new_col = (<IntColumn>col).clip(lower_val, upper_val, inplace)
         if not inplace:
             self._columns[col_name] = new_col
     elif col.dtype == TYPE_DOUBLE:
-        new_col = (<DoubleColumn>col).clip(lower, upper, inplace)
+        new_col = (<DoubleColumn>col).clip(lower_val, upper_val, inplace)
         if not inplace:
             self._columns[col_name] = new_col
     else:
@@ -156,7 +171,7 @@ cdef _clip_column_impl(FastDataFrame self, str col_name, double lower, double up
     if inplace:
         return self
 
-cdef _clip_all_impl(FastDataFrame self, double lower, double upper, bint inplace):
+cdef _clip_all_impl(FastDataFrame self, object lower, object upper, bint inplace):
     """DataFrame.clip：对所有数值列（Int/Double）统一截断。2D 列由列级 clip 处理。"""
     cdef FastDataFrame target = self if inplace else _copy_impl(self)
     cdef list names = []
@@ -426,7 +441,7 @@ cdef _tail_impl(FastDataFrame self, Py_ssize_t n):
     finally:
         os_aligned_free(idx_c)
 
-cdef _sample_impl(FastDataFrame self, Py_ssize_t n, double frac, bint replace, int seed):
+cdef _sample_impl(FastDataFrame self, object n, object frac, bint replace, int seed):
     if seed >= 0:
         _xorshift128plus_seed(<unsigned long long>seed)
     else:
@@ -436,13 +451,13 @@ cdef _sample_impl(FastDataFrame self, Py_ssize_t n, double frac, bint replace, i
         return FastDataFrame()
 
     cdef Py_ssize_t sample_size
-    if frac > 0:
-        sample_size = <Py_ssize_t>(total * frac)
+    if n is not None:
+        sample_size = <Py_ssize_t>n
+    elif frac is not None:
+        sample_size = <Py_ssize_t>(total * <double>frac)
         if sample_size == 0: sample_size = 1
-    elif n > 0:
-        sample_size = n
     else:
-        sample_size = 1
+        raise ValueError("Must specify either 'n' or 'frac'")
 
     if not replace and sample_size > total:
         raise ValueError(f"Sample size {sample_size} > population {total}")

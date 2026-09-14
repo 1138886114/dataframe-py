@@ -139,12 +139,13 @@ cdef _to_pickle_impl(FastDataFrame self, filename):
     with open(filename, 'wb') as f:
         pickle.dump(data, f)
 
-cdef _to_csv_impl(FastDataFrame self, filename, sep=','):
+cdef _to_csv_impl(FastDataFrame self, filename, sep=',', str na_rep='', str float_format=None,
+                   list columns=None, bint header=True, str line_terminator='\n'):
     """
     导出为 CSV 文件。
     优化点：批量列数据提取，摆脱嵌套循环中的重复类型查询。
     """
-    cdef list col_names = list(self._columns.keys())
+    cdef list col_names = columns if columns is not None else list(self._columns.keys())
     cdef Py_ssize_t num_cols = len(col_names)
     cdef Py_ssize_t n = self.df_length
     cdef Py_ssize_t i, j
@@ -155,32 +156,43 @@ cdef _to_csv_impl(FastDataFrame self, filename, sep=','):
     cdef char line_buf[65536]
     cdef size_t buf_cap = sizeof(line_buf)
     cdef bytes b_field
+    cdef bytes line_term_bytes = line_terminator.encode('utf-8')
+    cdef bytes na_rep_bytes = na_rep.encode('utf-8')
 
     cdef list cols_data = [_col_to_list(self._columns[name]) for name in col_names]
 
     with open(filename, 'wb') as f:
-        for j in range(num_cols):
-            b_field = col_names[j].encode('utf-8')
-            if j > 0:
-                line_buf[buf_pos] = sep_c
-                buf_pos += 1
+        if header:
+            for j in range(num_cols):
+                b_field = col_names[j].encode('utf-8')
+                if j > 0:
+                    line_buf[buf_pos] = sep_c
+                    buf_pos += 1
 
-            write_res = _csv_write_field(line_buf, buf_cap, buf_pos, <const char*>b_field, len(b_field), sep_c)
-            if write_res == <size_t>-1:
-                f.write(line_buf[:buf_pos])
-                buf_pos = 0
                 write_res = _csv_write_field(line_buf, buf_cap, buf_pos, <const char*>b_field, len(b_field), sep_c)
-            buf_pos = write_res
+                if write_res == <size_t>-1:
+                    f.write(line_buf[:buf_pos])
+                    buf_pos = 0
+                    write_res = _csv_write_field(line_buf, buf_cap, buf_pos, <const char*>b_field, len(b_field), sep_c)
+                buf_pos = write_res
 
-        line_buf[buf_pos] = 10
-        buf_pos += 1
-        f.write(line_buf[:buf_pos])
+            for idx in range(len(line_term_bytes)):
+                line_buf[buf_pos] = line_term_bytes[idx]
+                buf_pos += 1
+            f.write(line_buf[:buf_pos])
 
 
         for i in range(n):
             buf_pos = 0
             for j in range(num_cols):
-                b_field = str(cols_data[j][i]).encode('utf-8')
+                val = cols_data[j][i]
+                if val is None or (isinstance(val, float) and val != val):  # Check for NaN
+                    b_field = na_rep_bytes
+                else:
+                    if float_format and isinstance(val, float):
+                        b_field = str(float_format % val).encode('utf-8')
+                    else:
+                        b_field = str(val).encode('utf-8')
 
                 if j > 0:
                     line_buf[buf_pos] = sep_c
@@ -192,8 +204,9 @@ cdef _to_csv_impl(FastDataFrame self, filename, sep=','):
                     write_res = _csv_write_field(line_buf, buf_cap, buf_pos, <const char*>b_field, len(b_field), sep_c)
                 buf_pos = write_res
 
-            line_buf[buf_pos] = 10
-            buf_pos += 1
+            for idx in range(len(line_term_bytes)):
+                line_buf[buf_pos] = line_term_bytes[idx]
+                buf_pos += 1
             f.write(line_buf[:buf_pos])
 
 cdef _to_numpy_impl(FastDataFrame self):

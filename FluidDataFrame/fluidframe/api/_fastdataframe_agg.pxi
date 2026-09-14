@@ -293,7 +293,7 @@ cdef inline double _qs_double(double* a, Py_ssize_t n, Py_ssize_t k) noexcept no
     return a[k]
 
 
-cdef _describe_impl(FastDataFrame self):
+cdef _describe_impl(FastDataFrame self, object percentiles):
     cdef dict stats = {}
     cdef str name, top_val
     cdef Py_ssize_t col_len, i, jc, valid_cnt, s_mid
@@ -314,6 +314,28 @@ cdef _describe_impl(FastDataFrame self):
     cdef list keys
     cdef dict freq_map
     cdef Py_ssize_t max_freq, freq_val
+    
+    cdef list pcts
+    cdef list pcts_sorted
+    cdef dict pcts_dict
+    cdef double idx, frac
+    cdef Py_ssize_t low, high
+    
+    # Handle percentiles parameter
+    if percentiles is None:
+        pcts = [0.25, 0.5, 0.75]
+    elif isinstance(percentiles, (list, tuple)):
+        pcts = list(percentiles)
+    else:
+        pcts = [float(percentiles)]
+    
+    # Validate percentiles
+    for p in pcts:
+        if p < 0 or p > 1:
+            raise ValueError(f"Percentiles must be between 0 and 1, got {p}")
+    
+    # Sort percentiles
+    pcts_sorted = sorted(pcts)
 
     for name, col_obj in self._columns.items():
         col_len = col_obj.length
@@ -376,27 +398,39 @@ cdef _describe_impl(FastDataFrame self):
                     else:
                         s_stds.append(sqrt(s_m2 / <double>(valid_cnt - 1)))
 
-                    s_mid = valid_cnt // 2
-                    if valid_cnt % 2 == 0:
-                        s_med = (_qs_double(s_tmp, valid_cnt, s_mid - 1) +
-                                 _qs_double(s_tmp, valid_cnt, s_mid)) * 0.5
-                    else:
-                        s_med = _qs_double(s_tmp, valid_cnt, s_mid)
-
                     s_means.append(s_mean)
                     s_mins.append(s_min)
                     s_maxs.append(s_max)
-                    s_meds.append(s_med)
+                    
+                    # Calculate percentiles
+                    pcts_dict = {}
+                    for p in pcts_sorted:
+                        if valid_cnt == 0:
+                            pcts_dict[f'{p*100:.0f}%'] = NAN
+                        elif valid_cnt == 1:
+                            pcts_dict[f'{p*100:.0f}%'] = s_tmp[0]
+                        else:
+                            idx = p * <double>(valid_cnt - 1)
+                            low = <Py_ssize_t>idx
+                            high = low + 1
+                            if high >= valid_cnt:
+                                pcts_dict[f'{p*100:.0f}%'] = s_tmp[valid_cnt - 1]
+                            else:
+                                frac = idx - <double>low
+                                pcts_dict[f'{p*100:.0f}%'] = s_tmp[low] * (1.0 - frac) + s_tmp[high] * frac
+                    s_meds.append(pcts_dict)
 
             finally:
                 os_aligned_free(s_tmp)
 
             if is2d and c_probe > 1:
                 stats[name] = {'count': r_probe, 'mean': s_means, 'std': s_stds,
-                               'min': s_mins, '50%': s_meds, 'max': s_maxs}
+                               'min': s_mins, 'max': s_maxs}
+                stats[name].update(s_meds[0])
             else:
                 stats[name] = {'count': r_probe, 'mean': s_means[0], 'std': s_stds[0],
-                               'min': s_mins[0], '50%': s_meds[0], 'max': s_maxs[0]}
+                               'min': s_mins[0], 'max': s_maxs[0]}
+                stats[name].update(s_meds[0])
 
         # =========================================================
         # 2. 离散类型处理 (String / Category / Bool)

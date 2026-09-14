@@ -1736,12 +1736,12 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def clip(self, double lower, double upper, bint inplace=False):
+    def clip(self, object lower=None, object upper=None, bint inplace=False):
         cdef IntColumn col = self if inplace else self.copy()
         cdef int* ptr = col.data_c
         cdef Py_ssize_t i, n = col.length
-        cdef bint has_lower = (lower == lower)
-        cdef bint has_upper = (upper == upper)
+        cdef bint has_lower = lower is not None
+        cdef bint has_upper = upper is not None
         cdef int l = <int>lower if has_lower else -2147483648
         cdef int u = <int>upper if has_upper else 2147483647
         cdef int val

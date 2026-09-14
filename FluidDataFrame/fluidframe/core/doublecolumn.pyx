@@ -1680,16 +1680,18 @@ cdef class DoubleColumn(BaseColumn):
     # ------------------------------------------------------------
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def clip(self, double lower, double upper, bint inplace=False):
+    def clip(self, object lower=None, object upper=None, bint inplace=False):
         cdef DoubleColumn col = self if inplace else self.copy()
         cdef Py_ssize_t i, n = col.length
         cdef double v
         cdef double* ptr = col.data_c
+        cdef double lower_val = float('-inf') if lower is None else <double>lower
+        cdef double upper_val = float('inf') if upper is None else <double>upper
         with nogil:
             for i in range(n):
                 v = ptr[i]
-                v = lower if v < lower else v
-                v = upper if v > upper else v
+                v = lower_val if v < lower_val else v
+                v = upper_val if v > upper_val else v
                 ptr[i] = v
         return col
 

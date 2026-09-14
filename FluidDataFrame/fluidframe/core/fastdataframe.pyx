@@ -1368,9 +1368,8 @@ cdef class FastDataFrame:
         return _count_impl(self, col_names)
 
     @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def describe(self):
-        return _describe_impl(self)
+    def describe(self, object percentiles=None):
+        return _describe_impl(self, percentiles)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1473,8 +1472,9 @@ cdef class FastDataFrame:
         return _to_pickle_impl(self, path)
 
     @cython.binding(False)
-    def to_csv(self, str path, str sep=','):
-        return _to_csv_impl(self, path, sep)
+    def to_csv(self, str path, str sep=',', str na_rep='', str float_format=None,
+               list columns=None, bint header=True, str line_terminator='\n'):
+        return _to_csv_impl(self, path, sep, na_rep, float_format, columns, header, line_terminator)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1550,19 +1550,19 @@ cdef class FastDataFrame:
         return _diff_impl(self, col_name, periods)
 
     @cython.binding(False)
-    def apply(self, object func, str axis='columns'):
-        return _apply_impl(self, func, axis)
+    def apply(self, object func, str axis='columns', bint raw=False):
+        return _apply_impl(self, func, axis, raw)
 
     @cython.binding(False)
     def applymap(self, object func):
-        return _apply_impl(self, func, 'columns')
+        return _apply_impl(self, func, 'columns', False)
 
     @cython.binding(False)
-    def clip_column(self, str col_name, double lower, double upper, bint inplace=False):
+    def clip_column(self, str col_name, object lower=None, object upper=None, bint inplace=False):
         return _clip_column_impl(self, col_name, lower, upper, inplace)
 
     @cython.binding(False)
-    def clip(self, double lower, double upper, bint inplace=False):
+    def clip(self, object lower=None, object upper=None, bint inplace=False):
         return _clip_all_impl(self, lower, upper, inplace)
 
     @cython.binding(False)
@@ -1660,7 +1660,7 @@ cdef class FastDataFrame:
         return _tail_impl(self, n)
 
     @cython.binding(False)
-    def sample(self, Py_ssize_t n=0, double frac=0.0, bint replace=False, int seed=-1):
+    def sample(self, object n=None, object frac=None, bint replace=False, int seed=-1):
         return _sample_impl(self, n, frac, replace, seed)
 
     @cython.binding(False)
