@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, '.')
 from fluidframe.core.boolcolumn import BoolColumn
 from fluidframe.core.intcolumn import IntColumn
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
 passed = 0
 failed = 0
@@ -111,7 +111,7 @@ class TestBoolColumnOps:
 
 class TestBoolColumnInDataFrame:
     def test_df_bool(self):
-        df = FastDataFrame({'A': int, 'B': bool})
+        df = DataFrame({'A': int, 'B': bool})
         df.append_row(A=1, B=True); df.append_row(A=2, B=False); df.append_row(A=3, B=True)
         check('df val', df['B'][0] is True and df['B'][1] is False)
 

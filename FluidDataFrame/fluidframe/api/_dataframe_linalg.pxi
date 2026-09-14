@@ -17,7 +17,7 @@ from fluidframe.core.index cimport RangeIndex
 #  Helper: Check if columns are contiguous in memory
 # ============================================================
 
-cdef inline Py_ssize_t _linalg_logical_cols(FastDataFrame df):
+cdef inline Py_ssize_t _linalg_logical_cols(DataFrame df):
     """矩阵逻辑列数：2D 列（is_2d 且 cols>1）按子列展开各计 1，1D 列计 1。"""
     cdef Py_ssize_t total = 0
     cdef bint is2d
@@ -27,7 +27,7 @@ cdef inline Py_ssize_t _linalg_logical_cols(FastDataFrame df):
         total += c if (is2d and c > 1) else 1
     return total
 
-cdef bint _linalg_is_contiguous_columns(FastDataFrame df):
+cdef bint _linalg_is_contiguous_columns(DataFrame df):
     """安全修复版：严谨校验多列 DataFrame 底层是否属于同一块物理连续内存"""
     cdef list cols_list = list(df._columns.values())
     cdef Py_ssize_t cols = len(cols_list)
@@ -54,7 +54,7 @@ cdef bint _linalg_is_contiguous_columns(FastDataFrame df):
 
     return True
 
-cdef double* _linalg_to_contiguous_fast(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
+cdef double* _linalg_to_contiguous_fast(DataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
     cdef Py_ssize_t rows = df.df_length
     cdef list cols_list = list(df._columns.values())
     cdef Py_ssize_t cols = len(cols_list)
@@ -94,7 +94,7 @@ cdef double* _linalg_to_contiguous_fast(FastDataFrame df, Py_ssize_t* out_rows, 
     out_cols[0] = logical_cols
     return data
 
-cdef double* _linalg_to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
+cdef double* _linalg_to_contiguous(DataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
     cdef Py_ssize_t rows = df.df_length
     cdef list cols_list = list(df._columns.values())
     cdef list name_list = list(df._columns.keys())
@@ -150,12 +150,12 @@ cdef double* _linalg_to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ss
     return data
 
 
-cdef FastDataFrame _linalg_from_contiguous(double* data, Py_ssize_t rows, Py_ssize_t cols):
+cdef DataFrame _linalg_from_contiguous(double* data, Py_ssize_t rows, Py_ssize_t cols):
     """
-    消除碎列，生成完美的 2D 连续内存块以匹配 FastDataFrame 核心设计，避免转置惩罚。
+    消除碎列，生成完美的 2D 连续内存块以匹配 DataFrame 核心设计，避免转置惩罚。
     (输入 data 预期为 行优先 C-contiguous)
     """
-    cdef FastDataFrame df = FastDataFrame()
+    cdef DataFrame df = DataFrame()
     df.df_length = rows
     df.index = RangeIndex(0, rows)
 
@@ -198,7 +198,7 @@ cdef inline double _linalg_clip_val(double v, double min_v, double max_v) nogil:
 #  Core linalg operations
 # ============================================================
 
-cdef FastDataFrame _linalg_dot(FastDataFrame a, FastDataFrame b):
+cdef DataFrame _linalg_dot(DataFrame a, DataFrame b):
     cdef Py_ssize_t a_rows = a.df_length
     cdef Py_ssize_t a_cols = _linalg_logical_cols(a)
     cdef Py_ssize_t b_rows = b.df_length
@@ -207,7 +207,7 @@ cdef FastDataFrame _linalg_dot(FastDataFrame a, FastDataFrame b):
     if a_cols != b_rows:
         raise ValueError(f"Shape mismatch: ({a_rows}, {a_cols}) x ({b_rows}, {b_cols})")
     if a_rows == 0 or b_cols == 0 or a_cols == 0:
-        return FastDataFrame()
+        return DataFrame()
 
     cdef Py_ssize_t i, j, k
     cdef Py_ssize_t size_c
@@ -240,14 +240,14 @@ cdef FastDataFrame _linalg_dot(FastDataFrame a, FastDataFrame b):
         if B != NULL: os_aligned_free(B)
         if C != NULL: os_aligned_free(C)
 
-cdef FastDataFrame _linalg_transpose(FastDataFrame df):
+cdef DataFrame _linalg_transpose(DataFrame df):
     cdef Py_ssize_t rows, cols, i, j
     cdef Py_ssize_t size
     cdef double* A = NULL
     cdef double* B = NULL
 
     if df.df_length == 0 or _linalg_logical_cols(df) == 0:
-        return FastDataFrame()
+        return DataFrame()
     try:
         A = _linalg_to_contiguous(df, &rows, &cols)
         size = rows * cols
@@ -264,7 +264,7 @@ cdef FastDataFrame _linalg_transpose(FastDataFrame df):
         if A != NULL: os_aligned_free(A)
         if B != NULL: os_aligned_free(B)
 
-cdef double _linalg_det(FastDataFrame df):
+cdef double _linalg_det(DataFrame df):
     cdef Py_ssize_t n = df.df_length
     if n == 0:
         return 1.0
@@ -319,10 +319,10 @@ cdef double _linalg_det(FastDataFrame df):
         if A != NULL: os_aligned_free(A)
         if LU != NULL: os_aligned_free(LU)
 
-cdef FastDataFrame _linalg_inv(FastDataFrame df):
+cdef DataFrame _linalg_inv(DataFrame df):
     cdef Py_ssize_t n = df.df_length
     if n == 0:
-        return FastDataFrame()
+        return DataFrame()
 
     if _linalg_logical_cols(df) != n:
         raise ValueError("Matrix must be square")
@@ -388,10 +388,10 @@ cdef FastDataFrame _linalg_inv(FastDataFrame df):
         if aug != NULL: os_aligned_free(aug)
         if result_data != NULL: os_aligned_free(result_data)
 
-cdef FastDataFrame _linalg_solve(FastDataFrame A_df, FastDataFrame b_df):
+cdef DataFrame _linalg_solve(DataFrame A_df, DataFrame b_df):
     cdef Py_ssize_t n = A_df.df_length
     if n == 0:
-        return FastDataFrame()
+        return DataFrame()
 
     cdef Py_ssize_t rows, cols, i, j, k, pivot_row
     cdef double* a_data = NULL
@@ -449,7 +449,7 @@ cdef FastDataFrame _linalg_solve(FastDataFrame A_df, FastDataFrame b_df):
                 x[i] = sum_val / lu[i * n + i]
 
         # solve 输出的是一个 1D 数组(列)
-        result = FastDataFrame()
+        result = DataFrame()
         result.df_length = n
         col = DoubleColumn(n)
         col.length = n
@@ -464,7 +464,7 @@ cdef FastDataFrame _linalg_solve(FastDataFrame A_df, FastDataFrame b_df):
         if lu != NULL: os_aligned_free(lu)
         if x != NULL: os_aligned_free(x)
 
-cdef double _linalg_norm(FastDataFrame df, str ord_type="frobenius"):
+cdef double _linalg_norm(DataFrame df, str ord_type="frobenius"):
     cdef Py_ssize_t rows, cols, n, i
     if df.df_length == 0:
         return 0.0
@@ -509,9 +509,9 @@ cdef double _linalg_norm(FastDataFrame df, str ord_type="frobenius"):
 #  Pairwise distance / similarity metrics
 # ============================================================
 
-cdef FastDataFrame _linalg_euclidean_dist(FastDataFrame df):
+cdef DataFrame _linalg_euclidean_dist(DataFrame df):
     cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return FastDataFrame()
+    if df.df_length == 0: return DataFrame()
 
     cdef Py_ssize_t i, j
     cdef double* A = NULL
@@ -531,9 +531,9 @@ cdef FastDataFrame _linalg_euclidean_dist(FastDataFrame df):
         if A != NULL: os_aligned_free(A)
         if D != NULL: os_aligned_free(D)
 
-cdef FastDataFrame _linalg_manhattan_dist(FastDataFrame df):
+cdef DataFrame _linalg_manhattan_dist(DataFrame df):
     cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return FastDataFrame()
+    if df.df_length == 0: return DataFrame()
 
     cdef Py_ssize_t i, j
     cdef double* A = NULL
@@ -553,9 +553,9 @@ cdef FastDataFrame _linalg_manhattan_dist(FastDataFrame df):
         if A != NULL: os_aligned_free(A)
         if D != NULL: os_aligned_free(D)
 
-cdef FastDataFrame _linalg_cosine_dist(FastDataFrame df):
+cdef DataFrame _linalg_cosine_dist(DataFrame df):
     cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return FastDataFrame()
+    if df.df_length == 0: return DataFrame()
 
     cdef Py_ssize_t i, j
     cdef double* A = NULL
@@ -575,9 +575,9 @@ cdef FastDataFrame _linalg_cosine_dist(FastDataFrame df):
         if A != NULL: os_aligned_free(A)
         if D != NULL: os_aligned_free(D)
 
-cdef FastDataFrame _linalg_hamming_dist(FastDataFrame df):
+cdef DataFrame _linalg_hamming_dist(DataFrame df):
     cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return FastDataFrame()
+    if df.df_length == 0: return DataFrame()
 
     cdef Py_ssize_t i, j
     cdef double* A = NULL
@@ -597,9 +597,9 @@ cdef FastDataFrame _linalg_hamming_dist(FastDataFrame df):
         if A != NULL: os_aligned_free(A)
         if D != NULL: os_aligned_free(D)
 
-cdef FastDataFrame _linalg_jaccard_sim(FastDataFrame df):
+cdef DataFrame _linalg_jaccard_sim(DataFrame df):
     cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return FastDataFrame()
+    if df.df_length == 0: return DataFrame()
 
     cdef Py_ssize_t i, j
     cdef double* A = NULL
@@ -619,9 +619,9 @@ cdef FastDataFrame _linalg_jaccard_sim(FastDataFrame df):
         if A != NULL: os_aligned_free(A)
         if D != NULL: os_aligned_free(D)
 
-cdef FastDataFrame _linalg_cosine_similarity(FastDataFrame df):
+cdef DataFrame _linalg_cosine_similarity(DataFrame df):
     cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return FastDataFrame()
+    if df.df_length == 0: return DataFrame()
 
     cdef Py_ssize_t i, j
     cdef double* A = NULL
@@ -653,11 +653,11 @@ cdef class _DataFrameLinalgAccessor:
     # ==================== Matrix Operations ====================
 
     @cython.binding(False)
-    def dot(self, FastDataFrame b):
+    def dot(self, DataFrame b):
         return _linalg_dot(self._df, b)
 
     @cython.binding(False)
-    def matmul(self, FastDataFrame b):
+    def matmul(self, DataFrame b):
         return _linalg_dot(self._df, b)
 
     @cython.binding(False)
@@ -673,7 +673,7 @@ cdef class _DataFrameLinalgAccessor:
         return _linalg_inv(self._df)
 
     @cython.binding(False)
-    def solve(self, FastDataFrame b):
+    def solve(self, DataFrame b):
         return _linalg_solve(self._df, b)
 
     @cython.binding(False)
@@ -710,7 +710,7 @@ cdef class _DataFrameLinalgAccessor:
     def __repr__(self):
         return f"<LinalgAccessor: {len(self._df._columns)} columns, {self._df.df_length} rows>"
 
-cdef inline _DataFrameLinalgAccessor _make_linalg_accessor(FastDataFrame df):
+cdef inline _DataFrameLinalgAccessor _make_linalg_accessor(DataFrame df):
     cdef _DataFrameLinalgAccessor acc = <_DataFrameLinalgAccessor>_DataFrameLinalgAccessor.__new__(_DataFrameLinalgAccessor)
     acc._df = df
     return acc

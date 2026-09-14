@@ -91,7 +91,7 @@ cdef _rank_col(NumericType* data, Py_ssize_t n, str method, bint ascending):
         os_aligned_free(items)
     return res
 
-cdef _rank_impl(FastDataFrame self, str col_name, str method, bint ascending, str na_option):
+cdef _rank_impl(DataFrame self, str col_name, str method, bint ascending, str na_option):
     if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
     cdef BaseColumn col = self._columns[col_name]
@@ -147,7 +147,7 @@ cdef _rank_row_keys(BaseColumn col, Py_ssize_t n, str method, bint ascending):
             i = j
     return res
 
-cdef _cut_impl(FastDataFrame self, str col_name, list bins, bint include_lowest, str right):
+cdef _cut_impl(DataFrame self, str col_name, list bins, bint include_lowest, str right):
     if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
     cdef BaseColumn col = self._columns[col_name]
@@ -188,7 +188,7 @@ cdef _cut_impl(FastDataFrame self, str col_name, list bins, bint include_lowest,
 
     return _column_from_list_impl(self, col_name, results)
 
-cdef _qcut_impl(FastDataFrame self, str col_name, int q, str labels, double precision):
+cdef _qcut_impl(DataFrame self, str col_name, int q, str labels, double precision):
     if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
     cdef BaseColumn col = self._columns[col_name]

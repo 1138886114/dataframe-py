@@ -5,7 +5,7 @@ import sys
 import tempfile
 import time
 sys.path.insert(0, '..')
-from fluidframe.core.fastdataframe import FastDataFrame, read_json, from_pickle, to_numeric, to_date, to_time, to_datetime
+from fluidframe.core.dataframe import DataFrame, read_json, from_pickle, to_numeric, to_date, to_time, to_datetime
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.asciicolumn import AsciiColumn
@@ -42,14 +42,14 @@ def expect_exception(exc_type, fn, *args, **kwargs):
 # =====================================================================
 def make_complex_df():
     """
-    Returns a FastDataFrame with 10 rows and 5 column types:
+    Returns a DataFrame with 10 rows and 5 column types:
       id:    int
       score: double
       name:  UCS2 (str)
       tag:   Char256
       dt:    Date
     """
-    df = FastDataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
+    df = DataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
     rows = [
         (1, 88.5,  'Alice',   'senior',   20230115),
         (2, 92.0,  'Bob',     'mid',      20230620),
@@ -71,28 +71,28 @@ def make_complex_df():
 #  Basic construction & properties
 # =====================================================================
 def test_init():
-    df = FastDataFrame()
+    df = DataFrame()
     check('empty shape', df.shape == (0, 0))
 
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     check('schema int', isinstance(df._columns['a'], IntColumn))
 
-    df = FastDataFrame({'a': float})
+    df = DataFrame({'a': float})
     check('schema float', isinstance(df._columns['a'], DoubleColumn))
 
-    df = FastDataFrame({'a': str})
+    df = DataFrame({'a': str})
     check('schema str', isinstance(df._columns['a'], UCS2Column))
 
-    df = FastDataFrame({'a': Char256})
+    df = DataFrame({'a': Char256})
     check('schema char256', isinstance(df._columns['a'], AsciiColumn))
 
-    df = FastDataFrame({'a': Date})
+    df = DataFrame({'a': Date})
     check('schema timestamp', isinstance(df._columns['a'], DateColumn))
 
-    df = FastDataFrame({'id': int, 'name': str, 'score': float})
+    df = DataFrame({'id': int, 'name': str, 'score': float})
     check('schema multiple', df.shape == (0, 3))
 
-    check('schema unsupported', expect_exception(TypeError, FastDataFrame, {'a': list}))
+    check('schema unsupported', expect_exception(TypeError, DataFrame, {'a': list}))
 
 def test_init_complex():
     df = make_complex_df()
@@ -122,7 +122,7 @@ _RESERVE_ROWS = [
 ]
 
 def _make_reserved_df():
-    df = FastDataFrame({'id': int, 'x0': int, 'y0': int, 'x1': int, 'y1': int,
+    df = DataFrame({'id': int, 'x0': int, 'y0': int, 'x1': int, 'y1': int,
                         'score': float, 'name': str, 'tag': Char256, 'dt': Date,
                         'flags': int})
     df.reserve_with_capacity(len(_RESERVE_ROWS) + 16)
@@ -158,8 +158,8 @@ def test_reserve_with_capacity():
 
     # 已预留容量后不可再次预留
     check('reserve twice error', expect_exception(RuntimeError, df.reserve_with_capacity, 100))
-    check('reserve zero error', expect_exception(ValueError, FastDataFrame({'a': int}).reserve_with_capacity, 0))
-    df_nonempty = FastDataFrame({'a': int})
+    check('reserve zero error', expect_exception(ValueError, DataFrame({'a': int}).reserve_with_capacity, 0))
+    df_nonempty = DataFrame({'a': int})
     df_nonempty.append_row(a=1)
     check('reserve non-empty error',
           expect_exception(RuntimeError, df_nonempty.reserve_with_capacity, 10))
@@ -168,7 +168,7 @@ def test_reserve_with_capacity():
     check('reserve missing key error', expect_exception(ValueError, df.add_row, id=99))
 
     # 达到固定容量后必须拒绝写入
-    df3 = FastDataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
+    df3 = DataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
     df3.reserve_with_capacity(len(_RESERVE_ROWS))
     for r in _RESERVE_ROWS:
         df3.add_row(id=r[0], score=r[5], name=r[6], tag=r[7], dt=r[8])
@@ -252,14 +252,14 @@ def test_add_row_failure_rollback():
 #  Append & access
 # =====================================================================
 def test_append():
-    df = FastDataFrame({'id': int, 'name': str})
+    df = DataFrame({'id': int, 'name': str})
     df.append_row(id=1, name='Alice')
     df.append_row(id=2, name='Bob')
     check('append shape', df.shape == (2, 2))
     check('append id[0]', df['id'][0] == 1)
     check('append name[1]', df['name'][1] == 'Bob')
 
-    df = FastDataFrame({'i': int, 'f': float, 's': str, 'c': Char256, 't': Date})
+    df = DataFrame({'i': int, 'f': float, 's': str, 'c': Char256, 't': Date})
     df.append_row(i=1, f=2.5, s='hello', c='world', t=20160101)
     check('append types i', df['i'][0] == 1)
     check('append types f', df['f'][0] == 2.5)
@@ -281,16 +281,16 @@ def test_append_complex():
     check('complex append new name', df['name'][10] == 'Karl')
 
 def test_access():
-    df = FastDataFrame({'a': int}); df.append_row(a=42)
+    df = DataFrame({'a': int}); df.append_row(a=42)
     check('getitem', isinstance(df['a'], IntColumn))
     check('getitem val', df['a'][0] == 42)
     check('getitem missing', expect_exception(KeyError, df.__getitem__, 'b'))
 
-    df = FastDataFrame({'a': int}); df.append_row(a=42)
+    df = DataFrame({'a': int}); df.append_row(a=42)
     check('getattr', df.a[0] == 42)
     check('getattr missing', expect_exception(AttributeError, getattr, df, 'nonexistent'))
 
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     check('repr', 'shape: (0, 1)' in repr(df))
 
 
@@ -321,7 +321,7 @@ def test_pop_back():
     check('pop_back shape', df.shape == (9, 5))
 
 def test_pop_empty():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     check('pop_front empty', expect_exception(IndexError, df.pop_front))
     check('pop_back empty', expect_exception(IndexError, df.pop_back))
 
@@ -454,7 +454,7 @@ def test_head_tail():
 #  Diff
 # =====================================================================
 def test_diff_int():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     for v in [1, 3, 6, 10]: df.append_row(a=v)
     res = df.diff('a')
     check('diff int [0]', res[0] == 0)
@@ -463,7 +463,7 @@ def test_diff_int():
     check('diff int [3]', res[3] == 4)
 
 def test_diff_float():
-    df = FastDataFrame({'a': float})
+    df = DataFrame({'a': float})
     df.append_row(a=1.0); df.append_row(a=3.0); df.append_row(a=6.0)
     res = df.diff('a')
     check('diff float [0] nan', math.isnan(res[0]))
@@ -475,7 +475,7 @@ def test_diff_float():
 #  Null handling
 # =====================================================================
 def test_null_handling():
-    df = FastDataFrame({'a': float, 'b': int})
+    df = DataFrame({'a': float, 'b': int})
     df.append_row(a=1.0, b=10)
     df.append_row(a=float('nan'), b=20)
     df.append_row(a=3.0, b=30)
@@ -505,7 +505,7 @@ def test_describe():
 
 def test_2d_count_describe_info():
     """2D 列：count/describe/info 以逻辑行数为准（physical length = rows*cols）"""
-    df = FastDataFrame()
+    df = DataFrame()
     df.df_length = 4
     df._columns['a'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
     df._columns['d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
@@ -529,7 +529,7 @@ def test_2d_count_describe_info():
 
 def test_2d_agg_withcol():
     """_withcol 聚合族：2D 列逐子列独立聚合（不跨子列混合），1D 列与普通聚合一致"""
-    df = FastDataFrame()
+    df = DataFrame()
     df.df_length = 4
     df._columns['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
     df._columns['d2d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
@@ -572,7 +572,7 @@ def test_csv():
         fname = f.name
     try:
         df.to_csv(fname)
-        from fluidframe.core.fastdataframe import read_csv
+        from fluidframe.core.dataframe import read_csv
         df2 = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
         check('csv shape', df2.shape == (10, 5))
         check('csv id[0]', df2['id'][0] == 1)
@@ -586,7 +586,7 @@ def test_pickle():
         fname = f.name
     try:
         df.to_pickle(fname)
-        from fluidframe.core.fastdataframe import from_pickle
+        from fluidframe.core.dataframe import from_pickle
         df2 = from_pickle(fname)
         check('pkl shape', df2.shape == (10, 5))
         check('pkl id[3]', df2['id'][3] == 4)
@@ -606,7 +606,7 @@ def test_tsv():
 
 def test_pickle_2d_roundtrip():
     """2D 列 to_pickle/from_pickle 往返保持 is_2d/rows/cols"""
-    df = FastDataFrame()
+    df = DataFrame()
     df.df_length = 4
     df._columns['a'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
     df._columns['d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
@@ -656,7 +656,7 @@ def test_standalone_convert_2d():
     check('conv 1d unchanged', not r1.is_2d and [r1[i] for i in range(3)] == [1.0, 2.0, 3.0])
 
 def test_read_csv_auto():
-    from fluidframe.core.fastdataframe import read_csv
+    from fluidframe.core.dataframe import read_csv
     content = "id,score,name,tag,dt\n1,88.5,Alice,senior,20230115\n2,92.0,Bob,mid,20230620\n"
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
         f.write(content); fname = f.name
@@ -673,7 +673,7 @@ def test_read_csv_auto():
 #  Concat & Merge
 # =====================================================================
 def test_concat():
-    from fluidframe.core.fastdataframe import concat_outer, concat_inner
+    from fluidframe.core.dataframe import concat_outer, concat_inner
     check('concat empty', concat_outer([]).shape == (0, 0))
 
     df1 = make_complex_df().head(5)
@@ -683,19 +683,19 @@ def test_concat():
     check('concat two has index col', 'index' in r.columns)
 
 def test_merge():
-    df1 = FastDataFrame({'id': int, 'val1': float})
+    df1 = DataFrame({'id': int, 'val1': float})
     df1.append_row(id=1, val1=10.0); df1.append_row(id=2, val1=20.0)
-    df2 = FastDataFrame({'id': int, 'val2': float})
+    df2 = DataFrame({'id': int, 'val2': float})
     df2.append_row(id=2, val2=200.0); df2.append_row(id=3, val2=300.0)
     check('merge inner', df1.merge(df2, on='id', how='inner').shape == (1, 3))
     check('merge left', df1.merge(df2, on='id', how='left').shape == (2, 3))
     check('merge outer', df1.merge(df2, on='id', how='outer').shape == (3, 3))
 
 def test_2d_concat_df():
-    df1 = FastDataFrame()
+    df1 = DataFrame()
     df1.df_length = 2
     df1._columns['a'] = IntColumn.from_2d([1, 2, 3, 4], 2, 2)
-    df2 = FastDataFrame()
+    df2 = DataFrame()
     df2.df_length = 1
     df2._columns['a'] = IntColumn.from_2d([5, 6], 1, 2)
     r = df1.concat(df2)
@@ -706,10 +706,10 @@ def test_2d_concat_df():
     check('2d concat df flat', [a[i] for i in range(a.length)] == [1, 2, 5, 3, 4, 6])
 
 def test_2d_merge_df():
-    df1 = FastDataFrame()
+    df1 = DataFrame()
     df1.df_length = 3
     df1._columns['k'] = IntColumn.from_2d([1, 2, 7, 5, 6, 8], 3, 2)
-    df2 = FastDataFrame()
+    df2 = DataFrame()
     df2.df_length = 2
     df2._columns['k'] = IntColumn.from_2d([2, 9, 6, 0], 2, 2)
     r = df1.merge(df2, on='k', how='inner')
@@ -898,7 +898,7 @@ def _random_date():
 def test_stress_append():
     N = 10000
     t0 = time.time()
-    df = FastDataFrame({'id': int, 'val': float, 'name': str, 'tag': Char256, 'dt': Date})
+    df = DataFrame({'id': int, 'val': float, 'name': str, 'tag': Char256, 'dt': Date})
     for i in range(N):
         df.append_row(id=i, val=random.random() * 100,
                       name=_random_string(random.randint(3, 8)),
@@ -910,7 +910,7 @@ def test_stress_append():
 
 def test_stress_sort():
     N = 5000
-    df = FastDataFrame({'id': int, 'val': float})
+    df = DataFrame({'id': int, 'val': float})
     for i in range(N):
         df.append_row(id=random.randint(0, N), val=random.random())
     t0 = time.time()
@@ -927,7 +927,7 @@ def test_stress_sort():
 
 def test_stress_loc_filter():
     N = 10000
-    df = FastDataFrame({'id': int, 'val': float, 'tag': Char256})
+    df = DataFrame({'id': int, 'val': float, 'tag': Char256})
     for i in range(N):
         df.append_row(id=i, val=random.random() * 100,
                       tag=random.choice(['X', 'Y', 'Z']))
@@ -942,7 +942,7 @@ def test_stress_loc_filter():
 
 def test_stress_iloc():
     N = 10000
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     for i in range(N):
         df.append_row(a=i)
     r = df.iloc[5000:6000]
@@ -954,7 +954,7 @@ def test_stress_iloc():
 
 def test_stress_copy():
     N = 10000
-    df = FastDataFrame({'a': int, 'b': float})
+    df = DataFrame({'a': int, 'b': float})
     for i in range(N):
         df.append_row(a=i, b=random.random())
     t0 = time.time()
@@ -965,7 +965,7 @@ def test_stress_copy():
 
 def test_stress_drop_with_index():
     N = 5000
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     for i in range(N):
         df.append_row(a=i)
     drop_idx = list(range(0, N, 2))  # drop every even index
@@ -978,7 +978,7 @@ def test_stress_drop_with_index():
 
 def test_stress_pop_front_back():
     N = 5000
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     for i in range(N):
         df.append_row(a=i)
     t0 = time.time()
@@ -991,7 +991,7 @@ def test_stress_pop_front_back():
 
 def test_stress_csv_roundtrip():
     N = 5000
-    df = FastDataFrame({'id': int, 'val': float, 'name': str})
+    df = DataFrame({'id': int, 'val': float, 'name': str})
     for i in range(N):
         df.append_row(id=i, val=random.random(), name=_random_string(6))
     with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, newline='') as f:
@@ -999,7 +999,7 @@ def test_stress_csv_roundtrip():
     try:
         t0 = time.time()
         df.to_csv(fname)
-        from fluidframe.core.fastdataframe import read_csv
+        from fluidframe.core.dataframe import read_csv
         df2 = read_csv(fname, schema={'id': int, 'val': float, 'name': str})
         elapsed = time.time() - t0
         check('stress csv shape', df2.shape == (N, 3))
@@ -1011,7 +1011,7 @@ def test_stress_csv_roundtrip():
 def test_stress_multi_type_filter():
     """Stress test: filter on int + float + char256 + timestamp simultaneously"""
     N = 8000
-    df = FastDataFrame({'id': int, 'score': float, 'tag': Char256, 'dt': Date})
+    df = DataFrame({'id': int, 'score': float, 'tag': Char256, 'dt': Date})
     for i in range(N):
         df.append_row(id=i, score=random.random() * 100,
                       tag=random.choice(['alpha', 'beta', 'gamma']),
@@ -1032,51 +1032,51 @@ def test_stress_multi_type_filter():
 #  Construction: from_dict, from_list, from_arrays
 # =====================================================================
 def test_from_dict():
-    df = FastDataFrame.from_dict({'a': [1, 2, 3], 'b': [4.0, 5.0, 6.0]}, schema={'a': int, 'b': float})
+    df = DataFrame.from_dict({'a': [1, 2, 3], 'b': [4.0, 5.0, 6.0]}, schema={'a': int, 'b': float})
     check('from_dict shape', df.shape == (3, 2))
     check('from_dict a[1]', df['a'][1] == 2)
     check('from_dict b[2]', df['b'][2] == 6.0)
 
-    df2 = FastDataFrame.from_dict({'x': [10]}, schema={'x': int}, columns=['val'])
+    df2 = DataFrame.from_dict({'x': [10]}, schema={'x': int}, columns=['val'])
     check('from_dict rename', 'val' in df2.columns)
 
-    check('from_dict empty', FastDataFrame.from_dict({}, schema={}).shape == (0, 0))
-    check('from_dict mismatch', expect_exception(ValueError, FastDataFrame.from_dict,
+    check('from_dict empty', DataFrame.from_dict({}, schema={}).shape == (0, 0))
+    check('from_dict mismatch', expect_exception(ValueError, DataFrame.from_dict,
           {'a': [1, 2], 'b': [3]}, schema={'a': int, 'b': int}))
 
 def test_from_list():
-    df = FastDataFrame.from_list([[1, 'a'], [2, 'b'], [3, 'c']], schema={'id': int, 'ch': str})
+    df = DataFrame.from_list([[1, 'a'], [2, 'b'], [3, 'c']], schema={'id': int, 'ch': str})
     check('from_list shape', df.shape == (3, 2))
     check('from_list id[0]', df['id'][0] == 1)
     check('from_list ch[2]', df['ch'][2] == 'c')
 
-    df2 = FastDataFrame.from_list([[10, 20]], schema={'x': int, 'y': int}, columns=['a', 'b'])
+    df2 = DataFrame.from_list([[10, 20]], schema={'x': int, 'y': int}, columns=['a', 'b'])
     check('from_list rename', set(df2.columns) == {'a', 'b'})
 
 def test_from_arrays():
-    df = FastDataFrame.from_arrays([[1, 2, 3], [10.0, 20.0, 30.0]], schema={'id': int, 'val': float})
+    df = DataFrame.from_arrays([[1, 2, 3], [10.0, 20.0, 30.0]], schema={'id': int, 'val': float})
     check('from_arrays shape', df.shape == (3, 2))
     check('from_arrays id[2]', df['id'][2] == 3)
     check('from_arrays val[0]', df['val'][0] == 10.0)
 
-    df2 = FastDataFrame.from_arrays([[1]], schema={'x': int}, columns=['col'])
+    df2 = DataFrame.from_arrays([[1]], schema={'x': int}, columns=['col'])
     check('from_arrays rename', 'col' in df2.columns)
 
 def test_factory_methods():
-    df = FastDataFrame.arange(7)
+    df = DataFrame.arange(7)
     check('arange shape', df.shape == (7, 1))
     check('arange vals', [df['0'][i] for i in range(7)] == [0, 1, 2, 3, 4, 5, 6])
 
-    df = FastDataFrame.zeros(3, 2)
+    df = DataFrame.zeros(3, 2)
     check('zeros', all(df._columns[c][i] == 0.0 for c in df.columns for i in range(3)))
 
-    df = FastDataFrame.ones(2, 3)
+    df = DataFrame.ones(2, 3)
     check('ones', all(df._columns[c][i] == 1.0 for c in df.columns for i in range(2)))
 
-    df = FastDataFrame.randn(100, 2)
+    df = DataFrame.randn(100, 2)
     check('randn shape', df.shape == (100, 2))
 
-    df = FastDataFrame.rand(50, 2)
+    df = DataFrame.rand(50, 2)
     check('rand shape', df.shape == (50, 2))
     check('rand range', all(0 <= df._columns[c][i] < 1 for c in df.columns for i in range(50)))
 
@@ -1092,7 +1092,7 @@ def test_rename():
     check('rename original unchanged', 'id' in df.columns)
 
 def test_insert_column():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     df.append_row(a=1); df.append_row(a=2)
     df.insert_column('b', [10, 20], pos=0)
     check('insert pos 0', df.columns == ['b', 'a'])
@@ -1103,7 +1103,7 @@ def test_insert_column():
 
 def test_insert_column_2d():
     col = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
-    df = FastDataFrame()
+    df = DataFrame()
     df.insert_column('v2d', col)
     check('insert 2d df_length rows', df.df_length == 4)
     check('insert 2d shape', df.shape == (4, 1))
@@ -1121,7 +1121,7 @@ def test_duplicate_column():
     check('dup default name', 'name_dup' in df.columns)
 
 def test_assign():
-    df = FastDataFrame({'a': int, 'b': int})
+    df = DataFrame({'a': int, 'b': int})
     df.append_row(a=1, b=2); df.append_row(a=3, b=4)
     df2 = df.assign(c=[10, 20])
     check('assign new col', 'c' in df2.columns)
@@ -1132,7 +1132,7 @@ def test_assign():
     check('assign replace', df3['a'][0] == 100)
 
 def test_setitem():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     df.append_row(a=1)
     df['b'] = [10]
     check('setitem list', df['b'][0] == 10)
@@ -1169,7 +1169,7 @@ def test_nsmallest_nlargest():
     check('nlargest val', l['score'][0] == 99.9)
 
 def test_duplicated():
-    df = FastDataFrame({'a': int, 'b': str})
+    df = DataFrame({'a': int, 'b': str})
     df.append_row(a=1, b='x'); df.append_row(a=2, b='y'); df.append_row(a=1, b='x')
     dup = df.duplicated()
     check('dup mask', [dup[i] for i in range(3)] == [0, 0, 1])
@@ -1181,13 +1181,13 @@ def test_duplicated():
     check('dup subset', [dup3[i] for i in range(3)] == [0, 0, 1])
 
 def test_drop_duplicates():
-    df = FastDataFrame({'a': int, 'b': str})
+    df = DataFrame({'a': int, 'b': str})
     df.append_row(a=1, b='x'); df.append_row(a=2, b='y'); df.append_row(a=1, b='x'); df.append_row(a=3, b='z')
     r = df.drop_duplicates()
     check('drop_dup shape', r.shape == (3, 2))
     check('drop_dup vals', [r['a'][i] for i in range(3)] == [1, 2, 3])
 
-    df2 = FastDataFrame({'a': int, 'b': str})
+    df2 = DataFrame({'a': int, 'b': str})
     df2.append_row(a=1, b='x'); df2.append_row(a=1, b='y'); df2.append_row(a=1, b='z')
     r2 = df2.drop_duplicates(subset=['a'], keep='last')
     check('drop_dup keep last', r2.shape == (1, 2))
@@ -1203,7 +1203,7 @@ def test_select_dtypes():
     check('exclude int', 'id' not in no_int.columns)
 
 def test_reindex():
-    df = FastDataFrame({'a': int, 'b': str})
+    df = DataFrame({'a': int, 'b': str})
     df.append_row(a=1, b='x'); df.append_row(a=2, b='y')
     r = df.reindex([0, 1, 2, 3])
     check('reindex shape', r.shape == (4, 2))
@@ -1215,7 +1215,7 @@ def test_reindex():
 #  类别二：行选择 _take 路径对 2D 列（整行重排，保持 cols 维）
 # =====================================================================
 def _make_2d_frame():
-    df = FastDataFrame({'a': int, 's': str})
+    df = DataFrame({'a': int, 's': str})
     df.append_row(a=1, s='w'); df.append_row(a=2, s='x')
     df.append_row(a=3, s='y'); df.append_row(a=4, s='z')
     df['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
@@ -1240,7 +1240,7 @@ def test_take_path_2d():
     check('take sample a2d flat', [s['a2d'][i] for i in range(4)] == [3, 1, 30, 10])
 
 def test_sort_values_2d():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     df.append_row(a=4); df.append_row(a=2); df.append_row(a=3); df.append_row(a=1)
     df['a2d'] = IntColumn.from_2d([4, 2, 3, 1, 40, 20, 30, 10], 4, 2)
     r = df.sort_values('a')
@@ -1263,7 +1263,7 @@ def test_reindex_2d():
     check('reindex 2d fill rows', r2['a2d'].rows == 5 and r2['a2d'].cols == 2)
 
 def test_drop_duplicates_2d():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     df.append_row(a=1); df.append_row(a=1); df.append_row(a=2); df.append_row(a=2)
     df['a2d'] = IntColumn.from_2d([1, 1, 2, 2, 10, 10, 20, 20], 4, 2)
     r = df.drop_duplicates()
@@ -1273,7 +1273,7 @@ def test_drop_duplicates_2d():
 
 def test_duplicated_2d_rowaware():
     # col0 重复但 col1 区分：旧 flat 读只读 col0 会误判为 dup
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     df.append_row(a=0); df.append_row(a=0)
     df['a2d'] = IntColumn.from_2d([1, 1, 10, 20], 2, 2)
     df['b'] = IntColumn(2); df['b'].append(7); df['b'].append(7)
@@ -1283,7 +1283,7 @@ def test_duplicated_2d_rowaware():
     check('dup row-aware drop flat', [r['a2d'][i] for i in range(4)] == [1, 1, 10, 20])
 
     # 整行重复 → 仅第 2 个标记 dup
-    df2 = FastDataFrame({'a': int})
+    df2 = DataFrame({'a': int})
     df2.append_row(a=0); df2.append_row(a=0); df2.append_row(a=0)
     df2['a2d'] = IntColumn.from_2d([1, 2, 1, 10, 20, 10], 3, 2)
     check('dup row-aware dup', [df2.duplicated(subset=['a2d'])[i] for i in range(3)] == [0, 0, 1])
@@ -1323,7 +1323,7 @@ def test_display_export_2d():
     eq_result2 = df == _make_2d_frame()
     check('exp 2d eq same', all(eq_result2['a2d'][i] == 1 for i in range(4)))
     # double 2D 含 NaN：显示为 null（-ffast-math 下 dval != dval 失效，需位模式判定）
-    dd = FastDataFrame({'a': int})
+    dd = DataFrame({'a': int})
     dd.append_row(a=0); dd.append_row(a=0)
     dd['d2d'] = DoubleColumn.from_2d([1.5, 2.5, float('nan'), 4.5], 2, 2)
     ds = dd.to_string()
@@ -1331,7 +1331,7 @@ def test_display_export_2d():
 
 
 def test_elementwise_2d():
-    df = FastDataFrame({'a': int, 's': str})
+    df = DataFrame({'a': int, 's': str})
     for a, s in [(1, 'w'), (-2, 'x'), (-3, 'y'), (4, 'z')]:
         df.append_row(a=a, s=s)
     df['a2d'] = IntColumn.from_2d([1, -2, -3, 4, -10, 20, 30, -40], 4, 2)
@@ -1358,7 +1358,7 @@ def test_elementwise_2d():
     check('elem2d replace subcol1', [c[i] for i in range(8)] == [1, -2, -3, 4, -10, -1, 30, -40])
 
     # isnull：2D 输出保形（subcol1 的 NaN 也要标记）
-    d2 = FastDataFrame({'x': float})
+    d2 = DataFrame({'x': float})
     for v in [1.0, 2.0, 3.0, 4.0]:
         d2.append_row(x=v)
     d2['d2d'] = DoubleColumn.from_2d([0.0, float('nan'), 3.0, 4.0, 5.0, 6.0, float('nan'), 8.0], 4, 2)
@@ -1374,12 +1374,12 @@ def test_elementwise_2d():
     check('elem2d fillna subcol1', [c[i] for i in range(8)] == [0.0, 9.0, 3.0, 4.0, 5.0, 6.0, 9.0, 8.0])
 
     # all/any：扫描全部子列（subcol1 的 0 需参与判定）
-    d3 = FastDataFrame({'a': int})
+    d3 = DataFrame({'a': int})
     d3.append_row(a=1); d3.append_row(a=2)
     d3['a2d'] = IntColumn.from_2d([1, 2, 5, 0], 2, 2)
     check('elem2d all false', not d3.all())
     check('elem2d any true', d3.any())
-    d4 = FastDataFrame({'a': int})
+    d4 = DataFrame({'a': int})
     d4.append_row(a=1); d4.append_row(a=2)
     d4['a2d'] = IntColumn.from_2d([1, 2, 5, 6], 2, 2)
     check('elem2d all true', d4.all())
@@ -1387,7 +1387,7 @@ def test_elementwise_2d():
 
 def test_series_row_2d():
     # 基帧：a2d 子列0=[1,2,3,4] 子列1=[10,20,30,40]；d2d 子列0=[1,NAN,3,NAN] 子列1=[10,20,NAN,40]
-    df = FastDataFrame({'a': int, 's': str})
+    df = DataFrame({'a': int, 's': str})
     for a, s in [(1, 'w'), (2, 'x'), (3, 'y'), (4, 'z')]:
         df.append_row(a=a, s=s)
     df['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
@@ -1416,7 +1416,7 @@ def test_series_row_2d():
     check('sr2d bfill sub1', [c[i] for i in range(4, 8)] == [10.0, 20.0, 40.0, 40.0])
 
     # shift：逐子列独立位移（仅数值列，避免 str 报错）
-    dsh = FastDataFrame({'a': int})
+    dsh = DataFrame({'a': int})
     dsh.append_row(a=1); dsh.append_row(a=2); dsh.append_row(a=3); dsh.append_row(a=4)
     dsh['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
     sh = dsh.shift(1)
@@ -1428,7 +1428,7 @@ def test_series_row_2d():
     check('sr2d shift -1', [c[i] for i in range(8)] == [2, 3, 4, 0, 20, 30, 40, 0])
 
     # dropna：任一子列该行 NaN 即整行丢弃
-    dq = FastDataFrame({'v': float})
+    dq = DataFrame({'v': float})
     for v in [1.0, 2.0, 3.0, 4.0]:
         dq.append_row(v=v)
     dq['x2d'] = DoubleColumn.from_2d([1.0, float('nan'), 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], 4, 2)
@@ -1439,7 +1439,7 @@ def test_series_row_2d():
     check('sr2d dropna flat', [c[i] for i in range(6)] == [1.0, 3.0, 4.0, 5.0, 7.0, 8.0])
 
     # pivot：values 为 2D 时单元为向量 → 输出透视列保形 2D
-    dfp = FastDataFrame({'idx': int, 'col': str})
+    dfp = DataFrame({'idx': int, 'col': str})
     for t in [(1, 'A'), (1, 'B'), (2, 'A'), (2, 'B')]:
         dfp.append_row(idx=t[0], col=t[1])
     dfp['val2d'] = DoubleColumn.from_2d([1.0, 3.0, 5.0, 7.0, 2.0, 4.0, 6.0, 8.0], 4, 2)
@@ -1452,7 +1452,7 @@ def test_series_row_2d():
     check('sr2d pivot B flat', [cb[i] for i in range(4)] == [3.0, 7.0, 4.0, 8.0])
 
     # melt：values 为 2D → value 输出列保形 2D
-    dfm = FastDataFrame({'id': str})
+    dfm = DataFrame({'id': str})
     dfm.append_row(id='r1'); dfm.append_row(id='r2')
     dfm['x2d'] = DoubleColumn.from_2d([1.0, 2.0, 10.0, 20.0], 2, 2)
     m = dfm.melt(id_vars=['id'], value_vars=['x2d'])
@@ -1480,7 +1480,7 @@ def test_series_row_2d():
     check('sr2d apply str 1d', o['s'].length == 4)
 
     # 纯数值帧：apply 返回浮点 → 2D 输出转 Double
-    dn = FastDataFrame({'x': int})
+    dn = DataFrame({'x': int})
     dn.append_row(x=1); dn.append_row(x=2); dn.append_row(x=3); dn.append_row(x=4)
     dn['x2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
     of = dn.apply(lambda v: v + 0.5)
@@ -1494,7 +1494,7 @@ def test_series_row_2d():
     check('sr2d apply idx r3', rows[3] == (4, 40, 'z'))
 
     # T：cell 保持行向量转置（保形 2D）
-    dt = FastDataFrame({'a': int})
+    dt = DataFrame({'a': int})
     dt.append_row(a=5); dt.append_row(a=6)
     dt['p2d'] = DoubleColumn.from_2d([1.0, 2.0, 10.0, 20.0], 2, 2)
     dt['q2d'] = DoubleColumn.from_2d([100.0, 200.0, 300.0, 400.0], 2, 2)
@@ -1509,7 +1509,7 @@ def test_series_row_2d():
                             ([tp[0], tp[1], tp[2], tp[4], tp[5]] == [6.0, 2.0, 200.0, 20.0, 400.0] and math.isnan(tp[3])))
 
     # reshape：元素 = 整行单元（子列向量），输出保形
-    dr = FastDataFrame({'x': int})
+    dr = DataFrame({'x': int})
     dr.append_row(x=1); dr.append_row(x=2)
     dr['r1'] = IntColumn.from_2d([1, 2, 10, 20], 2, 2)
     dr['r2'] = IntColumn.from_2d([3, 4, 30, 40], 2, 2)
@@ -1522,19 +1522,19 @@ def test_series_row_2d():
 
 def test_shift_time_cols():
     # DataFrame.shift 对定宽时间列（Date/DateTime/Time）支持 memcpy/memset-0（TODO 完成）
-    dd = FastDataFrame({'d': 'date'})
+    dd = DataFrame({'d': 'date'})
     dd.append_row(d='2024-02-01'); dd.append_row(d='2024-03-01'); dd.append_row(d='2024-04-01')
     sd = dd.shift(1)
     check('tcol date shift+1', [sd['d'][i] for i in range(3)] == [19700101, 20240201, 20240301])
     sd2 = dd.shift(-1)
     check('tcol date shift-1', [sd2['d'][i] for i in range(3)] == [20240301, 20240401, 19700101])
 
-    dt = FastDataFrame({'t': 'time'})
+    dt = DataFrame({'t': 'time'})
     dt.append_row(t='01:00:00'); dt.append_row(t='03:00:00'); dt.append_row(t='05:00:00')
     st = dt.shift(1)
     check('tcol time shift+1', [st['t'][i] for i in range(3)] == ['00:00:00', '01:00:00', '03:00:00'])
 
-    dn = FastDataFrame({'dt': 'datetime'})
+    dn = DataFrame({'dt': 'datetime'})
     dn.append_row(dt='2023-01-15 10:30:00'); dn.append_row(dt='2023-06-20 14:00:00')
     zero_col = DateTimeColumn(); zero_col.append(0)
     zero_str = zero_col[0]
@@ -1544,7 +1544,7 @@ def test_shift_time_cols():
 
 def test_agg_stats_2d():
     # 2D 列子列0 有重复：行 (1,10)(1,20)(2,30)(2,30)
-    df = FastDataFrame({'a': int, 's': str})
+    df = DataFrame({'a': int, 's': str})
     for a, s in [(1, 'w'), (1, 'x'), (2, 'y'), (2, 'z')]:
         df.append_row(a=a, s=s)
     df['a2d'] = IntColumn.from_2d([1, 1, 2, 2, 10, 20, 30, 30], 4, 2)
@@ -1575,7 +1575,7 @@ def test_agg_stats_2d():
 #  Aggregation: mean, median, std, var, max, min, sum, count, quantile, skew, kurt
 # =====================================================================
 def test_aggregation():
-    df = FastDataFrame({'a': int, 'b': float})
+    df = DataFrame({'a': int, 'b': float})
     for i in range(10):
         df.append_row(a=i, b=i * 1.5)
 
@@ -1630,7 +1630,7 @@ def test_aggregation_complex():
 #  Cumulative: cumsum, cumprod, cummax, cummin
 # =====================================================================
 def test_cumulative():
-    df = FastDataFrame({'a': int, 'b': float})
+    df = DataFrame({'a': int, 'b': float})
     for i in range(1, 6):
         df.append_row(a=i, b=float(i))
 
@@ -1644,7 +1644,7 @@ def test_cumulative():
 
     cmx = df.cummax()
     check('cummax a[2]', cmx['a'][2] == 3)
-    df2 = FastDataFrame({'x': int})
+    df2 = DataFrame({'x': int})
     for v in [3, 1, 4, 1, 5]: df2.append_row(x=v)
     cmx2 = df2.cummax()
     check('cummax varying', [cmx2['x'][i] for i in range(5)] == [3, 3, 4, 4, 5])
@@ -1657,7 +1657,7 @@ def test_cumulative():
 #  Column arithmetic: add, sub, mul, div
 # =====================================================================
 def test_col_arithmetic():
-    df = FastDataFrame({'a': int, 'b': int})
+    df = DataFrame({'a': int, 'b': int})
     df.append_row(a=10, b=3); df.append_row(a=20, b=4)
 
     r = df.add(('a', 'b'))
@@ -1677,7 +1677,7 @@ def test_col_arithmetic():
 #  Statistics: corr, cov, corrcoef, dist functions
 # =====================================================================
 def test_corr_cov():
-    df = FastDataFrame({'a': float, 'b': float})
+    df = DataFrame({'a': float, 'b': float})
     for i in range(10):
         df.append_row(a=float(i), b=float(i) * 2)
 
@@ -1704,7 +1704,7 @@ def test_corr_cov():
 
 def _make_2d_corr_df():
     # c 为 2D 列（cols=2，列优先）：子列 c_0=10a，c_1=3a；e 与 a 相关系数为 -0.2
-    df = FastDataFrame()
+    df = DataFrame()
     df.df_length = 4
     df._columns['a'] = DoubleColumn.from_2d([1, 2, 3, 4], 4, 1)
     df._columns['b'] = DoubleColumn.from_2d([2, 4, 6, 8], 4, 1)
@@ -1752,7 +1752,7 @@ def test_corr_cov_2d():
     check('pearson2d a-e', abs(ps['e'][0] + 0.2) < 1e-12)
 
 def test_distance_functions():
-    df = FastDataFrame({'a': float, 'b': float})
+    df = DataFrame({'a': float, 'b': float})
     for i in range(5):
         df.append_row(a=float(i), b=float(i) + 1.0)
 
@@ -1779,7 +1779,7 @@ def test_distance_functions():
 #  Column ops: value_counts, clip_column, where_column, mask_column, where_row
 # =====================================================================
 def test_value_counts():
-    df = FastDataFrame({'tag': str})
+    df = DataFrame({'tag': str})
     for t in ['a', 'b', 'a', 'c', 'a', 'b']: df.append_row(tag=t)
     vc = df.value_counts('tag')
     check('value_counts shape', vc.shape[0] == 3)
@@ -1787,7 +1787,7 @@ def test_value_counts():
     check('value_counts count', vc['count'][0] == 3)
 
 def test_clip_column():
-    df = FastDataFrame({'a': float})
+    df = DataFrame({'a': float})
     for v in [1.0, 5.0, 10.0, 15.0, 20.0]: df.append_row(a=v)
     df.clip_column('a', 5.0, 15.0)
     check('clip min', df['a'][0] == 5.0)
@@ -1795,19 +1795,19 @@ def test_clip_column():
     check('clip max', df['a'][4] == 15.0)
 
 def test_where_column():
-    df = FastDataFrame({'val': int, 'cond': int})
+    df = DataFrame({'val': int, 'cond': int})
     df.append_row(val=10, cond=1); df.append_row(val=20, cond=0); df.append_row(val=30, cond=1)
     r = df.where_column('val', 'cond', 999)
     check('where', [r[i] for i in range(3)] == [10, 999, 30])
 
 def test_mask_column():
-    df = FastDataFrame({'val': int, 'cond': int})
+    df = DataFrame({'val': int, 'cond': int})
     df.append_row(val=10, cond=1); df.append_row(val=20, cond=0); df.append_row(val=30, cond=1)
     r = df.mask_column('val', 'cond', 999)
     check('mask', [r[i] for i in range(3)] == [999, 20, 999])
 
 def test_where_row():
-    df = FastDataFrame({'a': int, 'b': int})
+    df = DataFrame({'a': int, 'b': int})
     df.append_row(a=1, b=10); df.append_row(a=2, b=20); df.append_row(a=3, b=30)
     mask = IntColumn()
     mask.append(1); mask.append(0); mask.append(1)
@@ -1817,7 +1817,7 @@ def test_where_row():
 
 def test_where_mask_row_2d():
     """2D 列：where/mask 掩码按逻辑行判定（每行一个 cond），where_row 按行掩码，结果保持源维度"""
-    df = FastDataFrame()
+    df = DataFrame()
     df.df_length = 4
     df._columns['v'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
     df._columns['iv'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
@@ -1856,7 +1856,7 @@ def test_where_mask_row_2d():
 #  Groupby
 # =====================================================================
 def test_groupby():
-    df = FastDataFrame({'dept': str, 'age': int, 'salary': float})
+    df = DataFrame({'dept': str, 'age': int, 'salary': float})
     rows = [
         ('eng', 25, 80000.0), ('eng', 30, 100000.0), ('eng', 35, 120000.0),
         ('sales', 28, 70000.0), ('sales', 32, 85000.0),
@@ -1886,7 +1886,7 @@ def test_groupby():
     check('groupby std', r.shape[0] == 3)
 
 def test_groupby_multi_col():
-    df = FastDataFrame({'a': str, 'b': str, 'val': int})
+    df = DataFrame({'a': str, 'b': str, 'val': int})
     df.append_row(a='x', b='p', val=1)
     df.append_row(a='x', b='p', val=2)
     df.append_row(a='x', b='q', val=3)
@@ -1899,36 +1899,36 @@ def test_groupby_multi_col():
 #  Merge: inner, left, right, outer
 # =====================================================================
 def test_merge_inner():
-    df1 = FastDataFrame({'id': int, 'v1': float})
+    df1 = DataFrame({'id': int, 'v1': float})
     df1.append_row(id=1, v1=10.0); df1.append_row(id=2, v1=20.0); df1.append_row(id=3, v1=30.0)
-    df2 = FastDataFrame({'id': int, 'v2': float})
+    df2 = DataFrame({'id': int, 'v2': float})
     df2.append_row(id=2, v2=200.0); df2.append_row(id=3, v2=300.0); df2.append_row(id=4, v2=400.0)
     r = df1.merge(df2, on='id', how='inner')
     check('inner shape', r.shape == (2, 3))
     check('inner ids', sorted([r['id'][i] for i in range(2)]) == [2, 3])
 
 def test_merge_left():
-    df1 = FastDataFrame({'id': int, 'v1': float})
+    df1 = DataFrame({'id': int, 'v1': float})
     df1.append_row(id=1, v1=10.0); df1.append_row(id=2, v1=20.0)
-    df2 = FastDataFrame({'id': int, 'v2': float})
+    df2 = DataFrame({'id': int, 'v2': float})
     df2.append_row(id=2, v2=200.0); df2.append_row(id=3, v2=300.0)
     r = df1.merge(df2, on='id', how='left')
     check('left shape', r.shape == (2, 3))
     check('left id=1', r['v1'][0] == 10.0)
 
 def test_merge_right():
-    df1 = FastDataFrame({'id': int, 'v1': float})
+    df1 = DataFrame({'id': int, 'v1': float})
     df1.append_row(id=1, v1=10.0); df1.append_row(id=2, v1=20.0)
-    df2 = FastDataFrame({'id': int, 'v2': float})
+    df2 = DataFrame({'id': int, 'v2': float})
     df2.append_row(id=2, v2=200.0); df2.append_row(id=3, v2=300.0)
     r = df1.merge(df2, on='id', how='right')
     check('right shape', r.shape == (2, 3))
     check('right has all ids', r.shape[0] == 2)
 
 def test_merge_outer():
-    df1 = FastDataFrame({'id': int, 'v1': float})
+    df1 = DataFrame({'id': int, 'v1': float})
     df1.append_row(id=1, v1=10.0); df1.append_row(id=2, v1=20.0)
-    df2 = FastDataFrame({'id': int, 'v2': float})
+    df2 = DataFrame({'id': int, 'v2': float})
     df2.append_row(id=2, v2=200.0); df2.append_row(id=3, v2=300.0)
     r = df1.merge(df2, on='id', how='outer')
     check('outer shape', r.shape == (3, 3))
@@ -1938,12 +1938,12 @@ def test_merge_outer():
 #  Concat: multi-DF, inner, outer
 # =====================================================================
 def test_concat_multi():
-    from fluidframe.core.fastdataframe import concat, concat_inner
-    df1 = FastDataFrame({'a': int, 'b': int})
+    from fluidframe.core.dataframe import concat, concat_inner
+    df1 = DataFrame({'a': int, 'b': int})
     df1.append_row(a=1, b=10); df1.append_row(a=2, b=20)
-    df2 = FastDataFrame({'a': int, 'b': int})
+    df2 = DataFrame({'a': int, 'b': int})
     df2.append_row(a=3, b=30)
-    df3 = FastDataFrame({'a': int, 'b': int})
+    df3 = DataFrame({'a': int, 'b': int})
     df3.append_row(a=4, b=40); df3.append_row(a=5, b=50)
     r = concat([df1, df2, df3])
     check('concat 3', r.shape[0] == 5)
@@ -1953,20 +1953,20 @@ def test_concat_multi():
     check('concat ignore_index', r2.shape[0] == 5)
 
 def test_concat_inner():
-    from fluidframe.core.fastdataframe import concat_inner
-    df1 = FastDataFrame({'a': int, 'b': int})
+    from fluidframe.core.dataframe import concat_inner
+    df1 = DataFrame({'a': int, 'b': int})
     df1.append_row(a=1, b=10)
-    df2 = FastDataFrame({'a': int, 'c': float})
+    df2 = DataFrame({'a': int, 'c': float})
     df2.append_row(a=2, c=20.0)
     r = concat_inner([df1, df2])
     check('concat_inner has a', 'a' in r.columns)
     check('concat_inner rows', r.shape[0] == 2)
 
 def test_concat_outer():
-    from fluidframe.core.fastdataframe import concat_outer
-    df1 = FastDataFrame({'a': int})
+    from fluidframe.core.dataframe import concat_outer
+    df1 = DataFrame({'a': int})
     df1.append_row(a=1)
-    df2 = FastDataFrame({'b': float})
+    df2 = DataFrame({'b': float})
     df2.append_row(b=2.0)
     r = concat_outer([df1, df2])
     check('outer has a and b', 'a' in r.columns and 'b' in r.columns)
@@ -1977,7 +1977,7 @@ def test_concat_outer():
 #  eval / query
 # =====================================================================
 def test_eval():
-    df = FastDataFrame({'a': int, 'b': int})
+    df = DataFrame({'a': int, 'b': int})
     df.append_row(a=10, b=3); df.append_row(a=20, b=4)
     r = df.eval('a + b')
     check('eval add', [r[i] for i in range(2)] == [13, 24])
@@ -2000,7 +2000,7 @@ def test_query():
 #  apply / pipe
 # =====================================================================
 def test_apply():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     df.append_row(a=1); df.append_row(a=2); df.append_row(a=3)
     r = df.apply(lambda x: x * 2)
     check('apply', [r['a'][i] for i in range(3)] == [2, 4, 6])
@@ -2029,14 +2029,14 @@ def test_duplicate_rows():
     check('dup_rows all', r2.shape == (10, 5))
 
 def test_reshape():
-    df = FastDataFrame.arange(12)
+    df = DataFrame.arange(12)
     r = df.reshape(3, 4)
     check('reshape shape', r.shape == (3, 4))
     check('reshape A[0]', r['A'][0] == 0.0)
     check('reshape D[2]', r['D'][2] == 11.0)
 
 def test_transpose():
-    df = FastDataFrame({'a': int, 'b': int})
+    df = DataFrame({'a': int, 'b': int})
     df.append_row(a=1, b=10); df.append_row(a=2, b=20)
     t = df.T
     check('T shape', t.shape == (2, 2))
@@ -2045,7 +2045,7 @@ def test_transpose():
     check('T a[1]', t['a'][1] == 10.0)
 
 def test_memory_usage():
-    df = FastDataFrame({'a': int, 'b': float})
+    df = DataFrame({'a': int, 'b': float})
     for i in range(100): df.append_row(a=i, b=float(i))
     mu = df.memory_usage()
     check('memory_usage positive', mu > 0)
@@ -2053,7 +2053,7 @@ def test_memory_usage():
 def test_len():
     df = make_complex_df()
     check('len', len(df) == 10)
-    df2 = FastDataFrame({'x': int})
+    df2 = DataFrame({'x': int})
     check('len empty', len(df2) == 0)
 
 
@@ -2061,7 +2061,7 @@ def test_len():
 #  Insert row / drop_index / sort_index / argsort_by / nunique
 # =====================================================================
 def test_insert_row():
-    df = FastDataFrame({'a': int, 'b': str})
+    df = DataFrame({'a': int, 'b': str})
     df.append_row(a=1, b='x'); df.append_row(a=3, b='z')
     df.insert_row(1, a=2, b='yy')
     check('insert_row shape', df.shape == (3, 2))
@@ -2069,7 +2069,7 @@ def test_insert_row():
     check('insert_row str', [df['b'][i] for i in range(3)] == ['x', 'yy', 'z'])
 
 def test_drop_index():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     for i in range(5): df.append_row(a=i)
     df.reset_index()
     r = df.drop_index([0, 2])
@@ -2077,14 +2077,14 @@ def test_drop_index():
     check('drop_index vals', [r['a'][i] for i in range(3)] == [1, 3, 4])
 
 def test_sort_index():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     for v in [50, 10, 30, 20, 40]: df.append_row(a=v)
     df.reset_index()
     df.sort_index(inplace=True)
     check('sort_index', [df['a'][i] for i in range(5)] == [50, 10, 30, 20, 40])
 
 def test_argsort_by():
-    df = FastDataFrame({'a': int})
+    df = DataFrame({'a': int})
     for v in [30, 10, 20]: df.append_row(a=v)
     idx = df.argsort_by('a')
     check('argsort_by', idx == [1, 2, 0])
@@ -2092,7 +2092,7 @@ def test_argsort_by():
     check('argsort_by desc', idx_desc == [0, 2, 1])
 
 def test_nunique():
-    df = FastDataFrame({'a': str})
+    df = DataFrame({'a': str})
     for v in ['x', 'y', 'x', 'z', 'y', 'x']: df.append_row(a=v)
     check('nunique', df.nunique('a') == 3)
 
@@ -2120,7 +2120,7 @@ def test_display():
 #  New API tests: to_dict, to_json, abs, round, all/any, pct_change
 # =====================================================================
 def test_to_dict():
-    df = FastDataFrame({'a': int, 'b': float, 'c': str})
+    df = DataFrame({'a': int, 'b': float, 'c': str})
     df.append_row(a=1, b=2.5, c='hello')
     df.append_row(a=3, b=4.0, c='world')
     d = df.to_dict()
@@ -2130,12 +2130,12 @@ def test_to_dict():
     check('to_dict str', d['c'] == ['hello', 'world'])
 
     # Empty DataFrame
-    df2 = FastDataFrame({'a': int})
+    df2 = DataFrame({'a': int})
     check('to_dict empty', df2.to_dict() == {'a': []})
 
 def test_to_json():
     import json
-    df = FastDataFrame({'x': int, 'y': float})
+    df = DataFrame({'x': int, 'y': float})
     df.append_row(x=10, y=1.5)
     df.append_row(x=20, y=2.5)
 
@@ -2153,7 +2153,7 @@ def test_to_json():
     check('json columns vals', parsed2['x'] == [10, 20])
 
 def test_abs():
-    df = FastDataFrame({'a': int, 'b': float})
+    df = DataFrame({'a': int, 'b': float})
     df.append_row(a=-5, b=-3.14)
     df.append_row(a=10, b=2.71)
     df.append_row(a=-7, b=0.0)
@@ -2162,17 +2162,17 @@ def test_abs():
     check('abs float', [abs_df['b'][i] for i in range(abs_df['b'].length)] == [3.14, 2.71, 0.0])
 
     # Empty
-    df2 = FastDataFrame({'x': int})
+    df2 = DataFrame({'x': int})
     check('abs empty', df2.abs().to_dict() == {'x': []})
 
     # Mixed types (string passthrough)
-    df3 = FastDataFrame({'a': str})
+    df3 = DataFrame({'a': str})
     df3.append_row(a='hello')
     abs3 = df3.abs()
     check('abs string passthrough', [abs3['a'][i] for i in range(abs3['a'].length)] == ['hello'])
 
 def test_round():
-    df = FastDataFrame({'a': float})
+    df = DataFrame({'a': float})
     df.append_row(a=1.23456)
     df.append_row(a=5.67890)
     df.append_row(a=-3.14159)
@@ -2184,46 +2184,46 @@ def test_round():
     check('round 2', [r2['a'][i] for i in range(r2['a'].length)] == [1.23, 5.68, -3.14])
 
     # Int column passthrough
-    df2 = FastDataFrame({'b': int})
+    df2 = DataFrame({'b': int})
     df2.append_row(b=42)
     r_int = df2.round(0)
     check('round int passthrough', [r_int['b'][i] for i in range(r_int['b'].length)] == [42])
 
 def test_all_any():
     # all() - all True
-    df = FastDataFrame({'x': int})
+    df = DataFrame({'x': int})
     df.append_row(x=1)
     df.append_row(x=2)
     check('all true', df.all() == True)
 
     # all() - one False
-    df2 = FastDataFrame({'x': int})
+    df2 = DataFrame({'x': int})
     df2.append_row(x=1)
     df2.append_row(x=0)
     check('all false', df2.all() == False)
 
     # all() - empty
-    df3 = FastDataFrame({'x': int})
+    df3 = DataFrame({'x': int})
     check('all empty', df3.all() == True)
 
     # any() - has True
-    df4 = FastDataFrame({'x': int})
+    df4 = DataFrame({'x': int})
     df4.append_row(x=0)
     df4.append_row(x=5)
     check('any true', df4.any() == True)
 
     # any() - all False
-    df5 = FastDataFrame({'x': int})
+    df5 = DataFrame({'x': int})
     df5.append_row(x=0)
     df5.append_row(x=0)
     check('any false', df5.any() == False)
 
     # any() - empty
-    df6 = FastDataFrame({'x': int})
+    df6 = DataFrame({'x': int})
     check('any empty', df6.any() == False)
 
     # bool column
-    df7 = FastDataFrame({'x': bool})
+    df7 = DataFrame({'x': bool})
     df7.append_row(x=True)
     df7.append_row(x=True)
     check('all bool true', df7.all() == True)
@@ -2231,7 +2231,7 @@ def test_all_any():
     check('all bool mixed', df7.all() == False)
 
     # multi-column all/any
-    df8 = FastDataFrame({'a': int, 'b': int})
+    df8 = DataFrame({'a': int, 'b': int})
     df8.append_row(a=1, b=2)
     df8.append_row(a=3, b=4)
     check('multi all true', df8.all() == True)
@@ -2239,7 +2239,7 @@ def test_all_any():
     check('multi all false', df8.all() == False)
 
 def test_pct_change():
-    df = FastDataFrame({'x': int})
+    df = DataFrame({'x': int})
     df.append_row(x=100)
     df.append_row(x=110)
     df.append_row(x=99)
@@ -2256,7 +2256,7 @@ def test_pct_change():
     check('pct_change periods=2 val', abs(pct2['x'][2] - (-0.01)) < 1e-10)
 
     # float column
-    df2 = FastDataFrame({'y': float})
+    df2 = DataFrame({'y': float})
     df2.append_row(y=10.0)
     df2.append_row(y=20.0)
     pct_f = df2.pct_change()
@@ -2264,7 +2264,7 @@ def test_pct_change():
     check('pct_change float 100%', abs(pct_f['y'][1] - 1.0) < 1e-10)
 
     # zero previous value -> nan
-    df3 = FastDataFrame({'z': int})
+    df3 = DataFrame({'z': int})
     df3.append_row(z=0)
     df3.append_row(z=5)
     pct_z = df3.pct_change()
@@ -2272,7 +2272,7 @@ def test_pct_change():
 
 
 def test_replace():
-    df = FastDataFrame({'a': int, 'b': float})
+    df = DataFrame({'a': int, 'b': float})
     df.append_row(a=1, b=1.0)
     df.append_row(a=2, b=2.0)
     df.append_row(a=3, b=3.0)
@@ -2281,7 +2281,7 @@ def test_replace():
     check('replace b', r['b'][1] == 99.0)
     check('replace other unchanged', r['a'][0] == 1)
 
-    df2 = FastDataFrame({'s': str})
+    df2 = DataFrame({'s': str})
     df2.append_row(s='hello')
     df2.append_row(s='world')
     r2 = df2.replace('world', 'python')
@@ -2290,7 +2290,7 @@ def test_replace():
 
 def test_ffill_bfill():
     import math
-    df = FastDataFrame({'a': float})
+    df = DataFrame({'a': float})
     df.append_row(a=1.0)
     df.append_row(a=float('nan'))
     df.append_row(a=3.0)
@@ -2308,38 +2308,38 @@ def test_ffill_bfill():
 
 
 def test_eq():
-    df1 = FastDataFrame({'a': int, 'b': float})
+    df1 = DataFrame({'a': int, 'b': float})
     df1.append_row(a=1, b=1.0)
     df1.append_row(a=2, b=2.0)
 
-    df2 = FastDataFrame({'a': int, 'b': float})
+    df2 = DataFrame({'a': int, 'b': float})
     df2.append_row(a=1, b=1.0)
     df2.append_row(a=2, b=2.0)
 
     eq_result = df1 == df2
-    check('eq same is DataFrame', isinstance(eq_result, FastDataFrame))
+    check('eq same is DataFrame', isinstance(eq_result, DataFrame))
     check('eq same shape', eq_result.shape == (2, 2))
     check('eq same all true', all(eq_result['a'][i] == 1 for i in range(2)))
     check('eq same all true b', all(eq_result['b'][i] == 1 for i in range(2)))
 
-    df3 = FastDataFrame({'a': int, 'b': float})
+    df3 = DataFrame({'a': int, 'b': float})
     df3.append_row(a=1, b=1.0)
     df3.append_row(a=2, b=99.0)
     eq_result2 = df1 == df3
     check('eq diff val a', eq_result2['a'][0] == 1 and eq_result2['a'][1] == 1)
     check('eq diff val b', eq_result2['b'][0] == 1 and eq_result2['b'][1] == 0)
 
-    df4 = FastDataFrame({'a': int})
+    df4 = DataFrame({'a': int})
     df4.append_row(a=1)
     check('eq diff cols returns False', df1 == df4)
 
-    df5 = FastDataFrame({'a': int, 'b': float})
+    df5 = DataFrame({'a': int, 'b': float})
     df5.append_row(a=1, b=1.0)
     check('eq diff len returns False', df1 == df5)
 
 
 def test_pivot():
-    df = FastDataFrame({'idx': str, 'col': str, 'val': float})
+    df = DataFrame({'idx': str, 'col': str, 'val': float})
     df.append_row(idx='r1', col='A', val=1.0)
     df.append_row(idx='r1', col='B', val=2.0)
     df.append_row(idx='r2', col='A', val=3.0)
@@ -2352,7 +2352,7 @@ def test_pivot():
 
 
 def test_melt():
-    df = FastDataFrame({'id': str, 'x': float, 'y': float})
+    df = DataFrame({'id': str, 'x': float, 'y': float})
     df.append_row(id='r1', x=1.0, y=10.0)
     df.append_row(id='r2', x=2.0, y=20.0)
 
@@ -2364,7 +2364,7 @@ def test_melt():
 
 
 def test_expanding_ewm():
-    df = FastDataFrame({'a': float})
+    df = DataFrame({'a': float})
     df.append_row(a=1.0)
     df.append_row(a=2.0)
     df.append_row(a=3.0)
@@ -2381,7 +2381,7 @@ def test_expanding_ewm():
 
 def test_read_json():
     import json, os, tempfile
-    from fluidframe.core.fastdataframe import read_json
+    from fluidframe.core.dataframe import read_json
     data = [
         {'id': 1, 'val': 10.0, 'flag': True},
         {'id': 2, 'val': 20.0, 'flag': False},
@@ -2398,11 +2398,11 @@ def test_read_json():
 
 
 def test_merge_multicol():
-    df1 = FastDataFrame({'a': int, 'b': int, 'v1': float})
+    df1 = DataFrame({'a': int, 'b': int, 'v1': float})
     df1.append_row(a=1, b=10, v1=1.0)
     df1.append_row(a=2, b=20, v1=2.0)
 
-    df2 = FastDataFrame({'a': int, 'b': int, 'v2': float})
+    df2 = DataFrame({'a': int, 'b': int, 'v2': float})
     df2.append_row(a=1, b=10, v2=100.0)
     df2.append_row(a=2, b=20, v2=200.0)
 
@@ -2412,10 +2412,10 @@ def test_merge_multicol():
 
 
 def test_merge_col_conflict():
-    df1 = FastDataFrame({'id': int, 'val': float})
+    df1 = DataFrame({'id': int, 'val': float})
     df1.append_row(id=1, val=1.0)
 
-    df2 = FastDataFrame({'id': int, 'val': float})
+    df2 = DataFrame({'id': int, 'val': float})
     df2.append_row(id=1, val=99.0)
 
     m = df1.merge(df2, on='id')
@@ -2426,7 +2426,7 @@ def test_merge_col_conflict():
 
 
 def run_all():
-    print('=== FastDataFrame Tests ===')
+    print('=== DataFrame Tests ===')
 
     # Construction
     test_init()

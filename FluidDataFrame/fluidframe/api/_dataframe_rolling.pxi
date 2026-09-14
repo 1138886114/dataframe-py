@@ -1,7 +1,7 @@
 # _fastdataframe_rolling.pxi — Rolling window (module-level cdef)
 # Included at module level in fastdataframe.pyx (after class definition)
 
-cdef _rolling_impl(FastDataFrame self, Py_ssize_t window, str col_name):
+cdef _rolling_impl(DataFrame self, Py_ssize_t window, str col_name):
     if window <= 0:
         raise ValueError(f"Window size must be positive, got {window}")
     if col_name not in self._columns:

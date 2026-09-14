@@ -57,29 +57,29 @@ cdef void _c_argsort_ucs2(Py_UCS2* chars, Py_ssize_t* offsets, Py_ssize_t* indic
 @cython.final
 @cython.freelist(16)
 cdef class _DataFrameMetricAccessor:
-    cdef FastDataFrame _df
+    cdef DataFrame _df
 
 @cython.final
 @cython.freelist(16)
 cdef class _DataFrameGroupByAccessor:
-    cdef FastDataFrame _df
+    cdef DataFrame _df
     cdef list _by_cols
     cdef _GroupHashTable* _ht
     cdef _GroupRows* _gr
     cdef _ByColPtrs _ptrs
     cdef bint _built
     cdef void _ensure_built(self)
-    cdef FastDataFrame _convenience_agg(self, str func_name, object col_name)
+    cdef DataFrame _convenience_agg(self, str func_name, object col_name)
 
 @cython.final
 @cython.freelist(16)
 cdef class _DataFrameLinalgAccessor:
-    cdef FastDataFrame _df
+    cdef DataFrame _df
 
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef class FastDataFrame:
+cdef class DataFrame:
     cdef public dict _schema
     cdef public tuple _schema_keys
     cdef public list _ordered_cols
@@ -102,7 +102,7 @@ cdef class FastDataFrame:
     cdef BaseColumn _diff_column(self, BaseColumn col, int periods)
     cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx)
     cdef void _rollback_pending_writes(self, uint32_t n_cols) noexcept
-    cdef FastDataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n)
+    cdef DataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n)
     cdef BaseColumn _column_from_list(self, str name, list values)
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos)
     cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos)

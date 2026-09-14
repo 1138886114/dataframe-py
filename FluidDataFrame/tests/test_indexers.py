@@ -1,6 +1,6 @@
 import sys
 sys.path.insert(0, '.')
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
 passed = 0
 failed = 0
@@ -23,7 +23,7 @@ def expect_exception(exc_type, fn, *args, **kwargs):
         return False
 
 def _df5():
-    df = FastDataFrame({'a': int, 'b': str})
+    df = DataFrame({'a': int, 'b': str})
     for i in range(5):
         df.append_row(a=i, b=f'row{i}')
     return df
@@ -75,7 +75,7 @@ class TestLoc:
         check('missing', expect_exception(KeyError, df.loc.__getitem__, 99))
 
     def test_int_mask(self):
-        df = FastDataFrame({'id': int, 'score': float})
+        df = DataFrame({'id': int, 'score': float})
         for i in range(10): df.append_row(id=i, score=50.0 + i * 5)
         mask = df['id'] > 5
         r = df.loc[mask]
@@ -83,14 +83,14 @@ class TestLoc:
         check('first', r['id'][0] == 6)
 
     def test_float_mask(self):
-        df = FastDataFrame({'id': int, 'score': float})
+        df = DataFrame({'id': int, 'score': float})
         for i in range(10): df.append_row(id=i, score=50.0 + i * 5)
         mask = df['score'] >= 80.0
         r = df.loc[mask]
         check('shape', r.shape[0] == 4)
 
     def test_and_combined(self):
-        df = FastDataFrame({'id': int, 'score': float})
+        df = DataFrame({'id': int, 'score': float})
         for i in range(10): df.append_row(id=i, score=50.0 + i * 5)
         mask = (df['id'] > 3) & (df['score'] < 80.0)
         r = df.loc[mask]
@@ -98,41 +98,41 @@ class TestLoc:
         check('and val', r['id'][0] == 4)
 
     def test_or_combined(self):
-        df = FastDataFrame({'id': int, 'score': float})
+        df = DataFrame({'id': int, 'score': float})
         for i in range(10): df.append_row(id=i, score=50.0 + i * 5)
         mask = (df['id'] <= 2) | (df['score'] >= 90.0)
         r = df.loc[mask]
         check('or shape', r.shape[0] >= 3)
 
     def test_not_mask(self):
-        df = FastDataFrame({'id': int, 'score': float})
+        df = DataFrame({'id': int, 'score': float})
         for i in range(10): df.append_row(id=i, score=50.0 + i * 5)
         mask = ~(df['id'] > 5)
         r = df.loc[mask]
         check('not shape', r.shape == (6, 2))
 
     def test_callable(self):
-        df = FastDataFrame({'id': int, 'score': float})
+        df = DataFrame({'id': int, 'score': float})
         for i in range(10): df.append_row(id=i, score=50.0 + i * 5)
         r = df.loc[lambda d: d['id'] > 7]
         check('callable shape', r.shape == (2, 2))
 
     def test_bool_list(self):
-        df = FastDataFrame({'id': int, 'score': float})
+        df = DataFrame({'id': int, 'score': float})
         for i in range(10): df.append_row(id=i, score=50.0 + i * 5)
         mask = [i % 2 == 0 for i in range(10)]
         r = df.loc[mask]
         check('list shape', r.shape == (5, 2))
 
     def test_preserves_index(self):
-        df = FastDataFrame({'id': int, 'score': float})
+        df = DataFrame({'id': int, 'score': float})
         for i in range(10): df.append_row(id=i, score=50.0 + i * 5)
         mask = df['id'] > 5
         r = df.loc[mask]
         check('index', r.index.values() == [6, 7, 8, 9])
 
     def test_rows_cols(self):
-        df = FastDataFrame({'name': str, 'age': int, 'score': float})
+        df = DataFrame({'name': str, 'age': int, 'score': float})
         df.append_row(name='alice', age=25, score=90.0)
         df.append_row(name='bob', age=30, score=85.0)
         df.append_row(name='charlie', age=35, score=95.0)
@@ -142,7 +142,7 @@ class TestLoc:
         check('cols', set(r.columns) == {'name', 'score'})
 
     def test_single_col(self):
-        df = FastDataFrame({'name': str, 'age': int})
+        df = DataFrame({'name': str, 'age': int})
         df.append_row(name='alice', age=25)
         df.append_row(name='bob', age=30)
         mask = df['age'] > 25
@@ -151,7 +151,7 @@ class TestLoc:
         check('val', col[0] == 30)
 
     def test_setitem_int(self):
-        df = FastDataFrame({'A': int, 'B': int})
+        df = DataFrame({'A': int, 'B': int})
         df.append_row(A=1, B=10); df.append_row(A=2, B=20); df.append_row(A=3, B=30)
         df.loc[1] = [99, 88]
         check('A', df['A'][1] == 99)
@@ -159,7 +159,7 @@ class TestLoc:
         check('unchanged', df['A'][0] == 1)
 
     def test_setitem_dict(self):
-        df = FastDataFrame({'A': int, 'B': int})
+        df = DataFrame({'A': int, 'B': int})
         df.append_row(A=1, B=10)
         df.loc[0] = {'A': 77}
         check('A', df['A'][0] == 77)

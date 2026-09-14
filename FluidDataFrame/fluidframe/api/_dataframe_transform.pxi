@@ -1,7 +1,7 @@
 # _fastdataframe_transform.pxi — Transform, sort, filter, arithmetic (module-level cdef)
 # Included at module level in fastdataframe.pyx (after class definition)
 
-cdef _argsort_by_impl(FastDataFrame self, str col_name, bint reverse):
+cdef _argsort_by_impl(DataFrame self, str col_name, bint reverse):
     if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
 
@@ -56,7 +56,7 @@ cdef _argsort_by_impl(FastDataFrame self, str col_name, bint reverse):
     finally:
         os_aligned_free(indices_c)
 
-cdef _sort_values_impl(FastDataFrame self, str col_name, bint reverse, bint inplace):
+cdef _sort_values_impl(DataFrame self, str col_name, bint reverse, bint inplace):
     if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
 
@@ -68,7 +68,7 @@ cdef _sort_values_impl(FastDataFrame self, str col_name, bint reverse, bint inpl
     cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
     if not idx_c: raise MemoryError()
     cdef Py_ssize_t i
-    cdef FastDataFrame result_df
+    cdef DataFrame result_df
     cdef str name
     cdef BaseColumn col, new_col
 
@@ -77,7 +77,7 @@ cdef _sort_values_impl(FastDataFrame self, str col_name, bint reverse, bint inpl
         if inplace:
             result_df = self
         else:
-            result_df = FastDataFrame()
+            result_df = DataFrame()
             result_df.df_length = n
 
         for name, col in self._columns.items():
@@ -94,25 +94,25 @@ cdef _sort_values_impl(FastDataFrame self, str col_name, bint reverse, bint inpl
     finally:
         os_aligned_free(idx_c)
 
-cdef _diff_impl(FastDataFrame self, str col_name, int periods):
+cdef _diff_impl(DataFrame self, str col_name, int periods):
     if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
     cdef BaseColumn col = self._columns[col_name]
     return self._diff_column(col, periods)
 
-cdef _apply_impl(FastDataFrame self, object func, str axis, bint raw):
+cdef _apply_impl(DataFrame self, object func, str axis, bint raw):
     cdef str col_name
     cdef BaseColumn col_obj
     cdef Py_ssize_t c_out, r_out, total, i, j
     cdef list new_vals, result_vals, flat_data, col_names, cols_data
     cdef Py_ssize_t num_cols, n
     cdef dict row
-    cdef FastDataFrame result
+    cdef DataFrame result
     cdef bint is2d
     import numpy as np
 
     if axis == 'columns':
-        result = FastDataFrame()
+        result = DataFrame()
         result.df_length = self.df_length
         result.index = RangeIndex(0, self.df_length)
         for col_name, col_obj in self._columns.items():
@@ -154,7 +154,7 @@ cdef _apply_impl(FastDataFrame self, object func, str axis, bint raw):
 
     raise ValueError(f"axis must be 'columns' or 'index', got '{axis}'")
 
-cdef _clip_column_impl(FastDataFrame self, str col_name, object lower, object upper, bint inplace):
+cdef _clip_column_impl(DataFrame self, str col_name, object lower, object upper, bint inplace):
     cdef BaseColumn col = self._columns[col_name]
     cdef double lower_val = float('-inf') if lower is None else <double>lower
     cdef double upper_val = float('inf') if upper is None else <double>upper
@@ -171,9 +171,9 @@ cdef _clip_column_impl(FastDataFrame self, str col_name, object lower, object up
     if inplace:
         return self
 
-cdef _clip_all_impl(FastDataFrame self, object lower, object upper, bint inplace):
+cdef _clip_all_impl(DataFrame self, object lower, object upper, bint inplace):
     """DataFrame.clip：对所有数值列（Int/Double）统一截断。2D 列由列级 clip 处理。"""
-    cdef FastDataFrame target = self if inplace else _copy_impl(self)
+    cdef DataFrame target = self if inplace else _copy_impl(self)
     cdef list names = []
     cdef str name
     cdef BaseColumn col
@@ -186,7 +186,7 @@ cdef _clip_all_impl(FastDataFrame self, object lower, object upper, bint inplace
         return self
     return target
 
-cdef _where_column_impl(FastDataFrame self, str col_name, str cond_col, object other):
+cdef _where_column_impl(DataFrame self, str col_name, str cond_col, object other):
     cdef BaseColumn src = self._columns[col_name]
     cdef BaseColumn cond = self._columns[cond_col]
     cdef bint src_is_2d = src.is_2d and src.num_cols > 1
@@ -199,7 +199,7 @@ cdef _where_column_impl(FastDataFrame self, str col_name, str cond_col, object o
         return (<IntColumn>src).where(<IntColumn>cond, <int>other)
     raise TypeError(f"where not supported for column type {self._type_name(src)}")
 
-cdef _mask_column_impl(FastDataFrame self, str col_name, str cond_col, object other):
+cdef _mask_column_impl(DataFrame self, str col_name, str cond_col, object other):
     cdef BaseColumn src = self._columns[col_name]
     cdef BaseColumn cond = self._columns[cond_col]
     cdef bint src_is_2d = src.is_2d and src.num_cols > 1
@@ -212,11 +212,11 @@ cdef _mask_column_impl(FastDataFrame self, str col_name, str cond_col, object ot
         return (<IntColumn>src).mask(<IntColumn>cond, <int>other)
     raise TypeError(f"mask not supported for column type {self._type_name(src)}")
 
-cdef _where_row_impl(FastDataFrame self, IntColumn mask, object fill):
+cdef _where_row_impl(DataFrame self, IntColumn mask, object fill):
     cdef Py_ssize_t n = self.df_length
     if mask.length != n:
         raise ValueError(f"Mask length {mask.length} != DataFrame length {n}")
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = n
     result.index = self.index
     cdef str name
@@ -225,8 +225,8 @@ cdef _where_row_impl(FastDataFrame self, IntColumn mask, object fill):
         result._columns[name] = col.where_mask(mask, fill)
     return result
 
-cdef _isnull_impl(FastDataFrame self):
-    cdef FastDataFrame result = FastDataFrame()
+cdef _isnull_impl(DataFrame self):
+    cdef DataFrame result = DataFrame()
     result.df_length = self.df_length
     result.index = self.index
     cdef str name
@@ -273,9 +273,9 @@ cdef _isnull_impl(FastDataFrame self):
         result._columns[name] = new_col
     return result
 
-cdef _notna_impl(FastDataFrame self):
+cdef _notna_impl(DataFrame self):
     """df.notna：df.isnull 掩码取反。2D 列保持 cols 维度。"""
-    cdef FastDataFrame result = _isnull_impl(self)
+    cdef DataFrame result = _isnull_impl(self)
     cdef str name
     cdef BaseColumn col
     cdef IntColumn mask_col
@@ -289,11 +289,11 @@ cdef _notna_impl(FastDataFrame self):
                 p[i] = 1 - p[i]
     return result
 
-cdef _fillna_impl(FastDataFrame self, object value, col_names):
+cdef _fillna_impl(DataFrame self, object value, col_names):
     """【语义修复】：参数 value 必须是 object，以支持字符串等各种类型填充。
     2D 列：数值类型使用 flat 迭代（isnan 逐元素检测，与布局无关）；
     字符串类型按 2D 子列边界逐子列填充。"""
-    cdef FastDataFrame result = _copy_impl(self)
+    cdef DataFrame result = _copy_impl(self)
     cdef str name
     cdef BaseColumn col
     cdef Py_ssize_t i, total, rows, cols, j, base
@@ -334,7 +334,7 @@ cdef _fillna_impl(FastDataFrame self, object value, col_names):
                     ucs2_col._set_item(i, s_val)
     return result
 
-cdef _dropna_impl(FastDataFrame self):
+cdef _dropna_impl(DataFrame self):
     if self.df_length == 0: return _copy_impl(self)
     cdef Py_ssize_t n = self.df_length
 
@@ -393,7 +393,7 @@ cdef _dropna_impl(FastDataFrame self):
         if keep_count == n:
             return _copy_impl(self)
         if keep_count == 0:
-            return FastDataFrame()
+            return DataFrame()
 
         keep_idx = <Py_ssize_t*>aligned_malloc(max(keep_count, 1) * sizeof(Py_ssize_t))
         if not keep_idx: raise MemoryError()
@@ -409,11 +409,11 @@ cdef _dropna_impl(FastDataFrame self):
         if keep_mask: os_aligned_free(keep_mask)
         if keep_idx: os_aligned_free(keep_idx)
 
-cdef _head_impl(FastDataFrame self, Py_ssize_t n):
+cdef _head_impl(DataFrame self, Py_ssize_t n):
     if n < 0: raise ValueError("n must be non-negative")
     n = min(n, self.df_length)
     if n == 0:
-        result = FastDataFrame()
+        result = DataFrame()
         for name, col in self._columns.items():
             result._columns[name] = col.__class__()
         return result
@@ -427,10 +427,10 @@ cdef _head_impl(FastDataFrame self, Py_ssize_t n):
     finally:
         os_aligned_free(idx_c)
 
-cdef _tail_impl(FastDataFrame self, Py_ssize_t n):
+cdef _tail_impl(DataFrame self, Py_ssize_t n):
     if n < 0: raise ValueError("n must be non-negative")
     n = min(n, self.df_length)
-    if n == 0: return FastDataFrame()
+    if n == 0: return DataFrame()
     cdef Py_ssize_t start = self.df_length - n
     cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
     if not idx_c: raise MemoryError()
@@ -441,14 +441,14 @@ cdef _tail_impl(FastDataFrame self, Py_ssize_t n):
     finally:
         os_aligned_free(idx_c)
 
-cdef _sample_impl(FastDataFrame self, object n, object frac, bint replace, int seed):
+cdef _sample_impl(DataFrame self, object n, object frac, bint replace, int seed):
     if seed >= 0:
         _xorshift128plus_seed(<unsigned long long>seed)
     else:
         _xorshift128plus_seed(<unsigned long long>time(NULL) ^ <unsigned long long>id(self))
     cdef Py_ssize_t total = self.df_length
     if total == 0:
-        return FastDataFrame()
+        return DataFrame()
 
     cdef Py_ssize_t sample_size
     if n is not None:
@@ -488,29 +488,29 @@ cdef _sample_impl(FastDataFrame self, object n, object frac, bint replace, int s
             idx_c[i] = shuffle_buf[i]
         os_aligned_free(shuffle_buf)
 
-    cdef FastDataFrame result = self._take(idx_c, sample_size)
+    cdef DataFrame result = self._take(idx_c, sample_size)
     os_aligned_free(idx_c)
     return result
 
-cdef _nsmallest_impl(FastDataFrame self, Py_ssize_t n, str col_name):
-    cdef FastDataFrame sorted_df = _sort_values_impl(self, col_name, False, False)
+cdef _nsmallest_impl(DataFrame self, Py_ssize_t n, str col_name):
+    cdef DataFrame sorted_df = _sort_values_impl(self, col_name, False, False)
     return _head_impl(sorted_df, n)
 
-cdef _nlargest_impl(FastDataFrame self, Py_ssize_t n, str col_name):
-    cdef FastDataFrame sorted_df = _sort_values_impl(self, col_name, True, False)
+cdef _nlargest_impl(DataFrame self, Py_ssize_t n, str col_name):
+    cdef DataFrame sorted_df = _sort_values_impl(self, col_name, True, False)
     return _head_impl(sorted_df, n)
 
-cdef _pipe_impl(FastDataFrame self, object func, tuple args, dict kwargs):
+cdef _pipe_impl(DataFrame self, object func, tuple args, dict kwargs):
     return func(self, *args, **kwargs)
 
-cdef _assign_impl(FastDataFrame self, dict kwargs):
-    cdef FastDataFrame result = _copy_impl(self)
+cdef _assign_impl(DataFrame self, dict kwargs):
+    cdef DataFrame result = _copy_impl(self)
     for name, value in kwargs.items():
         result[name] = value
     return result
 
-cdef _select_dtypes_impl(FastDataFrame self, list include_types, list exclude_types):
-    cdef FastDataFrame result = FastDataFrame()
+cdef _select_dtypes_impl(DataFrame self, list include_types, list exclude_types):
+    cdef DataFrame result = DataFrame()
     cdef dict dtype_map = {TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_CHAR256: 'char256',
                            TYPE_UCS2: 'ucs2', TYPE_DATE: 'date',
                            TYPE_BOOL: 'bool', TYPE_CATEGORY: 'category',
@@ -526,8 +526,8 @@ cdef _select_dtypes_impl(FastDataFrame self, list include_types, list exclude_ty
     result.index = self.index
     return result
 
-cdef _astype_impl(FastDataFrame self, dict dtype_dict):
-    cdef FastDataFrame result = FastDataFrame()
+cdef _astype_impl(DataFrame self, dict dtype_dict):
+    cdef DataFrame result = DataFrame()
     cdef str col_name, target
     for col_name, col_obj in self._columns.items():
         if col_name in dtype_dict:
@@ -547,7 +547,7 @@ cdef _astype_impl(FastDataFrame self, dict dtype_dict):
             result.index = self.index.copy()
     return result
 
-cdef _resolve_cols_impl(FastDataFrame self, tuple col_names):
+cdef _resolve_cols_impl(DataFrame self, tuple col_names):
     cdef list cols = []
     cdef str name
     for name in col_names:
@@ -556,7 +556,7 @@ cdef _resolve_cols_impl(FastDataFrame self, tuple col_names):
         cols.append(self._columns[name])
     return cols
 
-cdef _add_impl(FastDataFrame self, tuple col_names):
+cdef _add_impl(DataFrame self, tuple col_names):
     if len(col_names) < 2: raise ValueError("Need at least 2 column names")
     cdef list cols = _resolve_cols_impl(self, col_names)
     cdef BaseColumn result = cols[0].add(cols[1])
@@ -565,7 +565,7 @@ cdef _add_impl(FastDataFrame self, tuple col_names):
         result = result.add(cols[j])
     return result
 
-cdef _sub_impl(FastDataFrame self, tuple col_names):
+cdef _sub_impl(DataFrame self, tuple col_names):
     if len(col_names) < 2: raise ValueError("Need at least 2 column names")
     cdef list cols = _resolve_cols_impl(self, col_names)
     cdef BaseColumn result = cols[0].sub(cols[1])
@@ -574,7 +574,7 @@ cdef _sub_impl(FastDataFrame self, tuple col_names):
         result = result.sub(cols[j])
     return result
 
-cdef _mul_impl(FastDataFrame self, tuple col_names):
+cdef _mul_impl(DataFrame self, tuple col_names):
     if len(col_names) < 2: raise ValueError("Need at least 2 column names")
     cdef list cols = _resolve_cols_impl(self, col_names)
     cdef BaseColumn result = cols[0].mul(cols[1])
@@ -583,7 +583,7 @@ cdef _mul_impl(FastDataFrame self, tuple col_names):
         result = result.mul(cols[j])
     return result
 
-cdef _div_impl(FastDataFrame self, tuple col_names):
+cdef _div_impl(DataFrame self, tuple col_names):
     if len(col_names) < 2: raise ValueError("Need at least 2 column names")
     cdef list cols = _resolve_cols_impl(self, col_names)
     cdef BaseColumn result = cols[0].div(cols[1])
@@ -592,13 +592,13 @@ cdef _div_impl(FastDataFrame self, tuple col_names):
         result = result.div(cols[j])
     return result
 
-cdef _reshape_impl(FastDataFrame self, Py_ssize_t rows, Py_ssize_t cols):
+cdef _reshape_impl(DataFrame self, Py_ssize_t rows, Py_ssize_t cols):
     cdef Py_ssize_t num_cols = len(self._columns)
     cdef Py_ssize_t total_elements = self.df_length * num_cols
     if total_elements != rows * cols:
         raise ValueError(f"Cannot reshape {total_elements} elements into ({rows}, {cols})")
 
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = rows
     result.index = RangeIndex(0, rows)
     cdef list col_names = [chr(65 + i) if i < 26 else f"C{i}" for i in range(cols)]
@@ -644,13 +644,13 @@ cdef _reshape_impl(FastDataFrame self, Py_ssize_t rows, Py_ssize_t cols):
 
     return result
 
-cdef _T_impl(FastDataFrame self):
+cdef _T_impl(DataFrame self):
     cdef Py_ssize_t rows = self.df_length
     cdef Py_ssize_t cols = len(self._columns)
-    if rows == 0 or cols == 0: return FastDataFrame()
+    if rows == 0 or cols == 0: return DataFrame()
 
     cdef list col_names = list(self._columns.keys())
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = cols
     result.index = RangeIndex(0, cols)
 
@@ -710,8 +710,8 @@ cdef _T_impl(FastDataFrame self):
 
     return result
 
-cdef _abs_impl(FastDataFrame self):
-    cdef FastDataFrame result = FastDataFrame()
+cdef _abs_impl(DataFrame self):
+    cdef DataFrame result = DataFrame()
     result.df_length = self.df_length
     result.index = self.index
     cdef str name
@@ -723,8 +723,8 @@ cdef _abs_impl(FastDataFrame self):
             result._columns[name] = col.copy()
     return result
 
-cdef _round_impl(FastDataFrame self, int decimals):
-    cdef FastDataFrame result = FastDataFrame()
+cdef _round_impl(DataFrame self, int decimals):
+    cdef DataFrame result = DataFrame()
     result.df_length = self.df_length
     result.index = self.index
     cdef str name
@@ -736,7 +736,7 @@ cdef _round_impl(FastDataFrame self, int decimals):
             result._columns[name] = col.copy()
     return result
 
-cdef _all_impl(FastDataFrame self):
+cdef _all_impl(DataFrame self):
     cdef Py_ssize_t n = self.df_length
     cdef dict result = {}
     cdef str name
@@ -772,7 +772,7 @@ cdef _all_impl(FastDataFrame self):
         result[name] = all_true
     return result
 
-cdef _any_impl(FastDataFrame self):
+cdef _any_impl(DataFrame self):
     cdef Py_ssize_t n = self.df_length
     cdef dict result = {}
     cdef str name
@@ -808,8 +808,8 @@ cdef _any_impl(FastDataFrame self):
         result[name] = any_true
     return result
 
-cdef _pct_change_impl(FastDataFrame self, int periods=1):
-    cdef FastDataFrame result = FastDataFrame()
+cdef _pct_change_impl(DataFrame self, int periods=1):
+    cdef DataFrame result = DataFrame()
     result.df_length = self.df_length
     result.index = self.index
     cdef str name
@@ -868,8 +868,8 @@ cdef _pct_change_impl(FastDataFrame self, int periods=1):
 
     return result
 
-cdef _replace_impl(FastDataFrame self, object to_replace, object value):
-    cdef FastDataFrame result = _copy_impl(self)
+cdef _replace_impl(DataFrame self, object to_replace, object value):
+    cdef DataFrame result = _copy_impl(self)
     cdef str name
     cdef BaseColumn col
     cdef Py_ssize_t i, total
@@ -912,8 +912,8 @@ cdef _replace_impl(FastDataFrame self, object to_replace, object value):
             result._columns[name] = new_col
     return result
 
-cdef _ffill_impl(FastDataFrame self):
-    cdef FastDataFrame result = FastDataFrame()
+cdef _ffill_impl(DataFrame self):
+    cdef DataFrame result = DataFrame()
     result.df_length = self.df_length
     result.index = self.index
     cdef str name
@@ -925,8 +925,8 @@ cdef _ffill_impl(FastDataFrame self):
             result._columns[name] = col.copy()
     return result
 
-cdef _bfill_impl(FastDataFrame self):
-    cdef FastDataFrame result = FastDataFrame()
+cdef _bfill_impl(DataFrame self):
+    cdef DataFrame result = DataFrame()
     result.df_length = self.df_length
     result.index = self.index
     cdef str name
@@ -938,7 +938,7 @@ cdef _bfill_impl(FastDataFrame self):
             result._columns[name] = col.copy()
     return result
 
-cdef _pivot_impl(FastDataFrame self, str index, str columns, str values):
+cdef _pivot_impl(DataFrame self, str index, str columns, str values):
     cdef Py_ssize_t n = self.df_length
 
     cdef list idx_keys = _col_to_keys(self._columns[index])
@@ -969,7 +969,7 @@ cdef _pivot_impl(FastDataFrame self, str index, str columns, str values):
             col_dict[col_val] = len(unique_cols)
             unique_cols.append(col_val)
 
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = len(unique_idx)
     result.index = RangeIndex(0, len(unique_idx))
 
@@ -1002,13 +1002,13 @@ cdef _pivot_impl(FastDataFrame self, str index, str columns, str values):
 
     return result
 
-cdef _melt_impl(FastDataFrame self, list id_vars=None, list value_vars=None, str var_name='variable', str value_name='value'):
+cdef _melt_impl(DataFrame self, list id_vars=None, list value_vars=None, str var_name='variable', str value_name='value'):
     cdef Py_ssize_t n = self.df_length
     cdef list all_cols = list(self._columns.keys())
     if id_vars is None: id_vars = []
     if value_vars is None: value_vars = [c for c in all_cols if c not in id_vars]
 
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     cdef Py_ssize_t total = n * len(value_vars)
     cdef Py_ssize_t vi, i, j, c_out, cc, base
     cdef bint is2d
@@ -1072,7 +1072,7 @@ cdef _melt_impl(FastDataFrame self, list id_vars=None, list value_vars=None, str
     result._columns[value_name] = new_val
     return result
 
-cdef _expanding_sum_impl(FastDataFrame self, str col_name):
+cdef _expanding_sum_impl(DataFrame self, str col_name):
     cdef BaseColumn col = self._columns[col_name]
     cdef bint is2d
     cdef Py_ssize_t c_out, r_out, total, j, base, i
@@ -1114,7 +1114,7 @@ cdef _expanding_sum_impl(FastDataFrame self, str col_name):
         raise TypeError(f"Expanding sum not supported for {col.dtype}")
     return res
 
-cdef _ewm_mean_impl(FastDataFrame self, str col_name, double span):
+cdef _ewm_mean_impl(DataFrame self, str col_name, double span):
     cdef BaseColumn col = self._columns[col_name]
     cdef bint is2d
     cdef Py_ssize_t c_out, r_out, total, j, base, i
@@ -1160,7 +1160,7 @@ cdef _ewm_mean_impl(FastDataFrame self, str col_name, double span):
 #  reshape：explode / stack / unstack
 # ============================================================
 
-cdef _explode_impl(FastDataFrame self, str col_name):
+cdef _explode_impl(DataFrame self, str col_name):
     """DataFrame.explode：将 col_name 中 list/tuple 元素纵向展开为多行，
     其余列按行重复对齐；空 list/tuple 行被丢弃，标量行保持原样。
     源列可以是 BaseColumn（Typed 列只接受标量，通常用于字符串形态），
@@ -1188,7 +1188,7 @@ cdef _explode_impl(FastDataFrame self, str col_name):
             counts[i] = 1
         total += counts[i]
 
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = total
     result.index = RangeIndex(0, total)
 
@@ -1221,7 +1221,7 @@ cdef _explode_impl(FastDataFrame self, str col_name):
     return result
 
 
-cdef _stack_impl(FastDataFrame self):
+cdef _stack_impl(DataFrame self):
     """FluidDataFrame.stack：将 2D 列展平为 1D 列，
     index 变为两级 MultiIndex（行号, 子列号，按列主序）。
     1D 列在展平后每个 (row, 子列) 取同一值。
@@ -1256,7 +1256,7 @@ cdef _stack_impl(FastDataFrame self):
             p0[i] = <int>(i // cols)
             p1[i] = <int>(i % cols)
 
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = total
     result.index = MultiIndex([list(range(rows)), list(range(cols))],
                               [codes0, codes1],
@@ -1280,7 +1280,7 @@ cdef _stack_impl(FastDataFrame self):
     return result
 
 
-cdef _unstack_impl(FastDataFrame self):
+cdef _unstack_impl(DataFrame self):
     """FluidDataFrame.unstack：stack() 的逆操作。
     要求 index 为两级 MultiIndex（奇数子列数按列主序），
     将每列 flat buffer 重建为 2D 列（子列数 = level1 长度，行数 = level0 长度）。
@@ -1295,7 +1295,7 @@ cdef _unstack_impl(FastDataFrame self):
     cdef str name
     cdef BaseColumn col
 
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = rows_out
     result.index = RangeIndex(0, rows_out)
 

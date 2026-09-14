@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, '.')
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
 passed = 0
 failed = 0
@@ -33,7 +33,7 @@ def _make_double(vals):
     return col
 
 def _make_df(columns_data):
-    df = FastDataFrame()
+    df = DataFrame()
     n = len(columns_data[0][1])
     for name, vals in columns_data:
         df[name] = _make_int(vals)
@@ -166,7 +166,7 @@ class TestRollingCorrCov:
 
 class TestRollingErrors:
     def test_non_numeric(self):
-        df_str = FastDataFrame()
+        df_str = DataFrame()
         from fluidframe.core.asciicolumn import AsciiColumn
         cc = AsciiColumn()
         for v in ["a", "b", "c"]: cc.append(v)

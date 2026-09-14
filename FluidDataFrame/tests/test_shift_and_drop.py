@@ -259,8 +259,8 @@ def test_drop_row_time():
 # ============================================================
 
 def test_argsort_by():
-    from fluidframe.core.fastdataframe import FastDataFrame
-    df = FastDataFrame({'a': int})
+    from fluidframe.core.dataframe import DataFrame
+    df = DataFrame({'a': int})
     df.append_row(a=3)
     df.append_row(a=1)
     df.append_row(a=2)
@@ -271,8 +271,8 @@ def test_argsort_by():
     check('argsort_by [2]', idx[2] == 0)
 
 def test_argsort_by_descending():
-    from fluidframe.core.fastdataframe import FastDataFrame
-    df = FastDataFrame({'a': int})
+    from fluidframe.core.dataframe import DataFrame
+    df = DataFrame({'a': int})
     df.append_row(a=3)
     df.append_row(a=1)
     df.append_row(a=2)
@@ -283,16 +283,16 @@ def test_argsort_by_descending():
     check('argsort_by_desc [2]', idx[2] == 1)
 
 def test_argsort_by_single():
-    from fluidframe.core.fastdataframe import FastDataFrame
-    df = FastDataFrame({'a': int})
+    from fluidframe.core.dataframe import DataFrame
+    df = DataFrame({'a': int})
     df.append_row(a=42)
     idx = df.argsort_by('a')
     check('argsort_by_single len', len(idx) == 1)
     check('argsort_by_single [0]', idx[0] == 0)
 
 def test_argsort_by_doubles():
-    from fluidframe.core.fastdataframe import FastDataFrame
-    df = FastDataFrame({'a': float})
+    from fluidframe.core.dataframe import DataFrame
+    df = DataFrame({'a': float})
     df.append_row(a=1.5)
     df.append_row(a=0.5)
     df.append_row(a=2.5)
@@ -302,8 +302,8 @@ def test_argsort_by_doubles():
     check('argsort_by_doubles [2]', idx[2] == 2)
 
 def test_argsort_by_duplicates():
-    from fluidframe.core.fastdataframe import FastDataFrame
-    df = FastDataFrame({'a': int})
+    from fluidframe.core.dataframe import DataFrame
+    df = DataFrame({'a': int})
     df.append_row(a=2)
     df.append_row(a=1)
     df.append_row(a=2)
@@ -313,9 +313,9 @@ def test_argsort_by_duplicates():
     check('argsort_by_dup sorted', df['a'][idx[0]] <= df['a'][idx[1]] <= df['a'][idx[2]])
 
 def test_argsort_by_strings():
-    from fluidframe.core.fastdataframe import FastDataFrame
+    from fluidframe.core.dataframe import DataFrame
     from fluidframe._schema_types import Char256
-    df = FastDataFrame({'a': Char256})
+    df = DataFrame({'a': Char256})
     df.append_row(a='c')
     df.append_row(a='a')
     df.append_row(a='b')

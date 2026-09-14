@@ -2,7 +2,7 @@
 # Included at module level in fastdataframe.pyx (after class definition)
 # NOTE: _column_from_list_impl is defined here and used by other .pxi files
 
-cdef BaseColumn _column_from_list_impl(FastDataFrame self, str name, list values):
+cdef BaseColumn _column_from_list_impl(DataFrame self, str name, list values):
     cdef Py_ssize_t n = len(values)
     cdef Py_ssize_t i
     cdef IntColumn int_col
@@ -264,8 +264,8 @@ cdef BaseColumn _col_from_keys_2d(BaseColumn src, list keys):
         "string/bool/category columns are always 1D"
     )
 
-cdef _eval_impl(FastDataFrame self, str expr, bint inplace):
-    cdef FastDataFrame target_df = self if inplace else self.copy()
+cdef _eval_impl(DataFrame self, str expr, bint inplace):
+    cdef DataFrame target_df = self if inplace else self.copy()
     cdef bint is_assignment = False
     cdef str target_col = ""
     cdef str calc_expr = expr
@@ -308,13 +308,13 @@ cdef _eval_impl(FastDataFrame self, str expr, bint inplace):
     else:
         return res_col
 
-cdef _query_impl(FastDataFrame self, str expr):
+cdef _query_impl(DataFrame self, str expr):
     mask = _eval_impl(self, expr, False)
     if not type(mask).__name__ in ('IntColumn', 'BoolColumn'):
         raise TypeError("Query expression must evaluate to a boolean mask (IntColumn or BoolColumn)")
     return self.loc[mask]
 
-cdef _append_row_impl(FastDataFrame self, dict kwargs):
+cdef _append_row_impl(DataFrame self, dict kwargs):
     for col_name in self._columns:
         if col_name not in kwargs:
             raise ValueError(f"Missing value for column: {col_name}")
@@ -347,8 +347,8 @@ cdef _append_row_impl(FastDataFrame self, dict kwargs):
                     (<IntIndex>self.index).pop_back()
         raise
 
-cdef _append_impl(FastDataFrame self, object row, bint ignore_index):
-    cdef FastDataFrame new_df = self.copy()
+cdef _append_impl(DataFrame self, object row, bint ignore_index):
+    cdef DataFrame new_df = self.copy()
     cdef list col_names
     if isinstance(row, dict):
         _append_row_impl(new_df, row)
@@ -364,10 +364,10 @@ cdef _append_impl(FastDataFrame self, object row, bint ignore_index):
         new_df.index = RangeIndex(0, new_df.df_length)
     return new_df
 
-cdef _copy_impl(FastDataFrame self):
+cdef _copy_impl(DataFrame self):
     cdef Py_ssize_t n, i
     cdef Py_ssize_t* idx_c
-    cdef FastDataFrame new_df = FastDataFrame()
+    cdef DataFrame new_df = DataFrame()
     new_df.df_length = self.df_length
     for col_name, col_obj in self._columns.items():
         new_df._columns[col_name] = col_obj.copy()
@@ -390,7 +390,7 @@ cdef _copy_impl(FastDataFrame self):
             new_df.index = self.index
     return new_df
 
-cdef _pop_front_impl(FastDataFrame self):
+cdef _pop_front_impl(DataFrame self):
     if self.df_length == 0: raise IndexError("pop from empty DataFrame")
     row = {}
     for col_name, col_obj in self._columns.items():
@@ -404,7 +404,7 @@ cdef _pop_front_impl(FastDataFrame self):
         self.index.length -= 1
     return row
 
-cdef _pop_back_impl(FastDataFrame self):
+cdef _pop_back_impl(DataFrame self):
     if self.df_length == 0: raise IndexError("pop from empty DataFrame")
     row = {}
     for col_name, col_obj in self._columns.items():
@@ -416,15 +416,15 @@ cdef _pop_back_impl(FastDataFrame self):
         self.index.length -= 1
     return row
 
-cdef _rename_impl(FastDataFrame self, dict mapper):
-    cdef FastDataFrame result = _copy_impl(self)
+cdef _rename_impl(DataFrame self, dict mapper):
+    cdef DataFrame result = _copy_impl(self)
     cdef str old_name, new_name
     for old_name, new_name in mapper.items():
         if old_name in result._columns:
             result._columns[new_name] = result._columns.pop(old_name)
     return result
 
-cdef _reset_index_impl(FastDataFrame self):
+cdef _reset_index_impl(DataFrame self):
     cdef IntColumn idx_col = IntColumn(self.df_length)
     cdef Py_ssize_t i
     idx_col.length = self.df_length
@@ -434,7 +434,7 @@ cdef _reset_index_impl(FastDataFrame self):
     self.index = RangeIndex(0, self.df_length)
     return self
 
-cdef _set_index_impl(FastDataFrame self, str col_name, bint drop=True):
+cdef _set_index_impl(DataFrame self, str col_name, bint drop=True):
     """df.set_index：将列提升为索引并（默认）移除。
     全 int 值 → IntIndex；否则 → 单层 MultiIndex（levels 出现序 + codes）。"""
     if col_name not in self._columns:
@@ -476,10 +476,10 @@ cdef _set_index_impl(FastDataFrame self, str col_name, bint drop=True):
     self.index = MultiIndex([levels], [codes], [col_name])
     return self
 
-cdef _get_dummies_impl(FastDataFrame self, col_names, str prefix, bint drop_first):
+cdef _get_dummies_impl(DataFrame self, col_names, str prefix, bint drop_first):
     """df.get_dummies：对指定（默认全部字符串/类别）列 Each 唯一值建 0/1 IntColumn。
     2D 列以行级键 one-hot；原列保留。"""
-    cdef FastDataFrame result = _copy_impl(self)
+    cdef DataFrame result = _copy_impl(self)
     cdef list selected
     cdef str name
     cdef BaseColumn col
@@ -522,11 +522,11 @@ cdef _get_dummies_impl(FastDataFrame self, col_names, str prefix, bint drop_firs
             result._columns[out_name] = dcol
     return result
 
-cdef _reindex_impl(FastDataFrame self, list new_index):
+cdef _reindex_impl(DataFrame self, list new_index):
     cdef Py_ssize_t new_len = len(new_index)
     cdef dict old_pos = {}
     cdef Py_ssize_t i, old_idx
-    cdef FastDataFrame result
+    cdef DataFrame result
 
     if self.index is not None and self.index.length > 0:
         old_vals = self.index.values()
@@ -542,7 +542,7 @@ cdef _reindex_impl(FastDataFrame self, list new_index):
         for i in range(new_len):
             index_map[i] = old_pos.get(new_index[i], -1)
 
-        result = FastDataFrame()
+        result = DataFrame()
         result.df_length = new_len
         result.index = RangeIndex(0, new_len)
 
@@ -726,7 +726,7 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
 
     raise TypeError(f"Unsupported column dtype: {dtype}")
 
-cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
+cdef _insert_row_impl(DataFrame self, Py_ssize_t pos, dict kwargs):
     if pos < 0 or pos > self.df_length:
         raise IndexError(f"Position {pos} out of range [0, {self.df_length}]")
 
@@ -939,7 +939,7 @@ cdef _insert_row_impl(FastDataFrame self, Py_ssize_t pos, dict kwargs):
             self._shift_left(self._columns[cn], pos)
         raise
 
-cdef _drop_with_index_impl(FastDataFrame self, list drop_indices, bint inplace):
+cdef _drop_with_index_impl(DataFrame self, list drop_indices, bint inplace):
     cdef Py_ssize_t n_orig = self.df_length
     if n_orig == 0:
         return self if inplace else _copy_impl(self)
@@ -951,7 +951,7 @@ cdef _drop_with_index_impl(FastDataFrame self, list drop_indices, bint inplace):
     cdef Py_ssize_t idx, i, j
     cdef Py_ssize_t keep_count = 0
     cdef Py_ssize_t* keep_idx_c = NULL
-    cdef FastDataFrame result_df
+    cdef DataFrame result_df
     cdef str name
     cdef BaseColumn col, new_col
 
@@ -976,7 +976,7 @@ cdef _drop_with_index_impl(FastDataFrame self, list drop_indices, bint inplace):
                 for col_obj in self._columns.values(): col_obj.length = 0
                 return self
             else:
-                return FastDataFrame()
+                return DataFrame()
 
         keep_idx_c = <Py_ssize_t*>aligned_malloc(keep_count * sizeof(Py_ssize_t))
         if not keep_idx_c: raise MemoryError()
@@ -991,7 +991,7 @@ cdef _drop_with_index_impl(FastDataFrame self, list drop_indices, bint inplace):
             result_df = self
             self.df_length = keep_count
         else:
-            result_df = FastDataFrame()
+            result_df = DataFrame()
             result_df.df_length = keep_count
 
         for name, col in self._columns.items():
@@ -1010,7 +1010,7 @@ cdef _drop_with_index_impl(FastDataFrame self, list drop_indices, bint inplace):
         if drop_mask: os_aligned_free(drop_mask)
         if keep_idx_c: os_aligned_free(keep_idx_c)
 
-cdef _drop_index_impl(FastDataFrame self, object labels, bint inplace):
+cdef _drop_index_impl(DataFrame self, object labels, bint inplace):
     if self.index is None:
         raise ValueError("DataFrame has no index set")
     cdef list drop_positions = []
@@ -1021,7 +1021,7 @@ cdef _drop_index_impl(FastDataFrame self, object labels, bint inplace):
         drop_positions.append(self.index.get_loc(labels))
     return _drop_with_index_impl(self, drop_positions, inplace)
 
-cdef _drop_raw_impl(FastDataFrame self, Py_ssize_t row_idx):
+cdef _drop_raw_impl(DataFrame self, Py_ssize_t row_idx):
     if row_idx < 0: row_idx += self.df_length
     if row_idx < 0 or row_idx >= self.df_length:
         raise IndexError("Row index out of range")
@@ -1066,7 +1066,7 @@ cdef _drop_raw_impl(FastDataFrame self, Py_ssize_t row_idx):
             idx_col.length -= 1
         self.index.length -= 1
 
-cdef _insert_column_impl(FastDataFrame self, str col_name, object col_data, Py_ssize_t pos):
+cdef _insert_column_impl(DataFrame self, str col_name, object col_data, Py_ssize_t pos):
     cdef BaseColumn col
     cdef bint is2d
     cdef Py_ssize_t c_col, r_col
@@ -1098,14 +1098,14 @@ cdef _insert_column_impl(FastDataFrame self, str col_name, object col_data, Py_s
             new_cols[names[i]] = self._columns[names[i]]
         self._columns = new_cols
 
-cdef _duplicate_column_impl(FastDataFrame self, str src_name, str new_name):
+cdef _duplicate_column_impl(DataFrame self, str src_name, str new_name):
     if src_name not in self._columns:
         raise KeyError(f"Column '{src_name}' not found")
     if new_name is None:
         new_name = src_name + '_dup'
     self._columns[new_name] = self._columns[src_name].copy()
 
-cdef _duplicate_rows_impl(FastDataFrame self, list indices):
+cdef _duplicate_rows_impl(DataFrame self, list indices):
     if indices is None:
         return _copy_impl(self)
     cdef Py_ssize_t n = len(indices)

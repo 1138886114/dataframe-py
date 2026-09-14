@@ -64,8 +64,8 @@ extensions = [
               ["fluidframe/core/indexers.pyx"],
               extra_compile_args=COMMON_compile_args,
               extra_link_args=COMMON_link_args),
-    Extension("fluidframe.core.fastdataframe",
-              ["fluidframe/core/fastdataframe.pyx"],
+    Extension("fluidframe.core.dataframe",
+              ["fluidframe/core/dataframe.pyx"],
               extra_compile_args=COMMON_compile_args,
               extra_link_args=COMMON_link_args),
 ]

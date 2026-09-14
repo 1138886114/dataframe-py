@@ -30,7 +30,7 @@ cdef list _col_to_list(BaseColumn col):
     return res
 
 
-cdef _to_string_impl(FastDataFrame self, Py_ssize_t max_rows=80):
+cdef _to_string_impl(DataFrame self, Py_ssize_t max_rows=80):
     cdef Py_ssize_t n = self.df_length
     cdef list row_indices = []
     cdef Py_ssize_t half
@@ -103,7 +103,7 @@ cdef _to_string_impl(FastDataFrame self, Py_ssize_t max_rows=80):
 
     return "\n".join(lines)
 
-cdef _to_pickle_impl(FastDataFrame self, filename):
+cdef _to_pickle_impl(DataFrame self, filename):
     import pickle
     cdef dict data = {'df_length': self.df_length, 'columns': {}}
     cdef bint is2d
@@ -139,7 +139,7 @@ cdef _to_pickle_impl(FastDataFrame self, filename):
     with open(filename, 'wb') as f:
         pickle.dump(data, f)
 
-cdef _to_csv_impl(FastDataFrame self, filename, sep=',', str na_rep='', str float_format=None,
+cdef _to_csv_impl(DataFrame self, filename, sep=',', str na_rep='', str float_format=None,
                    list columns=None, bint header=True, str line_terminator='\n'):
     """
     导出为 CSV 文件。
@@ -209,7 +209,7 @@ cdef _to_csv_impl(FastDataFrame self, filename, sep=',', str na_rep='', str floa
                 buf_pos += 1
             f.write(line_buf[:buf_pos])
 
-cdef _to_numpy_impl(FastDataFrame self):
+cdef _to_numpy_impl(DataFrame self):
     """
     导出为二维数组 (List of Lists)。
     """
@@ -229,7 +229,7 @@ cdef _to_numpy_impl(FastDataFrame self):
         result[i] = row
     return result
 
-cdef _info_impl(FastDataFrame self):
+cdef _info_impl(DataFrame self):
     cdef Py_ssize_t total_cols = len(self._columns)
     cdef Py_ssize_t mem = _memory_usage_impl(self)
     cdef char bytes_buf[16]
@@ -241,7 +241,7 @@ cdef _info_impl(FastDataFrame self):
     cdef str type_name, name
     cdef object col
 
-    lines.append("<class 'FastDataFrame'>")
+    lines.append("<class 'DataFrame'>")
     lines.append(f"RangeIndex: {self.df_length} entries")
     lines.append(f"Data columns (total {total_cols} columns):")
     lines.append(" #   Column    Non-Null  Dtype     Mem Usage")
@@ -261,7 +261,7 @@ cdef _info_impl(FastDataFrame self):
     lines.append(f"memory usage: {bytes_buf.decode('ascii')}")
     return '\n'.join(lines)
 
-cdef str _dtype_summary_impl(FastDataFrame self):
+cdef str _dtype_summary_impl(DataFrame self):
     cdef dict counts = {}
     cdef str name, tname
     for name, col in self._columns.items():
@@ -269,14 +269,14 @@ cdef str _dtype_summary_impl(FastDataFrame self):
         counts[tname] = counts.get(tname, 0) + 1
     return ', '.join(f'{v} {k}' for k, v in counts.items())
 
-cdef _memory_usage_impl(FastDataFrame self):
+cdef _memory_usage_impl(DataFrame self):
     cdef Py_ssize_t total = 0
     cdef BaseColumn col
     for col in self._columns.values():
         total += col.get_size()
     return total
 
-cdef _to_dict_impl(FastDataFrame self):
+cdef _to_dict_impl(DataFrame self):
     """导出为字段字典 (Columnar Dictionary)"""
     cdef dict result = {}
     cdef str name
@@ -286,7 +286,7 @@ cdef _to_dict_impl(FastDataFrame self):
         result[name] = _col_to_list(col)
     return result
 
-cdef _to_json_impl(FastDataFrame self, bint orient_records=True):
+cdef _to_json_impl(DataFrame self, bint orient_records=True):
     """导出为 JSON"""
     import json
 
@@ -323,7 +323,7 @@ cdef str _html_escape(object val):
              .replace('"', '&quot;').replace("'", '&#39;'))
 
 
-cdef str _to_html_impl(FastDataFrame self, Py_ssize_t max_rows=80):
+cdef str _to_html_impl(DataFrame self, Py_ssize_t max_rows=80):
     """导出为 HTML 表格字符串（<table class="dataframe">）。"""
     cdef Py_ssize_t n = self.df_length
     cdef list row_indices = []
@@ -357,7 +357,7 @@ cdef str _to_html_impl(FastDataFrame self, Py_ssize_t max_rows=80):
     return '\n'.join(out)
 
 
-cdef _to_excel_impl(FastDataFrame self, object filename, str sheet_name='Sheet1'):
+cdef _to_excel_impl(DataFrame self, object filename, str sheet_name='Sheet1'):
     """导出为 xlsx 文件（openpyxl 懒加载；未安装时抛 ImportError 提示）。"""
     try:
         import openpyxl

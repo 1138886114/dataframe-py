@@ -1,7 +1,7 @@
 # _fastdataframe_agg.pxi — Aggregation (module-level cdef)
 # Included at module level in fastdataframe.pyx (after class definition)
 
-cdef _numeric_agg_impl(FastDataFrame self, str method, col_names=None):
+cdef _numeric_agg_impl(DataFrame self, str method, col_names=None):
     cdef dict result = {}
     cdef str name
     cdef object col
@@ -14,7 +14,7 @@ cdef _numeric_agg_impl(FastDataFrame self, str method, col_names=None):
             result[name] = getattr(col, method)()
     return result
 
-cdef _numeric_agg_arg_impl(FastDataFrame self, str method, col_names, arg):
+cdef _numeric_agg_arg_impl(DataFrame self, str method, col_names, arg):
     cdef dict result = {}
     cdef str name
     cdef object col
@@ -27,7 +27,7 @@ cdef _numeric_agg_arg_impl(FastDataFrame self, str method, col_names, arg):
             result[name] = getattr(col, method)(arg)
     return result
 
-cdef _mode_impl(FastDataFrame self, col_names=None):
+cdef _mode_impl(DataFrame self, col_names=None):
     cdef dict result = {}
     cdef str name
     cdef object col
@@ -41,7 +41,7 @@ cdef _mode_impl(FastDataFrame self, col_names=None):
     return result
 
 
-cdef _numeric_agg_withcol_impl(FastDataFrame self, str method, col_names=None):
+cdef _numeric_agg_withcol_impl(DataFrame self, str method, col_names=None):
     cdef dict result = {}
     cdef str name
     cdef object col
@@ -99,7 +99,7 @@ cdef _numeric_agg_withcol_impl(FastDataFrame self, str method, col_names=None):
     return result
 
 
-cdef _numeric_agg_arg_withcol_impl(FastDataFrame self, str method, col_names, arg):
+cdef _numeric_agg_arg_withcol_impl(DataFrame self, str method, col_names, arg):
     cdef dict result = {}
     cdef str name
     cdef object col
@@ -156,7 +156,7 @@ cdef _numeric_agg_arg_withcol_impl(FastDataFrame self, str method, col_names, ar
     return result
 
 
-cdef _describe_withcol_impl(FastDataFrame self):
+cdef _describe_withcol_impl(DataFrame self):
     cdef dict stats = {}
     cdef str name
     cdef object col
@@ -230,7 +230,7 @@ cdef _describe_withcol_impl(FastDataFrame self):
                 }
     return stats
 
-cdef _count_impl(FastDataFrame self, col_names=None):
+cdef _count_impl(DataFrame self, col_names=None):
     cdef dict result = {}
     cdef str name
     cdef BaseColumn col
@@ -293,7 +293,7 @@ cdef inline double _qs_double(double* a, Py_ssize_t n, Py_ssize_t k) noexcept no
     return a[k]
 
 
-cdef _describe_impl(FastDataFrame self, object percentiles):
+cdef _describe_impl(DataFrame self, object percentiles):
     cdef dict stats = {}
     cdef str name, top_val
     cdef Py_ssize_t col_len, i, jc, valid_cnt, s_mid
@@ -497,7 +497,7 @@ cdef _describe_impl(FastDataFrame self, object percentiles):
     return stats
 
 
-cdef _value_counts_impl(FastDataFrame self, str col_name):
+cdef _value_counts_impl(DataFrame self, str col_name):
     if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
     cdef BaseColumn col = self._columns[col_name]
@@ -512,7 +512,7 @@ cdef _value_counts_impl(FastDataFrame self, str col_name):
         counts[val] = counts.get(val, 0) + 1
 
     sorted_items = sorted(counts.items(), key=lambda x: -x[1])
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = len(sorted_items)
     result.index = RangeIndex(0, len(sorted_items))
     cdef list key_list = [k for k, v in sorted_items]
@@ -534,7 +534,7 @@ cdef _value_counts_impl(FastDataFrame self, str col_name):
 
     return result
 
-cdef _nunique_impl(FastDataFrame self, str col_name=None):
+cdef _nunique_impl(DataFrame self, str col_name=None):
     cdef dict result = {}
     cdef str name
     cdef BaseColumn col
@@ -568,7 +568,7 @@ def _series_value_counts(BaseColumn col, str key_name='value'):
         counts[v] = counts.get(v, 0) + 1
 
     cdef list sorted_items = sorted(counts.items(), key=lambda x: -x[1])
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = len(sorted_items)
     result.index = RangeIndex(0, len(sorted_items))
     cdef list key_list = [k for k, v in sorted_items]
@@ -673,4 +673,4 @@ def _series_map(BaseColumn col, object func):
     if _col_is_2d(col):
         rows = col._get_rows_c()
         return _column_from_2d_list_impl(out, rows, col.num_cols)
-    return _column_from_list_impl(FastDataFrame(), '', out)
+    return _column_from_list_impl(DataFrame(), '', out)

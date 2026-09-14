@@ -1,7 +1,7 @@
 import sys
 sys.path.insert(0, '.')
 from fluidframe.core.ucs2column import UCS2Column
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
 passed = 0
 failed = 0
@@ -111,7 +111,7 @@ def test_growth():
     check('growth [199]', col[199] == "str_199")
 
 def test_reorder():
-    df = FastDataFrame()
+    df = DataFrame()
     col = UCS2Column(); col.append("a"); col.append("b"); col.append("c")
     df['x'] = col
     df.df_length = 3

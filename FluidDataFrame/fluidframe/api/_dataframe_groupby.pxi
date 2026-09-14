@@ -189,7 +189,7 @@ cdef struct _ByColPtrs:
     Py_ssize_t* strides  # 每列行步长（2D 列 data_c[sub*stride + row]），1D 列 = length
     int count
 
-cdef _ByColPtrs _extract_by_col_ptrs(FastDataFrame df, list by_cols):
+cdef _ByColPtrs _extract_by_col_ptrs(DataFrame df, list by_cols):
     cdef _ByColPtrs ptrs
     cdef int n = len(by_cols)
     ptrs.count = n
@@ -378,7 +378,7 @@ cdef bint _gb_rows_equal(_ByColPtrs ptrs, Py_ssize_t row1, Py_ssize_t row2) noex
 # Group building
 # ============================================================
 
-cdef int _gb_build_groups(FastDataFrame df, list by_cols,
+cdef int _gb_build_groups(DataFrame df, list by_cols,
                             _GroupHashTable* ht, _GroupRows* gr,
                             _ByColPtrs ptrs) except -1:
     cdef Py_ssize_t n = df.df_length
@@ -505,7 +505,7 @@ cdef inline double _gb_agg_double_sub(double* ptr, Py_ssize_t stride, int sub, P
         return val
     return NAN
 
-cdef DoubleColumn _gb_native_agg(FastDataFrame df, _GroupRows* gr, str col_name, str func):
+cdef DoubleColumn _gb_native_agg(DataFrame df, _GroupRows* gr, str col_name, str func):
     cdef BaseColumn orig_col = df._columns[col_name]
     cdef bint is2d
     cdef Py_ssize_t c_col, r_col
@@ -578,13 +578,13 @@ cdef IntColumn _gb_native_count(_GroupRows* gr):
         res_col.data_c[g_id] = <int>gr.row_sizes[g_id]
     return res_col
 
-cdef object _gb_extract_key_column(FastDataFrame df, _GroupRows* gr, str col_name):
+cdef object _gb_extract_key_column(DataFrame df, _GroupRows* gr, str col_name):
     cdef BaseColumn orig = df._columns[col_name]
     cdef int i
     cdef IntColumn res_int
     cdef DoubleColumn res_dbl
     cdef Py_ssize_t* fs
-    cdef FastDataFrame tmp
+    cdef DataFrame tmp
 
     # 使用 shape_probe
     cdef bint is2d
@@ -615,7 +615,7 @@ cdef object _gb_extract_key_column(FastDataFrame df, _GroupRows* gr, str col_nam
             res_dbl.data_c[i] = (<DoubleColumn>orig).data_c[gr.rows[i][0]]
         return res_dbl
 
-cdef IntColumn _gb_native_idx(FastDataFrame df, _GroupRows* gr, str col_name, bint find_max):
+cdef IntColumn _gb_native_idx(DataFrame df, _GroupRows* gr, str col_name, bint find_max):
     # 2D 列取主子列（sub=0）比较：idxmax/idxmin 不确定向量级比较，沿用 _get_col_value_as_double 的 sub0 约定
     cdef IntColumn res_col = IntColumn(max(gr.count, 1))
     res_col.length = gr.count
@@ -677,7 +677,7 @@ cdef object _gb_python_compute(list vals, str func_name):
     else:
         raise ValueError(f"Unsupported python aggregation function: {func_name}")
 
-cdef object _gb_python_agg(FastDataFrame df, _GroupRows* gr, str col_name, str func_name):
+cdef object _gb_python_agg(DataFrame df, _GroupRows* gr, str col_name, str func_name):
     cdef list results = []
     cdef int g_id, sub
     cdef Py_ssize_t sz, row_idx, i, out_n = gr.count
@@ -753,14 +753,14 @@ cdef class _DataFrameGroupByAccessor:
         _gb_build_groups(self._df, self._by_cols, self._ht, self._gr, self._ptrs)
         self._built = True
 
-    cdef FastDataFrame _convenience_agg(self, str func_name, object col_name):
+    cdef DataFrame _convenience_agg(self, str func_name, object col_name):
         self._ensure_built()
-        cdef FastDataFrame res
+        cdef DataFrame res
         cdef dict agg
         cdef str cn
         cdef BaseColumn c
         if col_name is not None:
-            res = FastDataFrame()
+            res = DataFrame()
             res.df_length = self._gr.count
             if func_name in ('sum', 'mean', 'min', 'max', 'var', 'std'):
                 res._columns[col_name] = _gb_native_agg(self._df, self._gr, col_name, func_name)
@@ -786,7 +786,7 @@ cdef class _DataFrameGroupByAccessor:
     @cython.binding(False)
     def agg(self, dict agg_dict):
         self._ensure_built()
-        cdef FastDataFrame res = FastDataFrame()
+        cdef DataFrame res = DataFrame()
         res.df_length = self._gr.count
         cdef str col_name, func_name
         for col_name, func_name in agg_dict.items():
@@ -812,7 +812,7 @@ cdef class _DataFrameGroupByAccessor:
     @cython.binding(False)
     def count(self):
         self._ensure_built()
-        cdef FastDataFrame res = FastDataFrame()
+        cdef DataFrame res = DataFrame()
         res.df_length = self._gr.count
         res._columns['__count__'] = _gb_native_count(self._gr)
         for cn in self._by_cols:
@@ -850,7 +850,7 @@ cdef class _DataFrameGroupByAccessor:
         cdef int g_id
         cdef Py_ssize_t sz
         cdef Py_ssize_t* indices_c
-        cdef FastDataFrame sub_df
+        cdef DataFrame sub_df
         cdef object func_res
 
         for g_id in range(self._gr.count):
@@ -865,11 +865,11 @@ cdef class _DataFrameGroupByAccessor:
             sub_dfs.append(func_res)
 
         if len(sub_dfs) == 0:
-            return FastDataFrame()
+            return DataFrame()
         if len(sub_dfs) == 1:
             return sub_dfs[0]
 
-        cdef FastDataFrame result = sub_dfs[0]
+        cdef DataFrame result = sub_dfs[0]
         for i in range(1, len(sub_dfs)):
             result = result.concat(sub_dfs[i])
         return result
@@ -877,7 +877,7 @@ cdef class _DataFrameGroupByAccessor:
     @cython.binding(False)
     def idxmax(self, str col_name=None):
         self._ensure_built()
-        cdef FastDataFrame res = FastDataFrame()
+        cdef DataFrame res = DataFrame()
         res.df_length = self._gr.count
         cdef str cn
         cdef BaseColumn c
@@ -896,7 +896,7 @@ cdef class _DataFrameGroupByAccessor:
     @cython.binding(False)
     def idxmin(self, str col_name=None):
         self._ensure_built()
-        cdef FastDataFrame res = FastDataFrame()
+        cdef DataFrame res = DataFrame()
         res.df_length = self._gr.count
         cdef str cn
         cdef BaseColumn c
@@ -916,7 +916,7 @@ cdef class _DataFrameGroupByAccessor:
     def transform(self, object func):
         self._ensure_built()
         cdef Py_ssize_t n = self._df.df_length
-        cdef FastDataFrame result = FastDataFrame()
+        cdef DataFrame result = DataFrame()
         result.df_length = n
         result.index = self._df.index
 
@@ -940,7 +940,7 @@ cdef class _DataFrameGroupByAccessor:
                     indices_c[i] = self._gr.rows[g_id][i]
                 sub_df = self._df._take(indices_c, sz)
                 transformed = func(sub_df)
-                if isinstance(transformed, FastDataFrame):
+                if isinstance(transformed, DataFrame):
                     for cn in transformed._columns:
                         if cn not in col_values:
                             col_names.append(cn)
@@ -1000,7 +1000,7 @@ cdef class _DataFrameGroupByAccessor:
     @cython.binding(False)
     def filter(self, object func):
         self._ensure_built()
-        cdef FastDataFrame result = FastDataFrame()
+        cdef DataFrame result = DataFrame()
         cdef list keep_rows = []
         cdef int g_id
         cdef Py_ssize_t sz, i
@@ -1039,7 +1039,7 @@ cdef class _DataFrameGroupByAccessor:
         return f"<GroupBy: {self._gr.count} groups, by={self._by_cols}>"
 
 
-cdef inline _DataFrameGroupByAccessor _make_groupby_accessor(FastDataFrame df, list by_cols):
+cdef inline _DataFrameGroupByAccessor _make_groupby_accessor(DataFrame df, list by_cols):
     cdef _DataFrameGroupByAccessor acc = <_DataFrameGroupByAccessor>_DataFrameGroupByAccessor.__new__(_DataFrameGroupByAccessor)
     acc._df = df
     acc._by_cols = by_cols

@@ -1,17 +1,17 @@
 # _fastdataframe_merge.pxi — Merge, join, concat, duplicates (module-level cdef)
 # Included at module level in fastdataframe.pyx (after class definition)
 
-cdef _concat_impl(FastDataFrame self, FastDataFrame other):
+cdef _concat_impl(DataFrame self, DataFrame other):
     if set(self._columns.keys()) != set(other._columns.keys()):
         raise ValueError("Schema mismatch during concat")
-    cdef FastDataFrame result = self.copy()
+    cdef DataFrame result = self.copy()
     for col_name, col_obj in result._columns.items():
         col_obj.concat(other._columns[col_name])
     result.df_length = self.df_length + other.df_length
     result.index = self.index._concat(other.index)
     return result
 
-cdef inline BaseColumn _gather_or_reorder(FastDataFrame df, BaseColumn src_col,
+cdef inline BaseColumn _gather_or_reorder(DataFrame df, BaseColumn src_col,
                                           Py_ssize_t* idx_c, Py_ssize_t result_len):
     """
     终极版安全搜集分配器：
@@ -248,7 +248,7 @@ cdef BaseColumn _join_gather_str(BaseColumn l_col, BaseColumn r_col,
                 jc_u.append((<UCS2Column>r_col)[r_idx[i]])
         return jc_u
 
-cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inner'):
+cdef _merge_impl(DataFrame self, DataFrame other, list on, str how='inner'):
     cdef list join_cols
     if on is not None:
         join_cols = on if isinstance(on, list) else [on]
@@ -342,7 +342,7 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
     # 安全指针分配与底层数据拷贝
     # =========================================================
     cdef Py_ssize_t result_len = len(left_indices)
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = result_len
     result.index = RangeIndex(0, result_len)
 
@@ -391,7 +391,7 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
         os_aligned_free(left_idx_c)
         os_aligned_free(right_idx_c)
 
-cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
+cdef _duplicated_impl(DataFrame self, subset=None, str keep='first'):
     cdef Py_ssize_t n = self.df_length
     cdef BoolColumn result = BoolColumn(max(n, 1))
     result.length = n
@@ -429,7 +429,7 @@ cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
             result.data_c[i] = 0
     return result
 
-cdef _drop_duplicates_impl(FastDataFrame self, subset=None, str keep='first', bint inplace=False):
+cdef _drop_duplicates_impl(DataFrame self, subset=None, str keep='first', bint inplace=False):
     cdef BoolColumn mask = _duplicated_impl(self, subset, keep)
     cdef Py_ssize_t n = self.df_length
     cdef Py_ssize_t keep_count = n - mask.count_nonzero()
@@ -441,7 +441,7 @@ cdef _drop_duplicates_impl(FastDataFrame self, subset=None, str keep='first', bi
     if not keep_idx: raise MemoryError()
     mask.gather_zero_to(keep_idx)
 
-    cdef FastDataFrame result = self._take(keep_idx, keep_count)
+    cdef DataFrame result = self._take(keep_idx, keep_count)
     os_aligned_free(keep_idx)
     if inplace:
         self._columns = result._columns

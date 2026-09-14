@@ -1,7 +1,7 @@
 import sys
 sys.path.insert(0, '.')
 
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
 
@@ -25,7 +25,7 @@ def sample_var(vals):
     return sum((x - m) * (x - m) for x in vals) / (len(vals) - 1)
 
 def make_df():
-    df = FastDataFrame({'name': str, 'amount': float, 'qty': int})
+    df = DataFrame({'name': str, 'amount': float, 'qty': int})
     df.append_row(name='Alice', amount=10.0, qty=1)
     df.append_row(name='Bob', amount=20.0, qty=2)
     df.append_row(name='Alice', amount=30.0, qty=3)
@@ -107,7 +107,7 @@ def test_groupby_auto_agg():
 
 def test_groupby_multi_col():
     print('--- test_groupby_multi_col ---')
-    df = FastDataFrame({'name': str, 'dept': str, 'salary': float})
+    df = DataFrame({'name': str, 'dept': str, 'salary': float})
     df.append_row(name='Alice', dept='eng', salary=100)
     df.append_row(name='Bob', dept='eng', salary=200)
     df.append_row(name='Alice', dept='hr', salary=150)
@@ -127,7 +127,7 @@ def test_groupby_apply():
     print('--- test_groupby_apply ---')
     df = make_df()
     def count_rows(sub_df):
-        res = FastDataFrame({'name': str, 'total': int})
+        res = DataFrame({'name': str, 'total': int})
         res.append_row(name=sub_df['name'][0], total=sub_df['name'].length)
         return res
     res = df.groupby('name').apply(count_rows)
@@ -139,7 +139,7 @@ def test_groupby_apply():
 
 def test_groupby_empty():
     print('--- test_groupby_empty ---')
-    df = FastDataFrame({'name': str, 'amount': float})
+    df = DataFrame({'name': str, 'amount': float})
     gb = df.groupby('name')
     check('empty_size', gb.size() == 0)
     res = gb.sum('amount')
@@ -155,7 +155,7 @@ def test_groupby_chaining():
 
 def test_groupby_int_column():
     print('--- test_groupby_int_column ---')
-    df = FastDataFrame({'cat': int, 'val': float})
+    df = DataFrame({'cat': int, 'val': float})
     df.append_row(cat=1, val=10.0)
     df.append_row(cat=2, val=20.0)
     df.append_row(cat=1, val=30.0)
@@ -169,7 +169,7 @@ def test_groupby_int_column():
 
 def test_groupby_int_key():
     print('--- test_groupby_int_key ---')
-    df = FastDataFrame({'id': int, 'score': float})
+    df = DataFrame({'id': int, 'score': float})
     df.append_row(id=10, score=1.0)
     df.append_row(id=20, score=2.0)
     df.append_row(id=10, score=3.0)
@@ -181,7 +181,7 @@ def test_groupby_int_key():
 
 def test_groupby_var_std():
     print('--- test_groupby_var_std ---')
-    df = FastDataFrame({'name': str, 'val': float})
+    df = DataFrame({'name': str, 'val': float})
     df.append_row(name='A', val=1.0)
     df.append_row(name='A', val=3.0)
     df.append_row(name='A', val=5.0)
@@ -201,7 +201,7 @@ def test_groupby_var_std():
 
 def test_groupby_int_column_var_std():
     print('--- test_groupby_int_column_var_std ---')
-    df = FastDataFrame({'cat': int, 'val': int})
+    df = DataFrame({'cat': int, 'val': int})
     df.append_row(cat=1, val=10)
     df.append_row(cat=1, val=20)
     df.append_row(cat=2, val=5)
@@ -212,7 +212,7 @@ def test_groupby_int_column_var_std():
 
 def test_groupby_median():
     print('--- test_groupby_median ---')
-    df = FastDataFrame({'name': str, 'val': float})
+    df = DataFrame({'name': str, 'val': float})
     df.append_row(name='A', val=1.0)
     df.append_row(name='A', val=3.0)
     df.append_row(name='A', val=5.0)
@@ -227,7 +227,7 @@ def test_groupby_median():
 
 def test_groupby_quantile():
     print('--- test_groupby_quantile ---')
-    df = FastDataFrame({'name': str, 'val': float})
+    df = DataFrame({'name': str, 'val': float})
     df.append_row(name='A', val=1.0)
     df.append_row(name='A', val=2.0)
     df.append_row(name='A', val=3.0)
@@ -239,13 +239,13 @@ def test_groupby_quantile():
 
 def test_groupby_transform():
     print('--- test_groupby_transform ---')
-    df = FastDataFrame({'name': str, 'val': float})
+    df = DataFrame({'name': str, 'val': float})
     df.append_row(name='A', val=10.0)
     df.append_row(name='A', val=20.0)
     df.append_row(name='B', val=30.0)
     df.append_row(name='B', val=40.0)
     def normalize(sub_df):
-        result = FastDataFrame({'name': str, 'val': float})
+        result = DataFrame({'name': str, 'val': float})
         vals = [sub_df['val'][i] for i in range(sub_df.df_length)]
         mn = min(vals)
         mx = max(vals)
@@ -265,7 +265,7 @@ def test_groupby_transform():
 
 def test_groupby_filter():
     print('--- test_groupby_filter ---')
-    df = FastDataFrame({'name': str, 'val': float})
+    df = DataFrame({'name': str, 'val': float})
     df.append_row(name='A', val=10.0)
     df.append_row(name='A', val=20.0)
     df.append_row(name='B', val=5.0)
@@ -281,7 +281,7 @@ def test_groupby_filter():
 
 def test_groupby_agg_median():
     print('--- test_groupby_agg_median ---')
-    df = FastDataFrame({'name': str, 'val': float})
+    df = DataFrame({'name': str, 'val': float})
     df.append_row(name='A', val=1.0)
     df.append_row(name='A', val=5.0)
     df.append_row(name='B', val=2.0)
@@ -300,7 +300,7 @@ def make_2d_df():
     v 为 3 子列 2D 聚合列（列优先）。
     v 子列 0 = [1,10,100,5,8]；子列 1 = [2,20,200,6,9]；子列 2 = [3,30,300,7,10]
     组 key=1 行索引 {0,1,4}，组 key=2 行索引 {2,3}。"""
-    df = FastDataFrame()
+    df = DataFrame()
     df.df_length = 5
     df._columns['key'] = IntColumn.from_2d([1, 1, 2, 2, 1], 5, 1)
     df._columns['val'] = IntColumn.from_2d([1, 2, 3, 4, 5], 5, 1)
@@ -311,7 +311,7 @@ def make_2d_df():
 def make_2d_key_df():
     """2D 分组键 key2（子列0=[1,1,2,2,1]，子列1=[1,2,1,2,1]）。
     行键：r0=(1,1) r1=(1,2) r2=(2,1) r3=(2,2) r4=(1,1) → 4 组。"""
-    df = FastDataFrame()
+    df = DataFrame()
     df.df_length = 5
     df._columns['key2'] = DoubleColumn.from_2d(
         [1, 1, 2, 2, 1, 1, 2, 1, 2, 1], 5, 2)

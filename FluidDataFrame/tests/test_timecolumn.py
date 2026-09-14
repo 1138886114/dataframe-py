@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, '.')
 from fluidframe.core.timecolumn import TimeColumn
 from fluidframe.core.intcolumn import IntColumn
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
 passed = 0
 failed = 0
@@ -88,7 +88,7 @@ class TestTimeColumnOps:
 
 class TestTimeInDataFrame:
     def test_schema(self):
-        df = FastDataFrame({'t': 'time'})
+        df = DataFrame({'t': 'time'})
         df.append_row(t='10:30:45')
         check('schema', df.shape == (1, 1))
 
@@ -138,7 +138,7 @@ class TestTimeColumnOps2:
         check('where_mask', r[1] == '00:00:00')
 
     def test_reorder(self):
-        df = FastDataFrame()
+        df = DataFrame()
         col = TimeColumn()
         col.append('08:00:00'); col.append('10:30:45'); col.append('14:00:00')
         df['x'] = col

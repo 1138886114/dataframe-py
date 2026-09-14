@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, '..')
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.intcolumn import IntColumn
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
 passed = 0
 failed = 0
@@ -858,7 +858,7 @@ def test_drop_row():
 def test_distances():
     a = _make_1d([1.0, 2.0, 3.0])
     b = _make_1d([4.0, 5.0, 6.0])
-    df = FastDataFrame()
+    df = DataFrame()
     df['a'] = a
     df['b'] = b
     df.df_length = 3
@@ -872,7 +872,7 @@ def test_distances():
     check('cosine_sim -1<=cs<=1', -1.0 <= cs <= 1.0)
 
 def test_reorder():
-    df = FastDataFrame()
+    df = DataFrame()
     col = _make_1d([10.0, 20.0, 30.0])
     df['x'] = col
     df.df_length = 3
@@ -887,7 +887,7 @@ def test_count():
     check('count', col.count() == 3)
 
 # ============================================================
-#  df["A"].roll_xxx() 模式测试 (通过 FastDataFrame)
+#  df["A"].roll_xxx() 模式测试 (通过 DataFrame)
 # ============================================================
 def _make_df_col(name, vals):
     col = DoubleColumn()
@@ -896,7 +896,7 @@ def _make_df_col(name, vals):
     return col
 
 def test_df_roll_mean():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5, 6, 7, 8])
     df.df_length = 8
     r = df['A'].roll_mean(3)
@@ -905,7 +905,7 @@ def test_df_roll_mean():
     check('df_roll_mean [7]', _approx(r[7], 7.0))
 
 def test_df_roll_sum():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5])
     df.df_length = 5
     r = df['A'].roll_sum(3)
@@ -913,7 +913,7 @@ def test_df_roll_sum():
     check('df_roll_sum [4]', _approx(r[4], 12.0))
 
 def test_df_roll_min():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [5, 3, 1, 4, 2])
     df.df_length = 5
     r = df['A'].roll_min(3)
@@ -921,7 +921,7 @@ def test_df_roll_min():
     check('df_roll_min [4]', _approx(r[4], 1.0))
 
 def test_df_roll_max():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [5, 3, 1, 4, 2])
     df.df_length = 5
     r = df['A'].roll_max(3)
@@ -929,21 +929,21 @@ def test_df_roll_max():
     check('df_roll_max [4]', _approx(r[4], 4.0))
 
 def test_df_roll_var():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5])
     df.df_length = 5
     r = df['A'].roll_var(3)
     check('df_roll_var [2]', _approx(r[2], 1.0, 1e-6))
 
 def test_df_roll_std():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5])
     df.df_length = 5
     r = df['A'].roll_std(3)
     check('df_roll_std [2]', _approx(r[2], 1.0, 1e-6))
 
 def test_df_roll_median():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [3, 1, 4, 1, 5])
     df.df_length = 5
     r = df['A'].roll_median(3)
@@ -951,28 +951,28 @@ def test_df_roll_median():
     check('df_roll_median [4]', _approx(r[4], 4.0))
 
 def test_df_roll_quantile():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5])
     df.df_length = 5
     r = df['A'].roll_quantile(3, 0.5)
     check('df_roll_quantile [2]', _approx(r[2], 2.0))
 
 def test_df_roll_apply_weights():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5])
     df.df_length = 5
     r = df['A']._roll_apply_weights([1.0, 1.0, 1.0])
     check('df_roll_weights [2]', _approx(r[2], 6.0))
 
 def test_df_roll_custom():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5])
     df.df_length = 5
     r = df['A']._roll_custom(3, lambda w: w.sum())
     check('df_roll_custom [2]', _approx(r[2], 6.0))
 
 def test_df_roll_dispatch():
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5, 6, 7, 8])
     df.df_length = 8
     r = df['A']._roll(3, 'mean')
@@ -992,7 +992,7 @@ def test_df_roll_dispatch():
 
 def test_df_rolling_vs_direct_roll():
     """验证 df.rolling() (RollingWindow) 与 df["A"].roll_xxx() 结果一致"""
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5, 6, 7, 8])
     df.df_length = 8
     rw = df.rolling(3, 'A')
@@ -1022,7 +1022,7 @@ def test_df_rolling_vs_direct_roll():
 
 def test_df_rolling_corr_cov():
     """通过 df.rolling() 测试 corr/cov"""
-    df = FastDataFrame()
+    df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5, 6])
     df['B'] = _make_df_col('B', [2, 4, 6, 8, 10, 12])
     df.df_length = 6

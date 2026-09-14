@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, '..')
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
 passed = 0
 failed = 0
@@ -241,7 +241,7 @@ def test_growth():
     check('growth [99]', col[99] == 99)
 
 def test_reorder():
-    df = FastDataFrame()
+    df = DataFrame()
     col = IntColumn(); col.append(10); col.append(20); col.append(30)
     df['x'] = col
     df.df_length = 3
@@ -1009,7 +1009,7 @@ def test_distances_int_int():
     b = IntColumn(3)
     for v in [4, 5, 6]:
         b.append(v)
-    df = FastDataFrame()
+    df = DataFrame()
     df['a'] = a
     df['b'] = b
     df.df_length = 3
@@ -1029,7 +1029,7 @@ def test_distances_int_double():
     b = DoubleColumn(3)
     for v in [4.0, 5.0, 6.0]:
         b.append(v)
-    df = FastDataFrame()
+    df = DataFrame()
     df['a'] = a
     df['b'] = b
     df.df_length = 3

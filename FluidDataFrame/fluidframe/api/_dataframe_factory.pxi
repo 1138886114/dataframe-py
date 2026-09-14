@@ -57,7 +57,7 @@ cdef _populate_column_impl(int dtype, Py_ssize_t n, list values):
         return tmc_col
     raise ValueError(f"Unknown dtype: {dtype}")
 
-cdef _rename_columns_impl(FastDataFrame df, columns):
+cdef _rename_columns_impl(DataFrame df, columns):
     if columns is not None:
         col_names = list(df._columns.keys())
         new_names = list(columns)
@@ -70,7 +70,7 @@ cdef _rename_columns_impl(FastDataFrame df, columns):
 
 cdef _from_dict_impl(dict data, dict schema, object columns):
     cdef dict parsed = _parse_schema(schema) if schema else {}
-    cdef FastDataFrame df = FastDataFrame()
+    cdef DataFrame df = DataFrame()
     cdef str col_name
     cdef list values
     cdef Py_ssize_t n = 0
@@ -100,7 +100,7 @@ cdef _from_list_impl(list rows, dict schema, object columns):
     if not schema:
         raise ValueError("schema is required and must not be empty")
     cdef dict parsed = _parse_schema(schema)
-    cdef FastDataFrame df = FastDataFrame()
+    cdef DataFrame df = DataFrame()
     cdef Py_ssize_t n_rows = len(rows)
     cdef Py_ssize_t n_cols = len(parsed)
     cdef Py_ssize_t i, j
@@ -127,7 +127,7 @@ cdef _from_arrays_impl(list arrays, dict schema, object columns):
     if not schema:
         raise ValueError("schema is required and must not be empty")
     cdef dict parsed = _parse_schema(schema)
-    cdef FastDataFrame df = FastDataFrame()
+    cdef DataFrame df = DataFrame()
     cdef Py_ssize_t n_cols = len(arrays)
     cdef Py_ssize_t n_rows = 0
     cdef Py_ssize_t i, j
@@ -158,7 +158,7 @@ cdef _from_arrays_impl(list arrays, dict schema, object columns):
     return df
 
 cdef _arange_impl(Py_ssize_t n):
-    cdef FastDataFrame df = FastDataFrame()
+    cdef DataFrame df = DataFrame()
     if n <= 0: return df
     df.df_length = n
     df.index = RangeIndex(0, n)
@@ -172,7 +172,7 @@ cdef _arange_impl(Py_ssize_t n):
     return df
 
 cdef _randn_impl(Py_ssize_t rows, Py_ssize_t cols):
-    cdef FastDataFrame df = FastDataFrame()
+    cdef DataFrame df = DataFrame()
     if rows <= 0 or cols <= 0: return df
     df.df_length = rows
     df.index = RangeIndex(0, rows)
@@ -189,7 +189,7 @@ cdef _randn_impl(Py_ssize_t rows, Py_ssize_t cols):
     return df
 
 cdef _rand_impl(Py_ssize_t rows, Py_ssize_t cols):
-    cdef FastDataFrame df = FastDataFrame()
+    cdef DataFrame df = DataFrame()
     if rows <= 0 or cols <= 0: return df
     df.df_length = rows
     df.index = RangeIndex(0, rows)
@@ -206,7 +206,7 @@ cdef _rand_impl(Py_ssize_t rows, Py_ssize_t cols):
     return df
 
 cdef _zeros_impl(Py_ssize_t rows, Py_ssize_t cols):
-    cdef FastDataFrame df = FastDataFrame()
+    cdef DataFrame df = DataFrame()
     if rows <= 0 or cols <= 0: return df
     df.df_length = rows
     df.index = RangeIndex(0, rows)
@@ -221,7 +221,7 @@ cdef _zeros_impl(Py_ssize_t rows, Py_ssize_t cols):
     return df
 
 cdef _ones_impl(Py_ssize_t rows, Py_ssize_t cols):
-    cdef FastDataFrame df = FastDataFrame()
+    cdef DataFrame df = DataFrame()
     if rows <= 0 or cols <= 0: return df
     df.df_length = rows
     df.index = RangeIndex(0, rows)

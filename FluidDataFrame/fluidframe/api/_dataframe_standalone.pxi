@@ -32,7 +32,7 @@ class _SafeUnpickler(_pickle.Unpickler):
 
 
 def from_pickle(filename, bint allow_raw_pickle=False):
-    """从 pickle 文件恢复 FastDataFrame。
+    """从 pickle 文件恢复 DataFrame。
     2D 列条目为 (typ, values, rows, cols)，重建后保持二维维度。"""
     cdef Py_ssize_t rows = 0, cols = 0
     cdef Py_ssize_t total, i
@@ -45,7 +45,7 @@ def from_pickle(filename, bint allow_raw_pickle=False):
     cdef int64_t* tptr
     with open(filename, 'rb') as f:
         data = _SafeUnpickler(f, allow_raw_pickle).load()
-    df = FastDataFrame()
+    df = DataFrame()
     df.df_length = data['df_length']
     for col_name, entry in data['columns'].items():
         if len(entry) == 4:
@@ -143,7 +143,7 @@ def from_pickle(filename, bint allow_raw_pickle=False):
 
 
 def read_csv(filename, dict schema, sep=','):
-    """读取 CSV 文件，返回 FastDataFrame。必须提供 schema 指定列类型"""
+    """读取 CSV 文件，返回 DataFrame。必须提供 schema 指定列类型"""
     if not schema:
         raise ValueError("schema is required and must not be empty")
     cdef dict parsed = _parse_schema(schema)
@@ -155,7 +155,7 @@ def read_csv(filename, dict schema, sep=','):
     cdef Py_ssize_t n_rows = len(rows)
     cdef Py_ssize_t n_cols = len(headers)
     cdef Py_ssize_t i, j
-    df = FastDataFrame()
+    df = DataFrame()
 
     if n_rows == 0:
         for j in range(n_cols):
@@ -228,12 +228,12 @@ def read_csv(filename, dict schema, sep=','):
 
 
 def read_tsv(filename, dict schema):
-    """读取 TSV 文件（tab 分隔），返回 FastDataFrame"""
+    """读取 TSV 文件（tab 分隔），返回 DataFrame"""
     return read_csv(filename, schema=schema, sep='\t')
 
 
 def read_json(filename, dict schema):
-    """读取 JSON 文件（records 格式），返回 FastDataFrame"""
+    """读取 JSON 文件（records 格式），返回 DataFrame"""
     import json as _json
     if not schema:
         raise ValueError("schema is required and must not be empty")
@@ -245,7 +245,7 @@ def read_json(filename, dict schema):
     cdef Py_ssize_t n_rows = len(records)
     cdef list headers = list(parsed.keys())
     cdef Py_ssize_t n_cols = len(headers)
-    df = FastDataFrame()
+    df = DataFrame()
     cdef Py_ssize_t i, j
 
     for j, name in enumerate(headers):
@@ -313,13 +313,13 @@ cdef inline void _set_2d_shape(BaseColumn col, Py_ssize_t c) noexcept:
 def concat_outer(list dfs):
     """纵向拼接多个 DataFrame（外连接：取所有列的并集），重置索引。
     2D 列：使用列级 concat 保持二维维度结构不变。"""
-    if not dfs: return FastDataFrame()
+    if not dfs: return DataFrame()
     all_cols = set()
     for df in dfs:
         all_cols.update(df._columns.keys())
     all_cols = list(all_cols)
 
-    result = FastDataFrame()
+    result = DataFrame()
     col_refs = {}
     for name in all_cols:
         for df in dfs:
@@ -381,13 +381,13 @@ def concat_outer(list dfs):
 def concat_inner(list dfs):
     """纵向拼接多个 DataFrame（内连接：仅取所有列的交集），重置索引。
     2D 列：使用列级 concat 保持二维维度结构不变。"""
-    if not dfs: return FastDataFrame()
+    if not dfs: return DataFrame()
     common = set(dfs[0]._columns.keys())
     for df in dfs[1:]:
         common &= set(df._columns.keys())
     common = list(common)
 
-    result = FastDataFrame()
+    result = DataFrame()
     for name in common:
         result._columns[name] = _empty_col_for(dfs[0]._columns[name])
 
@@ -401,7 +401,7 @@ def concat_inner(list dfs):
 
 
 def concat(list dfs, bint ignore_index=False):
-    cdef FastDataFrame result = concat_outer(dfs)
+    cdef DataFrame result = concat_outer(dfs)
     if ignore_index:
         result.index = RangeIndex(0, result.df_length)
     return result

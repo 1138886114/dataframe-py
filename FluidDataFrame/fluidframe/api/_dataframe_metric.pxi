@@ -1,7 +1,7 @@
 # _fastdataframe_metric.pxi — Correlation, covariance, distance (module-level cdef)
 # Included at module level in fastdataframe.pyx (after class definition)
 
-cdef list _numeric_logical_features(FastDataFrame self):
+cdef list _numeric_logical_features(DataFrame self):
     """展开 2D 数值列为逻辑子特征，返回 [(key, col, sub)]。"""
     cdef list feats = []
     cdef str name
@@ -22,7 +22,7 @@ cdef list _numeric_logical_features(FastDataFrame self):
 # ============================================================
 # 安全保护助手：确保取出的必定是一维 DoubleColumn
 # ============================================================
-cdef inline DoubleColumn _ensure_double_1d(FastDataFrame self, object col_ident):
+cdef inline DoubleColumn _ensure_double_1d(DataFrame self, object col_ident):
     """防止 IntColumn 被暴力转为 DoubleColumn 导致 SegFault"""
     cdef str name = col_ident if isinstance(col_ident, str) else None
     cdef BaseColumn col = self._columns[name] if name is not None else <BaseColumn>col_ident
@@ -42,42 +42,42 @@ cdef inline DoubleColumn _ensure_double_1d(FastDataFrame self, object col_ident)
 # Distance Metrics
 # ============================================================
 
-cdef _euclidean_dist_withcols_impl(FastDataFrame self, col1, col2):
+cdef _euclidean_dist_withcols_impl(DataFrame self, col1, col2):
     cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
     cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
     return c1.euclidean_dist(c2)
 
-cdef _manhattan_dist_withcols_impl(FastDataFrame self, col1, col2):
+cdef _manhattan_dist_withcols_impl(DataFrame self, col1, col2):
     cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
     cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
     return c1.manhattan_dist(c2)
 
-cdef _cosine_dist_withcols_impl(FastDataFrame self, col1, col2):
+cdef _cosine_dist_withcols_impl(DataFrame self, col1, col2):
     cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
     cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
     return c1.cosine_dist(c2)
 
-cdef _cosine_similarity_withcols_impl(FastDataFrame self, col1, col2):
+cdef _cosine_similarity_withcols_impl(DataFrame self, col1, col2):
     cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
     cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
     return c1.cosine_similarity(c2)
 
-cdef _jaccard_sim_withcols_impl(FastDataFrame self, col1, col2):
+cdef _jaccard_sim_withcols_impl(DataFrame self, col1, col2):
     cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
     cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
     return c1.jaccard_sim(c2)
 
-cdef _hamming_dist_withcols_impl(FastDataFrame self, col1, col2):
+cdef _hamming_dist_withcols_impl(DataFrame self, col1, col2):
     cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
     cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
     return c1.hamming_dist(c2)
 
-cdef _corr_impl(FastDataFrame self):
+cdef _corr_impl(DataFrame self):
     cdef list feats = _numeric_logical_features(self)
     cdef Py_ssize_t n_feats = len(feats)
     cdef Py_ssize_t n_rows = self.df_length
     if n_feats == 0 or n_rows == 0:
-        return FastDataFrame()
+        return DataFrame()
 
     # 仅用一次 malloc 分配 N 个特征的全部连续大内存 (列优先结构)
     cdef double* data_matrix = <double*>aligned_malloc(n_feats * max(n_rows, 1) * sizeof(double))
@@ -89,7 +89,7 @@ cdef _corr_impl(FastDataFrame self):
     cdef tuple feat
     cdef DoubleColumn res_block
     cdef double* res_ptr = NULL
-    cdef FastDataFrame result
+    cdef DataFrame result
 
     try:
         # 1. 一次性安全萃取所有特征
@@ -113,7 +113,7 @@ cdef _corr_impl(FastDataFrame self):
                     res_ptr[i * n_feats + j] = val
 
         # 极速装载 View (零拷贝)
-        result = FastDataFrame()
+        result = DataFrame()
         result.df_length = n_feats
         result.index = RangeIndex(0, n_feats)
         for i in range(n_feats):
@@ -127,12 +127,12 @@ cdef _corr_impl(FastDataFrame self):
     finally:
         os_aligned_free(data_matrix)
 
-cdef _cov_impl(FastDataFrame self):
+cdef _cov_impl(DataFrame self):
     cdef list feats = _numeric_logical_features(self)
     cdef Py_ssize_t n_feats = len(feats)
     cdef Py_ssize_t n_rows = self.df_length
     if n_feats == 0 or n_rows == 0:
-        return FastDataFrame()
+        return DataFrame()
 
     cdef double* data_matrix = <double*>aligned_malloc(n_feats * max(n_rows, 1) * sizeof(double))
     if not data_matrix: raise MemoryError()
@@ -142,7 +142,7 @@ cdef _cov_impl(FastDataFrame self):
     cdef tuple feat
     cdef DoubleColumn res_block
     cdef double* res_ptr = NULL
-    cdef FastDataFrame result
+    cdef DataFrame result
 
     try:
         for i in range(n_feats):
@@ -161,7 +161,7 @@ cdef _cov_impl(FastDataFrame self):
                     res_ptr[j * n_feats + i] = val
                     res_ptr[i * n_feats + j] = val
 
-        result = FastDataFrame()
+        result = DataFrame()
         result.df_length = n_feats
         result.index = RangeIndex(0, n_feats)
         for i in range(n_feats):
@@ -176,7 +176,7 @@ cdef _cov_impl(FastDataFrame self):
         os_aligned_free(data_matrix)
 
 
-cdef _pearson_sim_impl(FastDataFrame self):
+cdef _pearson_sim_impl(DataFrame self):
     """
     数学上，列之间的 Pearson 相似度矩阵 等价于 Pearson 相关系数矩阵。
     直接复用 _corr_impl 的实现，避免了原先实现中 O(N^2) 的内存拷贝和重复分配灾难。
@@ -188,7 +188,7 @@ cdef _pearson_sim_impl(FastDataFrame self):
 # Two-Column Compare Metircs
 # ============================================================
 
-cdef _corrwith_impl(FastDataFrame self, other):
+cdef _corrwith_impl(DataFrame self, other):
     cdef dict result = {}
     cdef tuple feat
     cdef Py_ssize_t n = self.df_length
@@ -208,7 +208,7 @@ cdef _corrwith_impl(FastDataFrame self, other):
 
     return result
 
-cdef _corrcoef_impl(FastDataFrame self, col_a, col_b):
+cdef _corrcoef_impl(DataFrame self, col_a, col_b):
     cdef bint is2d
     cdef Py_ssize_t c_a, r_a, c_b, r_b
     is2d, c_a, r_a = _col_shape_probe(col_a)
@@ -227,7 +227,7 @@ cdef _corrcoef_impl(FastDataFrame self, col_a, col_b):
 
     return _vec_pearson_corr(buf_a.data_c, buf_b.data_c, n)
 
-cdef _cov_withcols_impl(FastDataFrame self, col_a, col_b):
+cdef _cov_withcols_impl(DataFrame self, col_a, col_b):
     cdef bint is2d
     cdef Py_ssize_t c_a, r_a, c_b, r_b
     is2d, c_a, r_a = _col_shape_probe(col_a)

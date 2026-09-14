@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, '.')
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.categorycolumn import CategoryColumn
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
 passed = 0
 failed = 0
@@ -196,13 +196,13 @@ class TestCategoryAccessor:
 
 class TestCategoryInDataFrame:
     def test_df_category(self):
-        df = FastDataFrame({'C': 'category'})
+        df = DataFrame({'C': 'category'})
         df.append_row(C='apple'); df.append_row(C='banana'); df.append_row(C='apple')
         check('val', df['C'][0] == 'apple' and df['C'][1] == 'banana')
         check('len', df.df_length == 3)
 
     def df_rename(self):
-        df = FastDataFrame({'C': 'category'})
+        df = DataFrame({'C': 'category'})
         df.append_row(C='apple'); df.append_row(C='banana'); df.append_row(C='apple')
         r = df['C']._cate.rename_categories({'apple': 'AA'})
         check('codes', list(r._cate.codes) == [0, 1, 0])

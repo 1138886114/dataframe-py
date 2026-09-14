@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, '.')
 from fluidframe.core.datetimecolumn import DateTimeColumn
 from fluidframe.core.intcolumn import IntColumn
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 from fluidframe._schema_types import Date
 
 passed = 0
@@ -104,12 +104,12 @@ class TestDateTimeColumnOps:
 
 class TestDateTimeInDataFrame:
     def test_schema(self):
-        df = FastDataFrame({'dt': 'datetime'})
+        df = DataFrame({'dt': 'datetime'})
         df.append_row(dt='2023-01-15 10:30:00')
         check('schema', df.shape == (1, 1))
 
     def test_from_dict(self):
-        df = FastDataFrame.from_dict({'dt': ['2023-01-15 10:30:00', '2023-06-20 14:00:00']}, schema={'dt': 'datetime'})
+        df = DataFrame.from_dict({'dt': ['2023-01-15 10:30:00', '2023-06-20 14:00:00']}, schema={'dt': 'datetime'})
         check('from_dict len', df.df_length == 2)
 
 
@@ -159,7 +159,7 @@ class TestDateTimeColumnOps2:
         check('where_mask fill', '2000' in r[1])
 
     def test_reorder(self):
-        df = FastDataFrame()
+        df = DataFrame()
         col = DateTimeColumn()
         col.append('2023-01-15 10:30:00'); col.append('2023-06-20 14:00:00'); col.append('2024-01-01 08:00:00')
         df['x'] = col

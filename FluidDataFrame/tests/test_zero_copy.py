@@ -4,7 +4,7 @@ sys.path.insert(0, '.')
 import numpy as np
 from fluidframe.core.intcolumn import IntColumn
 from fluidframe.core.doublecolumn import DoubleColumn
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 from fluidframe.core.index import RangeIndex
 
 passed = 0
@@ -229,7 +229,7 @@ class TestRollingZeroCopy:
 class TestLinalgZeroCopy:
     def _build_df(self, data, names):
         cols = DoubleColumn._load_from_2d_array(data, names)
-        df = FastDataFrame()
+        df = DataFrame()
         df.df_length = data.shape[0]
         df.index = RangeIndex(0, data.shape[0])
         for name in names: df._columns[name] = cols[name]
@@ -303,7 +303,7 @@ class TestLinalgZeroCopy:
 
 class TestLinalgMixed:
     def test_mixed_columns(self):
-        df = FastDataFrame()
+        df = DataFrame()
         df.df_length = 2; df.index = RangeIndex(0, 2)
         ic = IntColumn(); ic.append(1); ic.append(0)
         dc = DoubleColumn(); dc.append(0.0); dc.append(1.0)
@@ -313,7 +313,7 @@ class TestLinalgMixed:
         check('mixed', near(d[names[1]][0], math.sqrt(2.0)))
 
     def test_non_contiguous(self):
-        df = FastDataFrame()
+        df = DataFrame()
         df.df_length = 3; df.index = RangeIndex(0, 3)
         for name, vals in [('A', [1.0, 0.0, 1.0]), ('B', [0.0, 1.0, 1.0])]:
             col = DoubleColumn()

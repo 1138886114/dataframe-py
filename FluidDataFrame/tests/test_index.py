@@ -1,6 +1,6 @@
 import sys
 sys.path.insert(0, '.')
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 from fluidframe.core.index import RangeIndex, MultiIndex
 from fluidframe.core.intcolumn import IntColumn
 
@@ -46,7 +46,7 @@ class TestRangeIndex:
         check('get_loc missing', expect_exception(KeyError, ri.get_loc, 99))
 
     def test_take(self):
-        df = FastDataFrame({'a': int})
+        df = DataFrame({'a': int})
         for v in [30, 10, 50, 20, 40]: df.append_row(a=v)
         check('head idx', df.head(3).index.values() == [0, 1, 2])
         check('tail idx', df.tail(2).index.values() == [3, 4])
@@ -90,31 +90,31 @@ class TestMultiIndex:
 
 class TestDataFrameIndex:
     def test_auto_range_index(self):
-        df = FastDataFrame({'a': int, 'b': str})
+        df = DataFrame({'a': int, 'b': str})
         df.append_row(a=1, b='x'); df.append_row(a=2, b='y')
         check('has index', df.index is not None)
         check('is RangeIndex', isinstance(df.index, RangeIndex))
         check('length', df.index.length == 2)
 
     def test_head_tail_index(self):
-        df = FastDataFrame({'x': int})
+        df = DataFrame({'x': int})
         for i in range(10): df.append_row(x=i * 10)
         check('head idx', df.head(3).index.values() == [0, 1, 2])
         check('tail idx', df.tail(3).index.values() == [7, 8, 9])
         check('head 0', df.head(0).index.length == 0)
 
     def test_dropna_index(self):
-        df = FastDataFrame({'a': float})
+        df = DataFrame({'a': float})
         df.append_row(a=1.0); df.append_row(a=float('nan')); df.append_row(a=3.0)
         check('dropna idx', df.dropna().index.values() == [0, 2])
 
     def test_drop_with_index(self):
-        df = FastDataFrame({'a': int})
+        df = DataFrame({'a': int})
         for i in range(5): df.append_row(a=i)
         check('drop idx', df.drop_with_index([1, 3]).index.values() == [0, 2, 4])
 
     def test_iloc_index(self):
-        df = FastDataFrame({'a': int})
+        df = DataFrame({'a': int})
         for i in range(5): df.append_row(a=i * 10)
         check('iloc slice idx', df.iloc[1:4].index.values() == [1, 2, 3])
         check('iloc list idx', df.iloc[[0, 4]].index.values() == [0, 4])

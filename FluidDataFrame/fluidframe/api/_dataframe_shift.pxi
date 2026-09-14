@@ -177,14 +177,14 @@ cdef _shift_column_impl(BaseColumn col, Py_ssize_t periods, Py_ssize_t n):
     else:
         raise TypeError(f"shift not supported for column type {col.dtype}")
 
-cdef _shift_impl(FastDataFrame self, Py_ssize_t periods, str axis):
+cdef _shift_impl(DataFrame self, Py_ssize_t periods, str axis):
     if axis != 'index':
         raise ValueError(f"axis must be 'index', got '{axis}'")
     if periods == 0:
         return _copy_impl(self)
 
     cdef Py_ssize_t n = self.df_length
-    cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame result = DataFrame()
     result.df_length = n
     result.index = self.index
 
@@ -193,8 +193,8 @@ cdef _shift_impl(FastDataFrame self, Py_ssize_t periods, str axis):
 
     return result
 
-cdef _diff_column_all_impl(FastDataFrame self, int periods):
-    cdef FastDataFrame result = FastDataFrame()
+cdef _diff_column_all_impl(DataFrame self, int periods):
+    cdef DataFrame result = DataFrame()
     result.df_length = self.df_length
     result.index = self.index
     cdef Py_ssize_t n = self.df_length

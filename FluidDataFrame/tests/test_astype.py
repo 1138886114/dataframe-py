@@ -7,8 +7,8 @@ from fluidframe.core.asciicolumn import AsciiColumn
 from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.datecolumn import DateColumn as DateColumn
 from fluidframe.core.categorycolumn import CategoryColumn
-from fluidframe.core.fastdataframe import FastDataFrame
-from fluidframe.core.fastdataframe import to_numeric, to_datetime, to_timedelta
+from fluidframe.core.dataframe import DataFrame
+from fluidframe.core.dataframe import to_numeric, to_datetime, to_timedelta
 
 PASSED = 0
 FAILED = 0
@@ -178,7 +178,7 @@ check(uc7[0] == '10', "category->ucs2 [0]")
 
 # ==================== DataFrame.astype ====================
 print("=== DataFrame.astype ===")
-df = FastDataFrame(schema={'A': 'int', 'B': 'str', 'C': 'bool'})
+df = DataFrame(schema={'A': 'int', 'B': 'str', 'C': 'bool'})
 df = df.append({'A': 42, 'B': '3.14', 'C': True})
 df = df.append({'A': 10, 'B': '2.71', 'C': False})
 
@@ -239,7 +239,7 @@ check(td4[0] == 1, "to_timedelta seconds->days")
 
 # ==================== Category in schema ====================
 print("=== Category in schema ===")
-df3 = FastDataFrame(schema={'X': 'category'})
+df3 = DataFrame(schema={'X': 'category'})
 df3 = df3.append({'X': 'low'})
 df3 = df3.append({'X': 'high'})
 df3 = df3.append({'X': 'low'})

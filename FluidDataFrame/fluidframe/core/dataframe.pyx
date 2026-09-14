@@ -464,7 +464,7 @@ cdef inline void _fast_insert_val(int dtype, void* data_ptr, void* col_obj,
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef class FastDataFrame:
+cdef class DataFrame:
 
     cdef BaseColumn _reorder_column(self, BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
         if col.dtype == TYPE_INT:
@@ -554,14 +554,14 @@ cdef class FastDataFrame:
         return self.df_length
 
     def __eq__(self, other):
-        if not isinstance(other, FastDataFrame):
+        if not isinstance(other, DataFrame):
             return NotImplemented
-        cdef FastDataFrame rhs = <FastDataFrame>other
+        cdef DataFrame rhs = <DataFrame>other
         if self.df_length != rhs.df_length:
             return False
         if set(self._columns.keys()) != set(rhs._columns.keys()):
             return False
-        cdef FastDataFrame result = FastDataFrame()
+        cdef DataFrame result = DataFrame()
         cdef Py_ssize_t i, n = self.df_length
         cdef str name
         cdef BaseColumn col_l, col_r
@@ -1006,12 +1006,12 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getitem__(self, name):
-        cdef FastDataFrame result
+        cdef DataFrame result
         cdef str col_name
         if isinstance(name, IntColumn):
             return self.loc[name]
         if isinstance(name, list):
-            result = FastDataFrame()
+            result = DataFrame()
             result.df_length = self.df_length
             for col_name in name:
                 if col_name not in self._columns:
@@ -1056,8 +1056,8 @@ cdef class FastDataFrame:
             result[name] = _TYPE_PYCLASSES.get(col.dtype, None)
         return result
 
-    cdef FastDataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n):
-        cdef FastDataFrame result = FastDataFrame()
+    cdef DataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n):
+        cdef DataFrame result = DataFrame()
         result.df_length = n
         cdef str name
         cdef BaseColumn col
@@ -1203,7 +1203,7 @@ cdef class FastDataFrame:
     def drop(self, labels=None, axis=0, columns=None, index=None):
         cdef str name
         cdef str col_name
-        cdef FastDataFrame new_df
+        cdef DataFrame new_df
         if columns is not None:
             labels = columns
             axis = 1
@@ -1222,7 +1222,7 @@ cdef class FastDataFrame:
             for name in labels:
                 if name not in self._columns:
                     raise KeyError(f"Column '{name}' not found")
-            new_df = FastDataFrame()
+            new_df = DataFrame()
             new_df.df_length = self.df_length
             for col_name, col_obj in self._columns.items():
                 if col_name not in labels:
@@ -1513,11 +1513,11 @@ cdef class FastDataFrame:
     # Merge
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def concat(self, FastDataFrame other):
+    def concat(self, DataFrame other):
         return _concat_impl(self, other)
 
     @cython.binding(False)
-    def merge(self, FastDataFrame right, object on=None, str how='inner'):
+    def merge(self, DataFrame right, object on=None, str how='inner'):
         if isinstance(on, str):
             on = [on]
         return _merge_impl(self, right, on, how)
@@ -1786,12 +1786,12 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def dot(self, FastDataFrame b):
+    def dot(self, DataFrame b):
         return _linalg_dot(self, b)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def matmul(self, FastDataFrame b):
+    def matmul(self, DataFrame b):
         return _linalg_dot(self, b)
 
     @cython.binding(False)
@@ -1811,7 +1811,7 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def solve(self, FastDataFrame b):
+    def solve(self, DataFrame b):
         return _linalg_solve(self, b)
 
     @cython.binding(False)
@@ -1983,28 +1983,28 @@ cdef class FastDataFrame:
         return _ewm_mean_impl(self, col_name, span)
 
 
-include "../api/_fastdataframe_crud.pxi"
-include "../api/_fastdataframe_transform.pxi"
-include "../api/_fastdataframe_agg.pxi"
-include "../api/_fastdataframe_io.pxi"
-include "../api/_fastdataframe_merge.pxi"
-include "../api/_fastdataframe_metric.pxi"
-include "../api/_fastdataframe_factory.pxi"
-include "../api/_fastdataframe_rolling.pxi"
-include "../api/_fastdataframe_shift.pxi"
-include "../api/_fastdataframe_stats.pxi"
-include "../api/_fastdataframe_groupby.pxi"
-include "../api/_fastdataframe_linalg.pxi"
-include "../api/_fastdataframe_standalone.pxi"
+include "../api/_dataframe_crud.pxi"
+include "../api/_dataframe_transform.pxi"
+include "../api/_dataframe_agg.pxi"
+include "../api/_dataframe_io.pxi"
+include "../api/_dataframe_merge.pxi"
+include "../api/_dataframe_metric.pxi"
+include "../api/_dataframe_factory.pxi"
+include "../api/_dataframe_rolling.pxi"
+include "../api/_dataframe_shift.pxi"
+include "../api/_dataframe_stats.pxi"
+include "../api/_dataframe_groupby.pxi"
+include "../api/_dataframe_linalg.pxi"
+include "../api/_dataframe_standalone.pxi"
 
 
 # _DataFrameMetricAccessor — 懒加载缓存的 metric 访问器
 # ============================================================
 # 用法: df.metric.euclidean('a', 'b') / df.metric.corr() 等。
-# 实例由 FastDataFrame.metric property 首次访问时创建并缓存，
+# 实例由 DataFrame.metric property 首次访问时创建并缓存，
 # 实例化开销均摊为 0（参见 _make_metric_accessor）。
 cdef class _DataFrameMetricAccessor:
-    """Metric accessor with lazy caching on the parent FastDataFrame."""
+    """Metric accessor with lazy caching on the parent DataFrame."""
 
     def __cinit__(self):
         # 无参 __cinit__：允许工厂函数直接 __new__ 绕过参数打包
@@ -2075,7 +2075,7 @@ cdef class _DataFrameMetricAccessor:
         return _pearson_sim_impl(self._df)
 
 
-cdef inline _DataFrameMetricAccessor _make_metric_accessor(FastDataFrame df):
+cdef inline _DataFrameMetricAccessor _make_metric_accessor(DataFrame df):
     # C 级工厂：__new__ 无参调用直接命中 tp_new，彻底绕过 Python 参数打包/解包
     cdef _DataFrameMetricAccessor acc = <_DataFrameMetricAccessor>_DataFrameMetricAccessor.__new__(_DataFrameMetricAccessor)
     # 直接写底层 C 结构体字段（Cython 自动处理 Py_INCREF）

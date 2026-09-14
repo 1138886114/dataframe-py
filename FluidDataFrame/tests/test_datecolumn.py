@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, '.')
 from fluidframe.core.datecolumn import DateColumn
 from fluidframe.core.intcolumn import IntColumn
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
 passed = 0
 failed = 0
@@ -275,7 +275,7 @@ class TestDateColumnMisc:
         check('growth', col.length == 100)
 
     def test_reorder(self):
-        df = FastDataFrame()
+        df = DataFrame()
         col = DateColumn(); col.append(20160101); col.append(20231225); col.append(20200615)
         df['x'] = col
         df.df_length = 3

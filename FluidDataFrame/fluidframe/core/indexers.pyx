@@ -6,7 +6,7 @@ cimport cython
 from libc.string cimport memcpy, strncpy
 from libc.stdint cimport int32_t, int64_t
 from fluidframe.core._base cimport aligned_malloc, os_aligned_free, BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE, TYPE_DATETIME, TYPE_TIME, TYPE_BOOL, TYPE_CATEGORY
-from fluidframe.core.fastdataframe cimport FastDataFrame
+from fluidframe.core.dataframe cimport DataFrame
 from fluidframe.core.intcolumn cimport IntColumn
 from fluidframe.core.doublecolumn cimport DoubleColumn
 from fluidframe.core.asciicolumn cimport AsciiColumn
@@ -20,7 +20,7 @@ from fluidframe.core.index cimport IndexBase
 
 
 cdef class _ILocIndexer:
-    def __cinit__(self, FastDataFrame frame):
+    def __cinit__(self, DataFrame frame):
         self.frame = frame
 
     def __getitem__(self, key):
@@ -31,7 +31,7 @@ cdef class _ILocIndexer:
         cdef Py_ssize_t* indices_c = NULL
         cdef Py_ssize_t n_new = 0
         cdef Py_ssize_t i, idx
-        cdef FastDataFrame result
+        cdef DataFrame result
 
         # 解析用户输入的类型
         if isinstance(key, int):
@@ -189,7 +189,7 @@ cdef inline void _fast_set_cell(BaseColumn col, int dtype, Py_ssize_t idx, objec
 
 cdef class _LocIndexer:
 
-    def __cinit__(self, FastDataFrame frame):
+    def __cinit__(self, DataFrame frame):
         self.frame = frame
 
     def __setitem__(self, key, object values):
@@ -231,8 +231,8 @@ cdef class _LocIndexer:
     def __getitem__(self, key):
         cdef Py_ssize_t n_orig = self.frame.df_length
         cdef object loc_res
-        cdef FastDataFrame row_result
-        cdef FastDataFrame result
+        cdef DataFrame row_result
+        cdef DataFrame result
         cdef list col_names
         cdef str col_name
 
@@ -241,7 +241,7 @@ cdef class _LocIndexer:
             row_key, col_key = key
             row_result = self._get_rows(row_key)
             if isinstance(col_key, list):
-                result = FastDataFrame()
+                result = DataFrame()
                 result.df_length = row_result.df_length
                 result.index = row_result.index
                 for col_name in col_key:
@@ -257,7 +257,7 @@ cdef class _LocIndexer:
 
         return self._get_rows(key)
 
-    cdef FastDataFrame _get_rows(self, key):
+    cdef DataFrame _get_rows(self, key):
         cdef Py_ssize_t n_orig = self.frame.df_length
         cdef object loc_res
 
@@ -281,7 +281,7 @@ cdef class _LocIndexer:
 
         raise TypeError(f"Unsupported loc key type: {type(key).__name__}")
 
-    cdef FastDataFrame _apply_mask(self, IntColumn mask):
+    cdef DataFrame _apply_mask(self, IntColumn mask):
         cdef Py_ssize_t n_orig = self.frame.df_length
         if isinstance(mask, IntColumn):
             if (<IntColumn>mask).length != n_orig:
@@ -297,7 +297,7 @@ cdef class _LocIndexer:
                 keep_count += 1
 
         if keep_count == 0:
-            result = FastDataFrame()
+            result = DataFrame()
             result.df_length = 0
             for col_name, col_obj in self.frame._columns.items():
                 result._columns[col_name] = col_obj.copy()
@@ -317,7 +317,7 @@ cdef class _LocIndexer:
         finally:
             os_aligned_free(keep_idx)
 
-    cdef FastDataFrame _apply_bool_list(self, list mask):
+    cdef DataFrame _apply_bool_list(self, list mask):
         cdef Py_ssize_t n_orig = self.frame.df_length
         if len(mask) != n_orig:
             raise ValueError(f"Mask length {len(mask)} != DataFrame length {n_orig}")
@@ -329,7 +329,7 @@ cdef class _LocIndexer:
                 keep_count += 1
 
         if keep_count == 0:
-            result = FastDataFrame()
+            result = DataFrame()
             result.df_length = 0
             for col_name, col_obj in self.frame._columns.items():
                 result._columns[col_name] = col_obj.copy()

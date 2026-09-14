@@ -1,5 +1,5 @@
-"""FastDataFrame API module — .pxi include files for modular Cython compilation."""
+"""DataFrame API module — .pxi include files for modular Cython compilation."""
 
-from fluidframe.core.fastdataframe import FastDataFrame
+from fluidframe.core.dataframe import DataFrame
 
-__all__ = ['FastDataFrame']
+__all__ = ['DataFrame']
