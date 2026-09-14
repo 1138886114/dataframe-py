@@ -19,7 +19,7 @@ TESTS=(
     test_datecolumn
     test_datetimecolumn
     test_doublecolumn
-    test_fastdataframe
+    test_dataframe
     test_fluidframe
     test_groupby
     test_index

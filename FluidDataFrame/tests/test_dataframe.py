@@ -1377,12 +1377,15 @@ def test_elementwise_2d():
     d3 = DataFrame({'a': int})
     d3.append_row(a=1); d3.append_row(a=2)
     d3['a2d'] = IntColumn.from_2d([1, 2, 5, 0], 2, 2)
-    check('elem2d all false', not d3.all())
-    check('elem2d any true', d3.any())
+    d3_all = d3.all()
+    check('elem2d all false', d3_all['a'] == True and d3_all['a2d'] == False)
+    d3_any = d3.any()
+    check('elem2d any true', d3_any['a'] == True and d3_any['a2d'] == True)
     d4 = DataFrame({'a': int})
     d4.append_row(a=1); d4.append_row(a=2)
     d4['a2d'] = IntColumn.from_2d([1, 2, 5, 6], 2, 2)
-    check('elem2d all true', d4.all())
+    d4_all = d4.all()
+    check('elem2d all true', d4_all['a'] == True and d4_all['a2d'] == True)
 
 
 def test_series_row_2d():
@@ -2194,49 +2197,49 @@ def test_all_any():
     df = DataFrame({'x': int})
     df.append_row(x=1)
     df.append_row(x=2)
-    check('all true', df.all() == True)
+    check('all true', df.all() == {'x': True})
 
     # all() - one False
     df2 = DataFrame({'x': int})
     df2.append_row(x=1)
     df2.append_row(x=0)
-    check('all false', df2.all() == False)
+    check('all false', df2.all() == {'x': False})
 
     # all() - empty
     df3 = DataFrame({'x': int})
-    check('all empty', df3.all() == True)
+    check('all empty', df3.all() == {'x': True})
 
     # any() - has True
     df4 = DataFrame({'x': int})
     df4.append_row(x=0)
     df4.append_row(x=5)
-    check('any true', df4.any() == True)
+    check('any true', df4.any() == {'x': True})
 
     # any() - all False
     df5 = DataFrame({'x': int})
     df5.append_row(x=0)
     df5.append_row(x=0)
-    check('any false', df5.any() == False)
+    check('any false', df5.any() == {'x': False})
 
     # any() - empty
     df6 = DataFrame({'x': int})
-    check('any empty', df6.any() == False)
+    check('any empty', df6.any() == {'x': False})
 
     # bool column
     df7 = DataFrame({'x': bool})
     df7.append_row(x=True)
     df7.append_row(x=True)
-    check('all bool true', df7.all() == True)
+    check('all bool true', df7.all() == {'x': True})
     df7.append_row(x=False)
-    check('all bool mixed', df7.all() == False)
+    check('all bool mixed', df7.all() == {'x': False})
 
     # multi-column all/any
     df8 = DataFrame({'a': int, 'b': int})
     df8.append_row(a=1, b=2)
     df8.append_row(a=3, b=4)
-    check('multi all true', df8.all() == True)
+    check('multi all true', df8.all() == {'a': True, 'b': True})
     df8.append_row(a=0, b=1)
-    check('multi all false', df8.all() == False)
+    check('multi all false', df8.all() == {'a': False, 'b': True})
 
 def test_pct_change():
     df = DataFrame({'x': int})
@@ -2331,11 +2334,13 @@ def test_eq():
 
     df4 = DataFrame({'a': int})
     df4.append_row(a=1)
-    check('eq diff cols returns False', df1 == df4)
+    eq_diff_cols = df1 == df4
+    check('eq diff cols returns False', eq_diff_cols is False)
 
     df5 = DataFrame({'a': int, 'b': float})
     df5.append_row(a=1, b=1.0)
-    check('eq diff len returns False', df1 == df5)
+    eq_diff_len = df1 == df5
+    check('eq diff len returns False', eq_diff_len is False)
 
 
 def test_pivot():

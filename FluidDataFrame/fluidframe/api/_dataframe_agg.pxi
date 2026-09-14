@@ -234,7 +234,7 @@ cdef _count_impl(DataFrame self, col_names=None):
     cdef dict result = {}
     cdef str name
     cdef BaseColumn col
-    cdef Py_ssize_t count, i, total
+    cdef Py_ssize_t count, i, logical_rows
     cdef int* i_ptr
     cdef double* d_ptr
     cdef unsigned char* bool_ptr
@@ -243,25 +243,25 @@ cdef _count_impl(DataFrame self, col_names=None):
     for name in col_names:
         if name in self._columns:
             col = self._columns[name]
-            total = col.length
+            # Use logical row count for 2D columns
+            if col.is_2d and col.num_cols > 1:
+                logical_rows = col._get_rows_c()
+            else:
+                logical_rows = col.length
             count = 0
             if col.dtype == TYPE_INT:
-                i_ptr = (<IntColumn>col).data_c
-                for i in range(total):
-                    if i_ptr[i] != 0:
-                        count += 1
+                # IntColumn has no NaN concept, all values are valid
+                count = logical_rows
             elif col.dtype == TYPE_DOUBLE:
                 d_ptr = (<DoubleColumn>col).data_c
-                for i in range(total):
+                for i in range(logical_rows):
                     if not isnan(d_ptr[i]):
                         count += 1
             elif col.dtype == TYPE_BOOL:
-                bool_ptr = (<BoolColumn>col).data_c
-                for i in range(total):
-                    if bool_ptr[i] != 0:
-                        count += 1
+                # BoolColumn has no NaN concept, all values are valid
+                count = logical_rows
             else:
-                count = total
+                count = logical_rows
             result[name] = count
     return result
 
