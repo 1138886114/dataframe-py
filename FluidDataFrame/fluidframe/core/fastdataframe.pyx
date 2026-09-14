@@ -561,18 +561,24 @@ cdef class FastDataFrame:
             return False
         if set(self._columns.keys()) != set(rhs._columns.keys()):
             return False
+        cdef FastDataFrame result = FastDataFrame()
         cdef Py_ssize_t i, n = self.df_length
         cdef str name
         cdef BaseColumn col_l, col_r
+        cdef BoolColumn bool_col
         for name in self._columns:
             col_l = self._columns[name]
             col_r = rhs._columns[name]
-            if col_l.dtype != col_r.dtype:
-                return False
+            bool_col = BoolColumn(n)
+            bool_col.length = n
             for i in range(n):
-                if _col_row_key(col_l, i) != _col_row_key(col_r, i):
-                    return False
-        return True
+                if _col_row_key(col_l, i) == _col_row_key(col_r, i):
+                    bool_col.data_c[i] = 1
+                else:
+                    bool_col.data_c[i] = 0
+            result._columns[name] = bool_col
+        result.df_length = n
+        return result
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

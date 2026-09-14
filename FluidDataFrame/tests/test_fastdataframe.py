@@ -1318,8 +1318,10 @@ def test_display_export_2d():
     # __eq__：2D 列必须整行比较（子列 ≥1 差异要区分）
     df2 = _make_2d_frame()
     df2['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 99, 98, 97, 96], 4, 2)
-    check('exp 2d eq differs', not (df == df2))
-    check('exp 2d eq same', df == _make_2d_frame())
+    eq_result = df == df2
+    check('exp 2d eq differs', eq_result['a2d'][0] == 0 or eq_result['a2d'][1] == 0)
+    eq_result2 = df == _make_2d_frame()
+    check('exp 2d eq same', all(eq_result2['a2d'][i] == 1 for i in range(4)))
     # double 2D 含 NaN：显示为 null（-ffast-math 下 dval != dval 失效，需位模式判定）
     dd = FastDataFrame({'a': int})
     dd.append_row(a=0); dd.append_row(a=0)
@@ -2314,20 +2316,26 @@ def test_eq():
     df2.append_row(a=1, b=1.0)
     df2.append_row(a=2, b=2.0)
 
-    check('eq same', df1 == df2)
+    eq_result = df1 == df2
+    check('eq same is DataFrame', isinstance(eq_result, FastDataFrame))
+    check('eq same shape', eq_result.shape == (2, 2))
+    check('eq same all true', all(eq_result['a'][i] == 1 for i in range(2)))
+    check('eq same all true b', all(eq_result['b'][i] == 1 for i in range(2)))
 
     df3 = FastDataFrame({'a': int, 'b': float})
     df3.append_row(a=1, b=1.0)
     df3.append_row(a=2, b=99.0)
-    check('eq diff val', not (df1 == df3))
+    eq_result2 = df1 == df3
+    check('eq diff val a', eq_result2['a'][0] == 1 and eq_result2['a'][1] == 1)
+    check('eq diff val b', eq_result2['b'][0] == 1 and eq_result2['b'][1] == 0)
 
     df4 = FastDataFrame({'a': int})
     df4.append_row(a=1)
-    check('eq diff cols', not (df1 == df4))
+    check('eq diff cols returns False', df1 == df4)
 
     df5 = FastDataFrame({'a': int, 'b': float})
     df5.append_row(a=1, b=1.0)
-    check('eq diff len', not (df1 == df5))
+    check('eq diff len returns False', df1 == df5)
 
 
 def test_pivot():
