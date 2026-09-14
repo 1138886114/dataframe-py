@@ -64,7 +64,7 @@ cdef _to_string_impl(FastDataFrame self, Py_ssize_t max_rows=80):
         col_widths[c] = max_w + 2
 
     cdef list lines = []
-    lines.append(f"shape: ({self.df_length}, {len(self.columns)})")
+    lines.append(f"shape: ({self.df_length}, {len(self._columns)})")
 
     if num_display_cols > 0:
         def make_border(left, mid, right, fill):
@@ -115,7 +115,7 @@ cdef _to_pickle_impl(FastDataFrame self, filename):
     cdef int64_t* tptr64
     cdef BaseColumn col_obj
 
-    for name, col_obj in self.columns.items():
+    for name, col_obj in self._columns.items():
         is2d, c, r = _col_shape_probe(col_obj)
         dtype = col_obj.dtype
         if is2d and c > 1:
@@ -144,7 +144,7 @@ cdef _to_csv_impl(FastDataFrame self, filename, sep=','):
     导出为 CSV 文件。
     优化点：批量列数据提取，摆脱嵌套循环中的重复类型查询。
     """
-    cdef list col_names = list(self.columns.keys())
+    cdef list col_names = list(self._columns.keys())
     cdef Py_ssize_t num_cols = len(col_names)
     cdef Py_ssize_t n = self.df_length
     cdef Py_ssize_t i, j
@@ -156,7 +156,7 @@ cdef _to_csv_impl(FastDataFrame self, filename, sep=','):
     cdef size_t buf_cap = sizeof(line_buf)
     cdef bytes b_field
 
-    cdef list cols_data = [_col_to_list(self.columns[name]) for name in col_names]
+    cdef list cols_data = [_col_to_list(self._columns[name]) for name in col_names]
 
     with open(filename, 'wb') as f:
         for j in range(num_cols):
@@ -201,11 +201,11 @@ cdef _to_numpy_impl(FastDataFrame self):
     导出为二维数组 (List of Lists)。
     """
     cdef Py_ssize_t n = self.df_length
-    cdef list col_names = list(self.columns.keys())
+    cdef list col_names = list(self._columns.keys())
     cdef Py_ssize_t num_cols = len(col_names)
     cdef Py_ssize_t i, j
 
-    cdef list cols_data = [_col_to_list(self.columns[name]) for name in col_names]
+    cdef list cols_data = [_col_to_list(self._columns[name]) for name in col_names]
     cdef list result = [None] * n
     cdef list row
 
@@ -217,7 +217,7 @@ cdef _to_numpy_impl(FastDataFrame self):
     return result
 
 cdef _info_impl(FastDataFrame self):
-    cdef Py_ssize_t total_cols = len(self.columns)
+    cdef Py_ssize_t total_cols = len(self._columns)
     cdef Py_ssize_t mem = _memory_usage_impl(self)
     cdef char bytes_buf[16]
     cdef list lines = []
@@ -234,7 +234,7 @@ cdef _info_impl(FastDataFrame self):
     lines.append(" #   Column    Non-Null  Dtype     Mem Usage")
     lines.append("---  ------    --------  ----     ---------")
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         type_name = self._type_name(col)
         col_bytes = col.get_size()
         is2d, c_probe, r_probe = _col_shape_probe(col)
@@ -251,7 +251,7 @@ cdef _info_impl(FastDataFrame self):
 cdef str _dtype_summary_impl(FastDataFrame self):
     cdef dict counts = {}
     cdef str name, tname
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         tname = self._type_name(col)
         counts[tname] = counts.get(tname, 0) + 1
     return ', '.join(f'{v} {k}' for k, v in counts.items())
@@ -259,7 +259,7 @@ cdef str _dtype_summary_impl(FastDataFrame self):
 cdef _memory_usage_impl(FastDataFrame self):
     cdef Py_ssize_t total = 0
     cdef BaseColumn col
-    for col in self.columns.values():
+    for col in self._columns.values():
         total += col.get_size()
     return total
 
@@ -269,7 +269,7 @@ cdef _to_dict_impl(FastDataFrame self):
     cdef str name
     cdef BaseColumn col
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         result[name] = _col_to_list(col)
     return result
 
@@ -351,12 +351,12 @@ cdef _to_excel_impl(FastDataFrame self, object filename, str sheet_name='Sheet1'
     except ImportError:
         raise ImportError("to_excel() requires 'openpyxl'. Install with: pip install openpyxl")
 
-    cdef list col_names = list(self.columns.keys())
+    cdef list col_names = list(self._columns.keys())
     cdef Py_ssize_t num_cols = len(col_names)
     cdef Py_ssize_t n = self.df_length
     cdef Py_ssize_t i, j
 
-    cdef list cols_data = [_col_to_list(self.columns[name]) for name in col_names]
+    cdef list cols_data = [_col_to_list(self._columns[name]) for name in col_names]
 
     wb = openpyxl.Workbook()
     ws = wb.active

@@ -84,7 +84,7 @@ cdef class FastDataFrame:
     cdef public tuple _schema_keys
     cdef public list _ordered_cols
     cdef public list _2d_blocks
-    cdef public dict columns
+    cdef public dict _columns
 
     cdef public uint32_t _fixed_capacity
     cdef public uint32_t df_length

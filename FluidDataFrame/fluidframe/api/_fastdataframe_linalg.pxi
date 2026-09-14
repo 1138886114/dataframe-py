@@ -22,14 +22,14 @@ cdef inline Py_ssize_t _linalg_logical_cols(FastDataFrame df):
     cdef Py_ssize_t total = 0
     cdef bint is2d
     cdef Py_ssize_t c, r
-    for name, col in df.columns.items():
+    for name, col in df._columns.items():
         is2d, c, r = _col_shape_probe(col)
         total += c if (is2d and c > 1) else 1
     return total
 
 cdef bint _linalg_is_contiguous_columns(FastDataFrame df):
     """安全修复版：严谨校验多列 DataFrame 底层是否属于同一块物理连续内存"""
-    cdef list cols_list = list(df.columns.values())
+    cdef list cols_list = list(df._columns.values())
     cdef Py_ssize_t cols = len(cols_list)
     if cols < 2:
         return False
@@ -56,7 +56,7 @@ cdef bint _linalg_is_contiguous_columns(FastDataFrame df):
 
 cdef double* _linalg_to_contiguous_fast(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
     cdef Py_ssize_t rows = df.df_length
-    cdef list cols_list = list(df.columns.values())
+    cdef list cols_list = list(df._columns.values())
     cdef Py_ssize_t cols = len(cols_list)
 
     if cols == 0 or rows == 0:
@@ -96,8 +96,8 @@ cdef double* _linalg_to_contiguous_fast(FastDataFrame df, Py_ssize_t* out_rows, 
 
 cdef double* _linalg_to_contiguous(FastDataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
     cdef Py_ssize_t rows = df.df_length
-    cdef list cols_list = list(df.columns.values())
-    cdef list name_list = list(df.columns.keys())
+    cdef list cols_list = list(df._columns.values())
+    cdef list name_list = list(df._columns.keys())
     cdef Py_ssize_t n_cols_named = len(cols_list)
     cdef Py_ssize_t logical_cols = _linalg_logical_cols(df)
 
@@ -180,7 +180,7 @@ cdef FastDataFrame _linalg_from_contiguous(double* data, Py_ssize_t rows, Py_ssi
 
     # 构建零拷贝视图 (Zero-copy views)
     for j in range(cols):
-        df.columns[col_names[j]] = DoubleColumn.create_view(b_ptr + j * rows, rows, block2d)
+        df._columns[col_names[j]] = DoubleColumn.create_view(b_ptr + j * rows, rows, block2d)
 
     # 保留对 2D 块的强引用，防止内存被 GC
     if not hasattr(df, '_2d_blocks'):
@@ -455,8 +455,8 @@ cdef FastDataFrame _linalg_solve(FastDataFrame A_df, FastDataFrame b_df):
         col.length = n
         for i in range(n):
             col.data_c[i] = x[i]
-        b_col_name = list(b_df.columns.keys())[0]
-        result.columns[b_col_name] = col
+        b_col_name = list(b_df._columns.keys())[0]
+        result._columns[b_col_name] = col
         return result
     finally:
         if a_data != NULL: os_aligned_free(a_data)
@@ -708,7 +708,7 @@ cdef class _DataFrameLinalgAccessor:
 
     @cython.binding(False)
     def __repr__(self):
-        return f"<LinalgAccessor: {len(self._df.columns)} columns, {self._df.df_length} rows>"
+        return f"<LinalgAccessor: {len(self._df._columns)} columns, {self._df.df_length} rows>"
 
 cdef inline _DataFrameLinalgAccessor _make_linalg_accessor(FastDataFrame df):
     cdef _DataFrameLinalgAccessor acc = <_DataFrameLinalgAccessor>_DataFrameLinalgAccessor.__new__(_DataFrameLinalgAccessor)

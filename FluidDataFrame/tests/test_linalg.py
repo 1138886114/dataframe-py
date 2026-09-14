@@ -45,7 +45,7 @@ class TestFromDict:
 
     def test_rename(self):
         df = FastDataFrame.from_dict({'a': [1], 'b': [2]}, schema={'a': int, 'b': int}, columns=['X', 'Y'])
-        check('renamed', set(df.columns.keys()) == {'X', 'Y'})
+        check('renamed', set(df.columns) == {'X', 'Y'})
 
     def test_empty(self):
         df = FastDataFrame.from_dict({}, schema={})
@@ -244,7 +244,7 @@ class TestLinalgIntegration:
             for j in range(3):
                 expected = 1.0 if i == j else 0.0
                 col = chr(65 + j)
-                check(f'I[{i}][{j}]', near(prod.columns[col][i], expected, 1e-7))
+                check(f'I[{i}][{j}]', near(prod._columns[col][i], expected, 1e-7))
 
 
 class TestLinalgMatmul:
@@ -260,7 +260,7 @@ def _make_2d_matrix(kind='double'):
     # 单个 2D 列（cols=2，列优先 m_ij = data_c[j*rows + i]）表示逻辑矩阵 [[1,2],[3,4]]
     df = FastDataFrame()
     col = (IntColumn if kind == 'int' else DoubleColumn).from_2d([1, 3, 2, 4], 2, 2)
-    df.columns['M'] = col
+    df._columns['M'] = col
     df.df_length = 2
     return df
 
@@ -274,7 +274,7 @@ class TestLinalg2D:
 
     def test_det_nonsquare(self):
         df = FastDataFrame()
-        df.columns['M'] = DoubleColumn.from_2d([1, 2, 3], 3, 1)
+        df._columns['M'] = DoubleColumn.from_2d([1, 2, 3], 3, 1)
         df.df_length = 3
         check('nonsquare raises', expect_exception(ValueError, df.det))
 

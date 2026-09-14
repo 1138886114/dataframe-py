@@ -188,8 +188,8 @@ cdef _shift_impl(FastDataFrame self, Py_ssize_t periods, str axis):
     result.df_length = n
     result.index = self.index
 
-    for col_name, col in self.columns.items():
-        result.columns[col_name] = _shift_column_impl(col, periods, n)
+    for col_name, col in self._columns.items():
+        result._columns[col_name] = _shift_column_impl(col, periods, n)
 
     return result
 
@@ -199,8 +199,8 @@ cdef _diff_column_all_impl(FastDataFrame self, int periods):
     result.index = self.index
     cdef Py_ssize_t n = self.df_length
 
-    for col_name, col in self.columns.items():
+    for col_name, col in self._columns.items():
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
-            result.columns[col_name] = self._diff_column(col, periods)
+            result._columns[col_name] = self._diff_column(col, periods)
 
     return result

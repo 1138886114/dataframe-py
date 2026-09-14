@@ -6,10 +6,10 @@ cdef _numeric_agg_impl(FastDataFrame self, str method, col_names=None):
     cdef str name
     cdef object col
     if col_names is None:
-        col_names = list(self.columns.keys())
+        col_names = list(self._columns.keys())
     for name in col_names:
-        if name not in self.columns: continue
-        col = self.columns[name]
+        if name not in self._columns: continue
+        col = self._columns[name]
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
             result[name] = getattr(col, method)()
     return result
@@ -19,10 +19,10 @@ cdef _numeric_agg_arg_impl(FastDataFrame self, str method, col_names, arg):
     cdef str name
     cdef object col
     if col_names is None:
-        col_names = list(self.columns.keys())
+        col_names = list(self._columns.keys())
     for name in col_names:
-        if name not in self.columns: continue
-        col = self.columns[name]
+        if name not in self._columns: continue
+        col = self._columns[name]
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
             result[name] = getattr(col, method)(arg)
     return result
@@ -32,10 +32,10 @@ cdef _mode_impl(FastDataFrame self, col_names=None):
     cdef str name
     cdef object col
     if col_names is None:
-        col_names = list(self.columns.keys())
+        col_names = list(self._columns.keys())
     for name in col_names:
-        if name not in self.columns: continue
-        col = self.columns[name]
+        if name not in self._columns: continue
+        col = self._columns[name]
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
             result[name] = col.mode()
     return result
@@ -56,12 +56,12 @@ cdef _numeric_agg_withcol_impl(FastDataFrame self, str method, col_names=None):
     cdef list res_list
 
     if col_names is None:
-        col_names = list(self.columns.keys())
+        col_names = list(self._columns.keys())
 
     for name in col_names:
-        if name not in self.columns:
+        if name not in self._columns:
             continue
-        col = self.columns[name]
+        col = self._columns[name]
         dtype = col.dtype
 
         if dtype == TYPE_INT or dtype == TYPE_DOUBLE:
@@ -114,12 +114,12 @@ cdef _numeric_agg_arg_withcol_impl(FastDataFrame self, str method, col_names, ar
     cdef list res_list
 
     if col_names is None:
-        col_names = list(self.columns.keys())
+        col_names = list(self._columns.keys())
 
     for name in col_names:
-        if name not in self.columns:
+        if name not in self._columns:
             continue
-        col = self.columns[name]
+        col = self._columns[name]
         dtype = col.dtype
 
         if dtype == TYPE_INT or dtype == TYPE_DOUBLE:
@@ -169,7 +169,7 @@ cdef _describe_withcol_impl(FastDataFrame self):
     cdef double* buf_ptr
     cdef list stats_list
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         dtype = col.dtype
         if dtype == TYPE_INT or dtype == TYPE_DOUBLE:
             is2d, c, r = _col_shape_probe(col)
@@ -234,9 +234,9 @@ cdef _count_impl(FastDataFrame self, col_names=None):
     cdef dict result = {}
     cdef str name
     if col_names is None:
-        col_names = list(self.columns.keys())
+        col_names = list(self._columns.keys())
     for name in col_names:
-        if name in self.columns:
+        if name in self._columns:
             result[name] = self.df_length
     return result
 
@@ -290,7 +290,7 @@ cdef _describe_impl(FastDataFrame self):
     cdef dict freq_map
     cdef Py_ssize_t max_freq, freq_val
 
-    for name, col_obj in self.columns.items():
+    for name, col_obj in self._columns.items():
         col_len = col_obj.length
         _probe_shape(col_obj, &is2d, &c_probe, &r_probe)
 
@@ -439,9 +439,9 @@ cdef _describe_impl(FastDataFrame self):
 
 
 cdef _value_counts_impl(FastDataFrame self, str col_name):
-    if col_name not in self.columns:
+    if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
-    cdef BaseColumn col = self.columns[col_name]
+    cdef BaseColumn col = self._columns[col_name]
 
     cdef list keys = _col_to_keys(col)
     cdef Py_ssize_t n = len(keys)
@@ -470,8 +470,8 @@ cdef _value_counts_impl(FastDataFrame self, str col_name):
     for i in range(len(sorted_items)):
         cnt_ptr[i] = sorted_items[i][1]
 
-    result.columns[col_name] = key_col
-    result.columns['count'] = cnt_col
+    result._columns[col_name] = key_col
+    result._columns['count'] = cnt_col
 
     return result
 
@@ -481,11 +481,11 @@ cdef _nunique_impl(FastDataFrame self, str col_name=None):
     cdef BaseColumn col
 
     if col_name is not None:
-        if col_name not in self.columns:
+        if col_name not in self._columns:
             raise KeyError(f"Column '{col_name}' not found")
-        col = self.columns[col_name]
+        col = self._columns[col_name]
         return len(set(_col_to_keys(col)))
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         result[name] = len(set(_col_to_keys(col)))
     return result
 
@@ -515,16 +515,16 @@ def _series_value_counts(BaseColumn col, str key_name='value'):
     cdef list key_list = [k for k, v in sorted_items]
 
     if _col_is_2d(col):
-        result.columns[key_name] = _col_from_keys_2d(col, key_list)
+        result._columns[key_name] = _col_from_keys_2d(col, key_list)
     else:
-        result.columns[key_name] = _column_from_list_impl(result, key_name, key_list)
+        result._columns[key_name] = _column_from_list_impl(result, key_name, key_list)
 
     cdef IntColumn cnt_col = IntColumn(len(sorted_items))
     cnt_col.length = len(sorted_items)
     cdef int* cnt_ptr = cnt_col.data_c
     for i in range(len(sorted_items)):
         cnt_ptr[i] = sorted_items[i][1]
-    result.columns['count'] = cnt_col
+    result._columns['count'] = cnt_col
     return result
 
 

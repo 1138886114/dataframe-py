@@ -59,14 +59,14 @@ cdef _populate_column_impl(int dtype, Py_ssize_t n, list values):
 
 cdef _rename_columns_impl(FastDataFrame df, columns):
     if columns is not None:
-        col_names = list(df.columns.keys())
+        col_names = list(df._columns.keys())
         new_names = list(columns)
         if len(new_names) != len(col_names):
             raise ValueError(f"columns length {len(new_names)} != {len(col_names)}")
         new_cols = {}
         for i in range(len(new_names)):
-            new_cols[new_names[i]] = df.columns[col_names[i]]
-        df.columns = new_cols
+            new_cols[new_names[i]] = df._columns[col_names[i]]
+        df._columns = new_cols
 
 cdef _from_dict_impl(dict data, dict schema, object columns):
     cdef dict parsed = _parse_schema(schema) if schema else {}
@@ -91,7 +91,7 @@ cdef _from_dict_impl(dict data, dict schema, object columns):
     df.index = RangeIndex(0, n)
 
     for col_name in data:
-        df.columns[col_name] = _populate_column_impl(parsed[col_name], n, data[col_name])
+        df._columns[col_name] = _populate_column_impl(parsed[col_name], n, data[col_name])
 
     _rename_columns_impl(df, columns)
     return df
@@ -109,7 +109,7 @@ cdef _from_list_impl(list rows, dict schema, object columns):
 
     if n_rows == 0:
         for col_name in col_order:
-            df.columns[col_name] = _make_empty_column_impl(parsed[col_name])
+            df._columns[col_name] = _make_empty_column_impl(parsed[col_name])
         return df
 
     df.df_length = n_rows
@@ -118,7 +118,7 @@ cdef _from_list_impl(list rows, dict schema, object columns):
     for j in range(n_cols):
         col_name = col_order[j]
         col_values = [rows[i][j] for i in range(n_rows)]
-        df.columns[col_name] = _populate_column_impl(parsed[col_name], n_rows, col_values)
+        df._columns[col_name] = _populate_column_impl(parsed[col_name], n_rows, col_values)
 
     _rename_columns_impl(df, columns)
     return df
@@ -144,7 +144,7 @@ cdef _from_arrays_impl(list arrays, dict schema, object columns):
 
     if n_rows == 0:
         for col_name in col_order:
-            df.columns[col_name] = _make_empty_column_impl(parsed[col_name])
+            df._columns[col_name] = _make_empty_column_impl(parsed[col_name])
         return df
 
     df.df_length = n_rows
@@ -152,7 +152,7 @@ cdef _from_arrays_impl(list arrays, dict schema, object columns):
 
     for j in range(n_cols):
         col_name = col_order[j]
-        df.columns[col_name] = _populate_column_impl(parsed[col_name], n_rows, arrays[j])
+        df._columns[col_name] = _populate_column_impl(parsed[col_name], n_rows, arrays[j])
 
     _rename_columns_impl(df, columns)
     return df
@@ -168,7 +168,7 @@ cdef _arange_impl(Py_ssize_t n):
     with nogil:
         for i in range(n):
             col.data_c[i] = <int>i
-    df.columns['0'] = col
+    df._columns['0'] = col
     return df
 
 cdef _randn_impl(Py_ssize_t rows, Py_ssize_t cols):
@@ -185,7 +185,7 @@ cdef _randn_impl(Py_ssize_t rows, Py_ssize_t cols):
         col.length = rows
         for r_idx in range(rows):
             col.data_c[r_idx] = _random_gauss()
-        df.columns[col_names[c_idx]] = col
+        df._columns[col_names[c_idx]] = col
     return df
 
 cdef _rand_impl(Py_ssize_t rows, Py_ssize_t cols):
@@ -202,7 +202,7 @@ cdef _rand_impl(Py_ssize_t rows, Py_ssize_t cols):
         col.length = rows
         for r_idx in range(rows):
             col.data_c[r_idx] = _random_uniform()
-        df.columns[col_names[c_idx]] = col
+        df._columns[col_names[c_idx]] = col
     return df
 
 cdef _zeros_impl(Py_ssize_t rows, Py_ssize_t cols):
@@ -217,7 +217,7 @@ cdef _zeros_impl(Py_ssize_t rows, Py_ssize_t cols):
         col = DoubleColumn(max(rows, 1))
         col.length = rows
         memset(col.data_c, 0, rows * sizeof(double))
-        df.columns[col_names[c_idx]] = col
+        df._columns[col_names[c_idx]] = col
     return df
 
 cdef _ones_impl(Py_ssize_t rows, Py_ssize_t cols):
@@ -234,5 +234,5 @@ cdef _ones_impl(Py_ssize_t rows, Py_ssize_t cols):
         with nogil:
             for r_idx in range(rows):
                 col.data_c[r_idx] = 1.0
-        df.columns[col_names[c_idx]] = col
+        df._columns[col_names[c_idx]] = col
     return df

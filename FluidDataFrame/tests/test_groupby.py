@@ -302,9 +302,9 @@ def make_2d_df():
     组 key=1 行索引 {0,1,4}，组 key=2 行索引 {2,3}。"""
     df = FastDataFrame()
     df.df_length = 5
-    df.columns['key'] = IntColumn.from_2d([1, 1, 2, 2, 1], 5, 1)
-    df.columns['val'] = IntColumn.from_2d([1, 2, 3, 4, 5], 5, 1)
-    df.columns['v'] = DoubleColumn.from_2d(
+    df._columns['key'] = IntColumn.from_2d([1, 1, 2, 2, 1], 5, 1)
+    df._columns['val'] = IntColumn.from_2d([1, 2, 3, 4, 5], 5, 1)
+    df._columns['v'] = DoubleColumn.from_2d(
         [1, 10, 100, 5, 8, 2, 20, 200, 6, 9, 3, 30, 300, 7, 10], 5, 3)
     return df
 
@@ -313,9 +313,9 @@ def make_2d_key_df():
     行键：r0=(1,1) r1=(1,2) r2=(2,1) r3=(2,2) r4=(1,1) → 4 组。"""
     df = FastDataFrame()
     df.df_length = 5
-    df.columns['key2'] = DoubleColumn.from_2d(
+    df._columns['key2'] = DoubleColumn.from_2d(
         [1, 1, 2, 2, 1, 1, 2, 1, 2, 1], 5, 2)
-    df.columns['val'] = IntColumn.from_2d([10, 20, 30, 40, 10], 5, 1)
+    df._columns['val'] = IntColumn.from_2d([10, 20, 30, 40, 10], 5, 1)
     return df
 
 def test_groupby_agg_2d_sum():

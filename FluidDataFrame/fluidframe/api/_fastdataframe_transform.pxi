@@ -2,10 +2,10 @@
 # Included at module level in fastdataframe.pyx (after class definition)
 
 cdef _argsort_by_impl(FastDataFrame self, str col_name, bint reverse):
-    if col_name not in self.columns:
+    if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
 
-    cdef BaseColumn col = self.columns[col_name]
+    cdef BaseColumn col = self._columns[col_name]
     cdef Py_ssize_t n = self.df_length
     if n == 0:
         return []
@@ -57,7 +57,7 @@ cdef _argsort_by_impl(FastDataFrame self, str col_name, bint reverse):
         os_aligned_free(indices_c)
 
 cdef _sort_values_impl(FastDataFrame self, str col_name, bint reverse, bint inplace):
-    if col_name not in self.columns:
+    if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
 
     cdef Py_ssize_t n = self.df_length
@@ -80,10 +80,10 @@ cdef _sort_values_impl(FastDataFrame self, str col_name, bint reverse, bint inpl
             result_df = FastDataFrame()
             result_df.df_length = n
 
-        for name, col in self.columns.items():
+        for name, col in self._columns.items():
             new_col = self._reorder_column(col, idx_c, n, inplace)
             if not inplace:
-                result_df.columns[name] = new_col
+                result_df._columns[name] = new_col
 
         if not inplace and self.index is not None:
             result_df.index = self.index._take(idx_c, n)
@@ -95,9 +95,9 @@ cdef _sort_values_impl(FastDataFrame self, str col_name, bint reverse, bint inpl
         os_aligned_free(idx_c)
 
 cdef _diff_impl(FastDataFrame self, str col_name, int periods):
-    if col_name not in self.columns:
+    if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
-    cdef BaseColumn col = self.columns[col_name]
+    cdef BaseColumn col = self._columns[col_name]
     return self._diff_column(col, periods)
 
 cdef _apply_impl(FastDataFrame self, object func, str axis):
@@ -114,22 +114,22 @@ cdef _apply_impl(FastDataFrame self, object func, str axis):
         result = FastDataFrame()
         result.df_length = self.df_length
         result.index = RangeIndex(0, self.df_length)
-        for col_name, col_obj in self.columns.items():
+        for col_name, col_obj in self._columns.items():
             _probe_shape(col_obj, &is2d, &c_out, &r_out)
             total = col_obj.length
             flat_data = [col_obj[idx] for idx in range(total)]
             new_vals = [func(v) for v in flat_data]
 
             if is2d and c_out > 1:
-                result.columns[col_name] = _column_from_2d_list_impl(new_vals, r_out, c_out)
+                result._columns[col_name] = _column_from_2d_list_impl(new_vals, r_out, c_out)
             else:
-                result.columns[col_name] = _column_from_list_impl(result, col_name, new_vals)
+                result._columns[col_name] = _column_from_list_impl(result, col_name, new_vals)
         return result
 
     elif axis == 'index':
-        col_names = list(self.columns.keys())
+        col_names = list(self._columns.keys())
         num_cols = len(col_names)
-        cols_data = [_col_to_keys(self.columns[name]) for name in col_names]
+        cols_data = [_col_to_keys(self._columns[name]) for name in col_names]
         n = self.df_length
         result_vals = [None] * n
         for i in range(n):
@@ -142,15 +142,15 @@ cdef _apply_impl(FastDataFrame self, object func, str axis):
     raise ValueError(f"axis must be 'columns' or 'index', got '{axis}'")
 
 cdef _clip_column_impl(FastDataFrame self, str col_name, double lower, double upper, bint inplace):
-    cdef BaseColumn col = self.columns[col_name]
+    cdef BaseColumn col = self._columns[col_name]
     if col.dtype == TYPE_INT:
         new_col = (<IntColumn>col).clip(lower, upper, inplace)
         if not inplace:
-            self.columns[col_name] = new_col
+            self._columns[col_name] = new_col
     elif col.dtype == TYPE_DOUBLE:
         new_col = (<DoubleColumn>col).clip(lower, upper, inplace)
         if not inplace:
-            self.columns[col_name] = new_col
+            self._columns[col_name] = new_col
     else:
         raise TypeError(f"clip not supported for column type {self._type_name(col)}")
     if inplace:
@@ -162,7 +162,7 @@ cdef _clip_all_impl(FastDataFrame self, double lower, double upper, bint inplace
     cdef list names = []
     cdef str name
     cdef BaseColumn col
-    for name, col in target.columns.items():
+    for name, col in target._columns.items():
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
             names.append(name)
     for name in names:
@@ -172,8 +172,8 @@ cdef _clip_all_impl(FastDataFrame self, double lower, double upper, bint inplace
     return target
 
 cdef _where_column_impl(FastDataFrame self, str col_name, str cond_col, object other):
-    cdef BaseColumn src = self.columns[col_name]
-    cdef BaseColumn cond = self.columns[cond_col]
+    cdef BaseColumn src = self._columns[col_name]
+    cdef BaseColumn cond = self._columns[cond_col]
     cdef bint src_is_2d = src.is_2d and src.num_cols > 1
     cdef bint cond_is_2d = cond.is_2d and cond.num_cols > 1
     if src_is_2d and cond_is_2d:
@@ -185,8 +185,8 @@ cdef _where_column_impl(FastDataFrame self, str col_name, str cond_col, object o
     raise TypeError(f"where not supported for column type {self._type_name(src)}")
 
 cdef _mask_column_impl(FastDataFrame self, str col_name, str cond_col, object other):
-    cdef BaseColumn src = self.columns[col_name]
-    cdef BaseColumn cond = self.columns[cond_col]
+    cdef BaseColumn src = self._columns[col_name]
+    cdef BaseColumn cond = self._columns[cond_col]
     cdef bint src_is_2d = src.is_2d and src.num_cols > 1
     cdef bint cond_is_2d = cond.is_2d and cond.num_cols > 1
     if src_is_2d and cond_is_2d:
@@ -206,8 +206,8 @@ cdef _where_row_impl(FastDataFrame self, IntColumn mask, object fill):
     result.index = self.index
     cdef str name
     cdef BaseColumn col
-    for name, col in self.columns.items():
-        result.columns[name] = col.where_mask(mask, fill)
+    for name, col in self._columns.items():
+        result._columns[name] = col.where_mask(mask, fill)
     return result
 
 cdef _isnull_impl(FastDataFrame self):
@@ -226,7 +226,7 @@ cdef _isnull_impl(FastDataFrame self):
     cdef Py_ssize_t* offset_ptr
     cdef CategoryColumn cat_col
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         is2d, c_out, _ = _col_shape_probe(col)
         total = col.length
 
@@ -255,7 +255,7 @@ cdef _isnull_impl(FastDataFrame self):
                 out_ptr[i] = 1 if cat_col._resolve(i) == '' else 0
         else:
             memset(out_ptr, 0, total * sizeof(int))
-        result.columns[name] = new_col
+        result._columns[name] = new_col
     return result
 
 cdef _notna_impl(FastDataFrame self):
@@ -266,7 +266,7 @@ cdef _notna_impl(FastDataFrame self):
     cdef IntColumn mask_col
     cdef int* p
     cdef Py_ssize_t i
-    for name, col in result.columns.items():
+    for name, col in result._columns.items():
         mask_col = <IntColumn>col
         p = mask_col.data_c
         with nogil:
@@ -290,10 +290,10 @@ cdef _fillna_impl(FastDataFrame self, object value, col_names):
     cdef str s_val
 
     if col_names is None:
-        col_names = list(self.columns.keys())
+        col_names = list(self._columns.keys())
     for name in col_names:
-        if name not in result.columns: continue
-        col = result.columns[name]
+        if name not in result._columns: continue
+        col = result._columns[name]
         total = col.length
         is2d, cols, rows = _col_shape_probe(col)
 
@@ -338,7 +338,7 @@ cdef _dropna_impl(FastDataFrame self):
     cdef Py_ssize_t* offsets_ptr
 
     try:
-        for name, col in self.columns.items():
+        for name, col in self._columns.items():
             if col.dtype == TYPE_DOUBLE:
                 d_data = (<DoubleColumn>col).data_c
                 _probe_shape(col, &is2d, &c_out, &r_out)
@@ -399,8 +399,8 @@ cdef _head_impl(FastDataFrame self, Py_ssize_t n):
     n = min(n, self.df_length)
     if n == 0:
         result = FastDataFrame()
-        for name, col in self.columns.items():
-            result.columns[name] = col.__class__()
+        for name, col in self._columns.items():
+            result._columns[name] = col.__class__()
         return result
 
     cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
@@ -500,13 +500,13 @@ cdef _select_dtypes_impl(FastDataFrame self, list include_types, list exclude_ty
                            TYPE_UCS2: 'ucs2', TYPE_DATE: 'date',
                            TYPE_BOOL: 'bool', TYPE_CATEGORY: 'category',
                            TYPE_DATETIME: 'datetime', TYPE_TIME: 'time'}
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         tn = dtype_map.get(col.dtype, 'unknown')
         if include_types is not None and tn not in include_types:
             continue
         if exclude_types is not None and tn in exclude_types:
             continue
-        result.columns[name] = col
+        result._columns[name] = col
     result.df_length = self.df_length
     result.index = self.index
     return result
@@ -514,12 +514,12 @@ cdef _select_dtypes_impl(FastDataFrame self, list include_types, list exclude_ty
 cdef _astype_impl(FastDataFrame self, dict dtype_dict):
     cdef FastDataFrame result = FastDataFrame()
     cdef str col_name, target
-    for col_name, col_obj in self.columns.items():
+    for col_name, col_obj in self._columns.items():
         if col_name in dtype_dict:
             target = dtype_dict[col_name]
-            result.columns[col_name] = col_obj.astype(target)
+            result._columns[col_name] = col_obj.astype(target)
         else:
-            result.columns[col_name] = col_obj.copy() if hasattr(col_obj, 'copy') else col_obj
+            result._columns[col_name] = col_obj.copy() if hasattr(col_obj, 'copy') else col_obj
     result.df_length = self.df_length
     if self.index is not None:
         if self.index.index_type == INDEX_RANGE:
@@ -536,9 +536,9 @@ cdef _resolve_cols_impl(FastDataFrame self, tuple col_names):
     cdef list cols = []
     cdef str name
     for name in col_names:
-        if name not in self.columns:
+        if name not in self._columns:
             raise KeyError(f"Column '{name}' not found")
-        cols.append(self.columns[name])
+        cols.append(self._columns[name])
     return cols
 
 cdef _add_impl(FastDataFrame self, tuple col_names):
@@ -578,7 +578,7 @@ cdef _div_impl(FastDataFrame self, tuple col_names):
     return result
 
 cdef _reshape_impl(FastDataFrame self, Py_ssize_t rows, Py_ssize_t cols):
-    cdef Py_ssize_t num_cols = len(self.columns)
+    cdef Py_ssize_t num_cols = len(self._columns)
     cdef Py_ssize_t total_elements = self.df_length * num_cols
     if total_elements != rows * cols:
         raise ValueError(f"Cannot reshape {total_elements} elements into ({rows}, {cols})")
@@ -588,7 +588,7 @@ cdef _reshape_impl(FastDataFrame self, Py_ssize_t rows, Py_ssize_t cols):
     result.index = RangeIndex(0, rows)
     cdef list col_names = [chr(65 + i) if i < 26 else f"C{i}" for i in range(cols)]
 
-    cdef list all_cols_keys = [_col_to_keys(cell) for cell in self.columns.values()]
+    cdef list all_cols_keys = [_col_to_keys(cell) for cell in self._columns.values()]
     cdef list all_cells = [None] * total_elements
     cdef Py_ssize_t i, j, ptr = 0
 
@@ -625,16 +625,16 @@ cdef _reshape_impl(FastDataFrame self, Py_ssize_t rows, Py_ssize_t cols):
             col.length = rows
             for r_idx in range(rows):
                 col.data_c[r_idx] = <double>all_cells[r_idx * cols + c_idx]
-        result.columns[col_names[c_idx]] = col
+        result._columns[col_names[c_idx]] = col
 
     return result
 
 cdef _T_impl(FastDataFrame self):
     cdef Py_ssize_t rows = self.df_length
-    cdef Py_ssize_t cols = len(self.columns)
+    cdef Py_ssize_t cols = len(self._columns)
     if rows == 0 or cols == 0: return FastDataFrame()
 
-    cdef list col_names = list(self.columns.keys())
+    cdef list col_names = list(self._columns.keys())
     cdef FastDataFrame result = FastDataFrame()
     result.df_length = cols
     result.index = RangeIndex(0, cols)
@@ -645,7 +645,7 @@ cdef _T_impl(FastDataFrame self):
     cdef BaseColumn sub
 
     for j in range(cols):
-        _probe_shape(self.columns[col_names[j]], &is2d_j, &c_j, &i)
+        _probe_shape(self._columns[col_names[j]], &is2d_j, &c_j, &i)
         if c_j > c_out: c_out = c_j
 
     cdef double** d_ptrs = <double**>malloc(cols * sizeof(double*))
@@ -653,7 +653,7 @@ cdef _T_impl(FastDataFrame self):
     cdef Py_ssize_t* c_arr = <Py_ssize_t*>malloc(cols * sizeof(Py_ssize_t))
 
     for j in range(cols):
-        sub = self.columns[col_names[j]]
+        sub = self._columns[col_names[j]]
         _probe_shape(sub, &is2d_j, &c_j, &i)
         c_arr[j] = c_j
         d_ptrs[j] = (<DoubleColumn>sub).data_c if sub.dtype == TYPE_DOUBLE else NULL
@@ -687,7 +687,7 @@ cdef _T_impl(FastDataFrame self):
                         elif i_ptrs[j] != NULL: new_col.data_c[j] = <double>i_ptrs[j][i]
                         else: new_col.data_c[j] = NAN
 
-            result.columns[col_names[i] if i < cols else str(i)] = new_col
+            result._columns[col_names[i] if i < cols else str(i)] = new_col
     finally:
         free(d_ptrs)
         free(i_ptrs)
@@ -701,11 +701,11 @@ cdef _abs_impl(FastDataFrame self):
     result.index = self.index
     cdef str name
     cdef BaseColumn col
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
-            result.columns[name] = col.abs()
+            result._columns[name] = col.abs()
         else:
-            result.columns[name] = col.copy()
+            result._columns[name] = col.copy()
     return result
 
 cdef _round_impl(FastDataFrame self, int decimals):
@@ -714,11 +714,11 @@ cdef _round_impl(FastDataFrame self, int decimals):
     result.index = self.index
     cdef str name
     cdef BaseColumn col
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         if col.dtype == TYPE_DOUBLE:
-            result.columns[name] = col.round(decimals)
+            result._columns[name] = col.round(decimals)
         else:
-            result.columns[name] = col.copy()
+            result._columns[name] = col.copy()
     return result
 
 cdef _all_impl(FastDataFrame self):
@@ -733,7 +733,7 @@ cdef _all_impl(FastDataFrame self):
     cdef unsigned char* bool_ptr
     cdef bint bad = False
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         if bad: break
         total = col.length
         if col.dtype == TYPE_INT:
@@ -771,7 +771,7 @@ cdef _any_impl(FastDataFrame self):
     cdef unsigned char* bool_ptr
     cdef bint found = False
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         if found: break
         total = col.length
         if col.dtype == TYPE_INT:
@@ -812,7 +812,7 @@ cdef _pct_change_impl(FastDataFrame self, int periods=1):
     cdef double* d_ptr
     cdef double* d_out
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         _probe_shape(col, &is2d, &c_out, &r_out)
         total = col.length
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
@@ -851,9 +851,9 @@ cdef _pct_change_impl(FastDataFrame self, int periods=1):
                                 curr_val = <double>i_ptr[base + i] if i_ptr != NULL else d_ptr[base + i]
                                 d_out[base + i] = (curr_val - prev_val) / fabs(prev_val) if prev_val != 0.0 else NAN
 
-            result.columns[name] = dbl_col
+            result._columns[name] = dbl_col
         else:
-            result.columns[name] = col.copy()
+            result._columns[name] = col.copy()
 
     return result
 
@@ -869,7 +869,7 @@ cdef _replace_impl(FastDataFrame self, object to_replace, object value):
     cdef double* d_ptr
     cdef UCS2Column new_col
 
-    for name, col in result.columns.items():
+    for name, col in result._columns.items():
         total = col.length
         if col.dtype == TYPE_INT and isinstance(to_replace, (int, float)) and isinstance(value, (int, float)):
             i_target = <int>to_replace
@@ -898,7 +898,7 @@ cdef _replace_impl(FastDataFrame self, object to_replace, object value):
                     new_col.append(str(value))
                 else:
                     new_col.append(str(col[i]))
-            result.columns[name] = new_col
+            result._columns[name] = new_col
     return result
 
 cdef _ffill_impl(FastDataFrame self):
@@ -907,11 +907,11 @@ cdef _ffill_impl(FastDataFrame self):
     result.index = self.index
     cdef str name
     cdef BaseColumn col
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         if col.dtype == TYPE_DOUBLE:
-            result.columns[name] = col.ffill()
+            result._columns[name] = col.ffill()
         else:
-            result.columns[name] = col.copy()
+            result._columns[name] = col.copy()
     return result
 
 cdef _bfill_impl(FastDataFrame self):
@@ -920,19 +920,19 @@ cdef _bfill_impl(FastDataFrame self):
     result.index = self.index
     cdef str name
     cdef BaseColumn col
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         if col.dtype == TYPE_DOUBLE:
-            result.columns[name] = col.bfill()
+            result._columns[name] = col.bfill()
         else:
-            result.columns[name] = col.copy()
+            result._columns[name] = col.copy()
     return result
 
 cdef _pivot_impl(FastDataFrame self, str index, str columns, str values):
     cdef Py_ssize_t n = self.df_length
 
-    cdef list idx_keys = _col_to_keys(self.columns[index])
-    cdef list col_keys = _col_to_keys(self.columns[columns])
-    cdef list val_keys = _col_to_keys(self.columns[values])
+    cdef list idx_keys = _col_to_keys(self._columns[index])
+    cdef list col_keys = _col_to_keys(self._columns[columns])
+    cdef list val_keys = _col_to_keys(self._columns[values])
 
     cdef dict pivot_vals = {}
     cdef dict col_dict = {}
@@ -965,10 +965,10 @@ cdef _pivot_impl(FastDataFrame self, str index, str columns, str values):
     idx_result = UCS2Column(max(len(unique_idx), 1))
     for iv in unique_idx:
         idx_result.append(str(iv))
-    result.columns[index] = idx_result
+    result._columns[index] = idx_result
 
     u = len(unique_idx)
-    _probe_shape(self.columns[values], &is2d_val, &c_val, &j)
+    _probe_shape(self._columns[values], &is2d_val, &c_val, &j)
 
     if is2d_val and c_val > 1:
         for cv in unique_cols:
@@ -980,20 +980,20 @@ cdef _pivot_impl(FastDataFrame self, str index, str columns, str values):
                     for j in range(c_val): val_result.data_c[j * u + ii] = NAN
                 else:
                     for j in range(c_val): val_result.data_c[j * u + ii] = <double>got[j]
-            result.columns[str(cv)] = val_result
+            result._columns[str(cv)] = val_result
     else:
         for cv in unique_cols:
             val_result = DoubleColumn(max(u, 1))
             val_result.length = u
             for ii in range(u):
                 val_result.data_c[ii] = <double>pivot_vals[unique_idx[ii]].get(cv, NAN)
-            result.columns[str(cv)] = val_result
+            result._columns[str(cv)] = val_result
 
     return result
 
 cdef _melt_impl(FastDataFrame self, list id_vars=None, list value_vars=None, str var_name='variable', str value_name='value'):
     cdef Py_ssize_t n = self.df_length
-    cdef list all_cols = list(self.columns.keys())
+    cdef list all_cols = list(self._columns.keys())
     if id_vars is None: id_vars = []
     if value_vars is None: value_vars = [c for c in all_cols if c not in id_vars]
 
@@ -1010,22 +1010,22 @@ cdef _melt_impl(FastDataFrame self, list id_vars=None, list value_vars=None, str
     result.index = RangeIndex(0, total)
 
     for iv in id_vars:
-        src_keys = _col_to_keys(self.columns[iv])
+        src_keys = _col_to_keys(self._columns[iv])
         new_col = UCS2Column(max(total, 1))
         for vi in range(len(value_vars)):
             for i in range(n):
                 new_col.append(str(src_keys[i]))
-        result.columns[iv] = new_col
+        result._columns[iv] = new_col
 
     new_var = UCS2Column(max(total, 1))
     for vi in range(len(value_vars)):
         for i in range(n):
             new_var.append(str(value_vars[vi]))
-    result.columns[var_name] = new_var
+    result._columns[var_name] = new_var
 
     c_out = 1
     for vn in value_vars:
-        _probe_shape(self.columns[vn], &is2d, &cc, &i)
+        _probe_shape(self._columns[vn], &is2d, &cc, &i)
         if is2d and cc > c_out: c_out = cc
 
     new_val = DoubleColumn(max(total * c_out, 1), cols=c_out)
@@ -1038,7 +1038,7 @@ cdef _melt_impl(FastDataFrame self, list id_vars=None, list value_vars=None, str
             new_val.data_c[i] = NAN
 
     for vi, vn in enumerate(value_vars):
-        src_val = self.columns[vn]
+        src_val = self._columns[vn]
         _probe_shape(src_val, &is2d, &cc, &i)
         if src_val.dtype == TYPE_DOUBLE or src_val.dtype == TYPE_INT:
             d_ptr = (<DoubleColumn>src_val).data_c if src_val.dtype == TYPE_DOUBLE else NULL
@@ -1058,11 +1058,11 @@ cdef _melt_impl(FastDataFrame self, list id_vars=None, list value_vars=None, str
             for i in range(n):
                 new_val.data_c[vi * n + i] = NAN
 
-    result.columns[value_name] = new_val
+    result._columns[value_name] = new_val
     return result
 
 cdef _expanding_sum_impl(FastDataFrame self, str col_name):
-    cdef BaseColumn col = self.columns[col_name]
+    cdef BaseColumn col = self._columns[col_name]
     cdef bint is2d
     cdef Py_ssize_t c_out, r_out, total, j, base, i
     _probe_shape(col, &is2d, &c_out, &r_out)
@@ -1104,7 +1104,7 @@ cdef _expanding_sum_impl(FastDataFrame self, str col_name):
     return res
 
 cdef _ewm_mean_impl(FastDataFrame self, str col_name, double span):
-    cdef BaseColumn col = self.columns[col_name]
+    cdef BaseColumn col = self._columns[col_name]
     cdef bint is2d
     cdef Py_ssize_t c_out, r_out, total, j, base, i
     _probe_shape(col, &is2d, &c_out, &r_out)
@@ -1161,11 +1161,11 @@ cdef _explode_impl(FastDataFrame self, str col_name):
     cdef BaseColumn scol
     cdef object src_val
 
-    if col_name not in self.columns:
+    if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
-    src = self.columns[col_name]
+    src = self._columns[col_name]
     scol = src if isinstance(src, BaseColumn) else None
-    cdef list col_names = list(self.columns.keys())
+    cdef list col_names = list(self._columns.keys())
 
     cdef list counts = [0] * n
     total = 0
@@ -1193,20 +1193,20 @@ cdef _explode_impl(FastDataFrame self, str col_name):
         else:
             explode_vals[k] = src_val
             k += 1
-    result.columns[col_name] = _column_from_list_impl(result, col_name, explode_vals)
+    result._columns[col_name] = _column_from_list_impl(result, col_name, explode_vals)
 
     # 其余列：按行重复 counts[i] 次
     for name in col_names:
         if name == col_name:
             continue
-        other = self.columns[name]
+        other = self._columns[name]
         ocol = other if isinstance(other, BaseColumn) else None
         flat = []
         for i in range(n):
             v = ocol[i] if ocol is not None else other[i]
             for _ in range(counts[i]):
                 flat.append(v)
-        result.columns[name] = _column_from_list_impl(result, name, flat)
+        result._columns[name] = _column_from_list_impl(result, name, flat)
     return result
 
 
@@ -1224,7 +1224,7 @@ cdef _stack_impl(FastDataFrame self):
     cdef int* p0
     cdef int* p1
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         _, c, r = _col_shape_probe(col)
         if c > 1:
             has2d = True
@@ -1251,7 +1251,7 @@ cdef _stack_impl(FastDataFrame self):
                               [codes0, codes1],
                               [None, None])
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         cc = (<int>col.num_cols) if (col.is_2d and col.num_cols > 1) else 1
         if cc > 1:
             # 2D 列：列主序天然即展平顺序
@@ -1265,7 +1265,7 @@ cdef _stack_impl(FastDataFrame self):
                 base = j * rows
                 for i in range(rows):
                     flat[base + i] = col[i]
-        result.columns[name] = _column_from_list_impl(result, name, flat)
+        result._columns[name] = _column_from_list_impl(result, name, flat)
     return result
 
 
@@ -1288,9 +1288,9 @@ cdef _unstack_impl(FastDataFrame self):
     result.df_length = rows_out
     result.index = RangeIndex(0, rows_out)
 
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         if col.is_2d and col.num_cols > 1:
             raise ValueError("unstack() requires 1D (flat) columns from stack()")
         flat = [col[i] for i in range(total)]
-        result.columns[name] = _column_from_2d_list_impl(flat, rows_out, cols_out)
+        result._columns[name] = _column_from_2d_list_impl(flat, rows_out, cols_out)
     return result

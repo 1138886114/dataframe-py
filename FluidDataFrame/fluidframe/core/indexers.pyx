@@ -198,7 +198,7 @@ cdef class _LocIndexer:
             raise IndexError("Cannot setitem on empty DataFrame")
 
         cdef Py_ssize_t idx, i
-        cdef list col_names = list(self.frame.columns.keys())
+        cdef list col_names = list(self.frame._columns.keys())
         cdef Py_ssize_t n_cols = len(col_names)
         cdef str col_name
         cdef BaseColumn col
@@ -214,13 +214,13 @@ cdef class _LocIndexer:
                     raise ValueError(f"Length of values {len(values)} != number of columns {n_cols}")
                 for i in range(n_cols):
                     col_name = col_names[i]
-                    col = self.frame.columns[col_name]
+                    col = self.frame._columns[col_name]
                     _fast_set_cell(col, col.dtype, idx, values[i])
             elif isinstance(values, dict):
                 for col_name, val in values.items():
-                    if col_name not in self.frame.columns:
+                    if col_name not in self.frame._columns:
                         raise KeyError(f"Column '{col_name}' not found")
-                    col = self.frame.columns[col_name]
+                    col = self.frame._columns[col_name]
                     _fast_set_cell(col, col.dtype, idx, val)
             else:
                 raise TypeError(f"Cannot set row from {type(values)}")
@@ -245,14 +245,14 @@ cdef class _LocIndexer:
                 result.df_length = row_result.df_length
                 result.index = row_result.index
                 for col_name in col_key:
-                    if col_name not in row_result.columns:
+                    if col_name not in row_result._columns:
                         raise KeyError(f"Column '{col_name}' not found")
-                    result.columns[col_name] = row_result.columns[col_name]
+                    result._columns[col_name] = row_result._columns[col_name]
                 return result
             elif isinstance(col_key, str):
-                if col_key not in row_result.columns:
+                if col_key not in row_result._columns:
                     raise KeyError(f"Column '{col_key}' not found")
-                return row_result.columns[col_key]
+                return row_result._columns[col_key]
             raise TypeError(f"Unsupported column key type: {type(col_key).__name__}")
 
         return self._get_rows(key)
@@ -299,9 +299,9 @@ cdef class _LocIndexer:
         if keep_count == 0:
             result = FastDataFrame()
             result.df_length = 0
-            for col_name, col_obj in self.frame.columns.items():
-                result.columns[col_name] = col_obj.copy()
-                result.columns[col_name].length = 0
+            for col_name, col_obj in self.frame._columns.items():
+                result._columns[col_name] = col_obj.copy()
+                result._columns[col_name].length = 0
             return result
 
         cdef Py_ssize_t* keep_idx = <Py_ssize_t*>aligned_malloc(keep_count * sizeof(Py_ssize_t))
@@ -331,9 +331,9 @@ cdef class _LocIndexer:
         if keep_count == 0:
             result = FastDataFrame()
             result.df_length = 0
-            for col_name, col_obj in self.frame.columns.items():
-                result.columns[col_name] = col_obj.copy()
-                result.columns[col_name].length = 0
+            for col_name, col_obj in self.frame._columns.items():
+                result._columns[col_name] = col_obj.copy()
+                result._columns[col_name].length = 0
             return result
 
         cdef Py_ssize_t* keep_idx = <Py_ssize_t*>aligned_malloc(keep_count * sizeof(Py_ssize_t))

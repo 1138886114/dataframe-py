@@ -138,7 +138,7 @@ def from_pickle(filename, bint allow_raw_pickle=False):
                 col = TimeColumn()
                 for v in values:
                     col.append(v)
-        df.columns[col_name] = col
+        df._columns[col_name] = col
     return df
 
 
@@ -162,23 +162,23 @@ def read_csv(filename, dict schema, sep=','):
             name = headers[j]
             dtype = parsed.get(name, str)
             if dtype == TYPE_INT:
-                df.columns[name] = IntColumn()
+                df._columns[name] = IntColumn()
             elif dtype == TYPE_DOUBLE:
-                df.columns[name] = DoubleColumn()
+                df._columns[name] = DoubleColumn()
             elif dtype == TYPE_CHAR256:
-                df.columns[name] = AsciiColumn()
+                df._columns[name] = AsciiColumn()
             elif dtype == TYPE_DATE:
-                df.columns[name] = DateColumn()
+                df._columns[name] = DateColumn()
             elif dtype == TYPE_BOOL:
-                df.columns[name] = BoolColumn()
+                df._columns[name] = BoolColumn()
             elif dtype == TYPE_CATEGORY:
-                df.columns[name] = CategoryColumn()
+                df._columns[name] = CategoryColumn()
             elif dtype == TYPE_DATETIME:
-                df.columns[name] = DateTimeColumn()
+                df._columns[name] = DateTimeColumn()
             elif dtype == TYPE_TIME:
-                df.columns[name] = TimeColumn()
+                df._columns[name] = TimeColumn()
             else:
-                df.columns[name] = UCS2Column()
+                df._columns[name] = UCS2Column()
         return df
 
     for j, name in enumerate(headers):
@@ -222,7 +222,7 @@ def read_csv(filename, dict schema, sep=','):
             col = UCS2Column(n_rows)
             for i in range(n_rows):
                 col.append(rows[i][j])
-        df.columns[name] = col
+        df._columns[name] = col
     df.df_length = n_rows
     return df
 
@@ -255,36 +255,36 @@ def read_json(filename, dict schema):
             col.length = n_rows
             for i in range(n_rows):
                 col.data_c[i] = <int>records[i].get(name, 0)
-            df.columns[name] = col
+            df._columns[name] = col
         elif py_type == TYPE_DOUBLE:
             col_d = DoubleColumn(max(n_rows, 1))
             col_d.length = n_rows
             for i in range(n_rows):
                 val = records[i].get(name)
                 col_d.data_c[i] = <double>val if val is not None else NAN
-            df.columns[name] = col_d
+            df._columns[name] = col_d
         elif py_type == TYPE_CHAR256:
             col_a = AsciiColumn(max(n_rows, 1))
             for i in range(n_rows):
                 col_a.append(str(records[i].get(name, '')))
-            df.columns[name] = col_a
+            df._columns[name] = col_a
         elif py_type == TYPE_DATE:
             col_dt = DateColumn(max(n_rows, 1))
             col_dt.length = n_rows
             for i in range(n_rows):
                 col_dt.data_c[i] = <int>records[i].get(name, 0)
-            df.columns[name] = col_dt
+            df._columns[name] = col_dt
         elif py_type == TYPE_BOOL:
             col_b = BoolColumn(max(n_rows, 1))
             col_b.length = n_rows
             for i in range(n_rows):
                 col_b.data_c[i] = 1 if records[i].get(name, False) else 0
-            df.columns[name] = col_b
+            df._columns[name] = col_b
         else:
             col_u = UCS2Column(max(n_rows, 1))
             for i in range(n_rows):
                 col_u.append(str(records[i].get(name, '')))
-            df.columns[name] = col_u
+            df._columns[name] = col_u
 
     df.df_length = n_rows
     df.index = RangeIndex(0, n_rows)
@@ -316,24 +316,24 @@ def concat_outer(list dfs):
     if not dfs: return FastDataFrame()
     all_cols = set()
     for df in dfs:
-        all_cols.update(df.columns.keys())
+        all_cols.update(df._columns.keys())
     all_cols = list(all_cols)
 
     result = FastDataFrame()
     col_refs = {}
     for name in all_cols:
         for df in dfs:
-            if name in df.columns:
-                col_refs[name] = df.columns[name]
+            if name in df._columns:
+                col_refs[name] = df._columns[name]
                 break
 
     for name in all_cols:
-        result.columns[name] = _empty_col_for(col_refs[name])
+        result._columns[name] = _empty_col_for(col_refs[name])
 
     for df in dfs:
         for name in all_cols:
-            if name in df.columns:
-                result.columns[name].concat(df.columns[name])
+            if name in df._columns:
+                result._columns[name].concat(df._columns[name])
             else:
                 ref = col_refs[name]
                 is2d, c, r = _col_shape_probe(ref)
@@ -370,7 +370,7 @@ def concat_outer(list dfs):
                     for _ in range(total): fill_col.append(None)
                 if is2d and c > 1:
                     _set_2d_shape(fill_col, c)
-                result.columns[name].concat(fill_col)
+                result._columns[name].concat(fill_col)
 
         result.df_length += df.df_length
 
@@ -382,18 +382,18 @@ def concat_inner(list dfs):
     """纵向拼接多个 DataFrame（内连接：仅取所有列的交集），重置索引。
     2D 列：使用列级 concat 保持二维维度结构不变。"""
     if not dfs: return FastDataFrame()
-    common = set(dfs[0].columns.keys())
+    common = set(dfs[0]._columns.keys())
     for df in dfs[1:]:
-        common &= set(df.columns.keys())
+        common &= set(df._columns.keys())
     common = list(common)
 
     result = FastDataFrame()
     for name in common:
-        result.columns[name] = _empty_col_for(dfs[0].columns[name])
+        result._columns[name] = _empty_col_for(dfs[0]._columns[name])
 
     for df in dfs:
         for name in common:
-            result.columns[name].concat(df.columns[name])
+            result._columns[name].concat(df._columns[name])
         result.df_length += df.df_length
 
     result.reset_index()

@@ -212,7 +212,7 @@ cdef _ByColPtrs _extract_by_col_ptrs(FastDataFrame df, list by_cols):
     cdef Py_ssize_t c_col, r_col
     for idx in range(n):
         col_name = by_cols[idx]
-        col = df.columns[col_name]
+        col = df._columns[col_name]
         ptrs.types[idx] = col.dtype
         ptrs.offsets[idx] = NULL
         # 2D 列（is_2d 且 cols>1）：按完整行向量参与分组；其余列子列数=1
@@ -506,7 +506,7 @@ cdef inline double _gb_agg_double_sub(double* ptr, Py_ssize_t stride, int sub, P
     return NAN
 
 cdef DoubleColumn _gb_native_agg(FastDataFrame df, _GroupRows* gr, str col_name, str func):
-    cdef BaseColumn orig_col = df.columns[col_name]
+    cdef BaseColumn orig_col = df._columns[col_name]
     cdef bint is2d
     cdef Py_ssize_t c_col, r_col
     is2d, c_col, r_col = _col_shape_probe(orig_col)
@@ -579,7 +579,7 @@ cdef IntColumn _gb_native_count(_GroupRows* gr):
     return res_col
 
 cdef object _gb_extract_key_column(FastDataFrame df, _GroupRows* gr, str col_name):
-    cdef BaseColumn orig = df.columns[col_name]
+    cdef BaseColumn orig = df._columns[col_name]
     cdef int i
     cdef IntColumn res_int
     cdef DoubleColumn res_dbl
@@ -599,7 +599,7 @@ cdef object _gb_extract_key_column(FastDataFrame df, _GroupRows* gr, str col_nam
             fs[i] = gr.rows[i][0]
         tmp = df._take(fs, gr.count)
         os_aligned_free(fs)
-        return tmp.columns[col_name]
+        return tmp._columns[col_name]
 
     # 1D 的极速直拷路径
     if orig.dtype == TYPE_INT:
@@ -619,7 +619,7 @@ cdef IntColumn _gb_native_idx(FastDataFrame df, _GroupRows* gr, str col_name, bi
     # 2D 列取主子列（sub=0）比较：idxmax/idxmin 不确定向量级比较，沿用 _get_col_value_as_double 的 sub0 约定
     cdef IntColumn res_col = IntColumn(max(gr.count, 1))
     res_col.length = gr.count
-    cdef BaseColumn orig_col = df.columns[col_name]
+    cdef BaseColumn orig_col = df._columns[col_name]
     cdef int g_id
     cdef Py_ssize_t sz, row_idx, best_row, i
     cdef double best_val, cur_val
@@ -681,7 +681,7 @@ cdef object _gb_python_agg(FastDataFrame df, _GroupRows* gr, str col_name, str f
     cdef list results = []
     cdef int g_id, sub
     cdef Py_ssize_t sz, row_idx, i, out_n = gr.count
-    cdef BaseColumn orig_col = df.columns[col_name]
+    cdef BaseColumn orig_col = df._columns[col_name]
     cdef list vals
     cdef bint is2d
     cdef Py_ssize_t c_col, r_col
@@ -763,17 +763,17 @@ cdef class _DataFrameGroupByAccessor:
             res = FastDataFrame()
             res.df_length = self._gr.count
             if func_name in ('sum', 'mean', 'min', 'max', 'var', 'std'):
-                res.columns[col_name] = _gb_native_agg(self._df, self._gr, col_name, func_name)
+                res._columns[col_name] = _gb_native_agg(self._df, self._gr, col_name, func_name)
             else:
-                res.columns[col_name] = _gb_python_agg(self._df, self._gr, col_name, func_name)
+                res._columns[col_name] = _gb_python_agg(self._df, self._gr, col_name, func_name)
             for cn in self._by_cols:
-                res.columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
+                res._columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
             return res
         else:
             agg = {}
-            for cn in self._df.columns:
+            for cn in self._df._columns:
                 if cn not in self._by_cols:
-                    c = self._df.columns[cn]
+                    c = self._df._columns[cn]
                     if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
                         agg[cn] = func_name
             return self.agg(agg)
@@ -791,14 +791,14 @@ cdef class _DataFrameGroupByAccessor:
         cdef str col_name, func_name
         for col_name, func_name in agg_dict.items():
             if func_name in ('sum', 'mean', 'min', 'max', 'var', 'std'):
-                res.columns[col_name] = _gb_native_agg(self._df, self._gr, col_name, func_name)
+                res._columns[col_name] = _gb_native_agg(self._df, self._gr, col_name, func_name)
             elif func_name == 'count':
-                res.columns[col_name] = _gb_native_count(self._gr)
+                res._columns[col_name] = _gb_native_count(self._gr)
             else:
-                res.columns[col_name] = _gb_python_agg(self._df, self._gr, col_name, func_name)
+                res._columns[col_name] = _gb_python_agg(self._df, self._gr, col_name, func_name)
         for col_name in self._by_cols:
-            if col_name not in res.columns:
-                res.columns[col_name] = _gb_extract_key_column(self._df, self._gr, col_name)
+            if col_name not in res._columns:
+                res._columns[col_name] = _gb_extract_key_column(self._df, self._gr, col_name)
         return res
 
     @cython.binding(False)
@@ -814,9 +814,9 @@ cdef class _DataFrameGroupByAccessor:
         self._ensure_built()
         cdef FastDataFrame res = FastDataFrame()
         res.df_length = self._gr.count
-        res.columns['__count__'] = _gb_native_count(self._gr)
+        res._columns['__count__'] = _gb_native_count(self._gr)
         for cn in self._by_cols:
-            res.columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
+            res._columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
         return res
 
     @cython.binding(False)
@@ -882,15 +882,15 @@ cdef class _DataFrameGroupByAccessor:
         cdef str cn
         cdef BaseColumn c
         if col_name is not None:
-            res.columns[col_name] = _gb_native_idx(self._df, self._gr, col_name, True)
+            res._columns[col_name] = _gb_native_idx(self._df, self._gr, col_name, True)
         else:
-            for cn in self._df.columns:
+            for cn in self._df._columns:
                 if cn not in self._by_cols:
-                    c = self._df.columns[cn]
+                    c = self._df._columns[cn]
                     if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        res.columns[cn] = _gb_native_idx(self._df, self._gr, cn, True)
+                        res._columns[cn] = _gb_native_idx(self._df, self._gr, cn, True)
         for cn in self._by_cols:
-            res.columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
+            res._columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
         return res
 
     @cython.binding(False)
@@ -901,15 +901,15 @@ cdef class _DataFrameGroupByAccessor:
         cdef str cn
         cdef BaseColumn c
         if col_name is not None:
-            res.columns[col_name] = _gb_native_idx(self._df, self._gr, col_name, False)
+            res._columns[col_name] = _gb_native_idx(self._df, self._gr, col_name, False)
         else:
-            for cn in self._df.columns:
+            for cn in self._df._columns:
                 if cn not in self._by_cols:
-                    c = self._df.columns[cn]
+                    c = self._df._columns[cn]
                     if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        res.columns[cn] = _gb_native_idx(self._df, self._gr, cn, False)
+                        res._columns[cn] = _gb_native_idx(self._df, self._gr, cn, False)
         for cn in self._by_cols:
-            res.columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
+            res._columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
         return res
 
     @cython.binding(False)
@@ -924,7 +924,7 @@ cdef class _DataFrameGroupByAccessor:
         cdef list col_names = []
         cdef dict col_values = {}
 
-        for cn in self._df.columns:
+        for cn in self._df._columns:
             col_names.append(cn)
             col_values[cn] = [None] * n
 
@@ -941,13 +941,13 @@ cdef class _DataFrameGroupByAccessor:
                 sub_df = self._df._take(indices_c, sz)
                 transformed = func(sub_df)
                 if isinstance(transformed, FastDataFrame):
-                    for cn in transformed.columns:
+                    for cn in transformed._columns:
                         if cn not in col_values:
                             col_names.append(cn)
                             col_values[cn] = [None] * n
                     for cn in col_names:
-                        if cn in transformed.columns:
-                            src_col = transformed.columns[cn]
+                        if cn in transformed._columns:
+                            src_col = transformed._columns[cn]
                             for i in range(sz):
                                 row_idx = self._gr.rows[g_id][i]
                                 col_values[cn][row_idx] = src_col[i]
@@ -958,7 +958,7 @@ cdef class _DataFrameGroupByAccessor:
             values = col_values[cn]
             nv = len(values)
             if nv == 0:
-                result.columns[cn] = IntColumn(0)
+                result._columns[cn] = IntColumn(0)
                 continue
             sample = None
             for vi in range(nv):
@@ -970,30 +970,30 @@ cdef class _DataFrameGroupByAccessor:
                 dbl.length = nv
                 for vi in range(nv):
                     dbl.data_c[vi] = NAN
-                result.columns[cn] = dbl
+                result._columns[cn] = dbl
             elif isinstance(sample, bool):
                 bc = BoolColumn(max(nv, 1))
                 bc.length = nv
                 for vi in range(nv):
                     bc.data_c[vi] = 1 if values[vi] else 0
-                result.columns[cn] = bc
+                result._columns[cn] = bc
             elif isinstance(sample, int):
                 ic = IntColumn(max(nv, 1))
                 ic.length = nv
                 for vi in range(nv):
                     ic.data_c[vi] = <int>(values[vi] if values[vi] is not None else 0)
-                result.columns[cn] = ic
+                result._columns[cn] = ic
             elif isinstance(sample, float):
                 dc = DoubleColumn(max(nv, 1))
                 dc.length = nv
                 for vi in range(nv):
                     dc.data_c[vi] = <double>values[vi] if values[vi] is not None else NAN
-                result.columns[cn] = dc
+                result._columns[cn] = dc
             elif isinstance(sample, str):
                 ac = AsciiColumn(max(nv, 1))
                 for vi in range(nv):
                     ac.append(str(values[vi] if values[vi] is not None else ''))
-                result.columns[cn] = ac
+                result._columns[cn] = ac
 
         return result
 

@@ -510,7 +510,7 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __init__(self, dict schema=None):
-        self.columns = {}
+        self._columns = {}
         self.df_length = 0
         self.index = RangeIndex(0, 0)
         self._metric_cache = None
@@ -525,23 +525,23 @@ cdef class FastDataFrame:
             parsed = _parse_schema(schema)
             for col_name, dtype in parsed.items():
                 if dtype == TYPE_INT:
-                    self.columns[col_name] = IntColumn()
+                    self._columns[col_name] = IntColumn()
                 elif dtype == TYPE_DOUBLE:
-                    self.columns[col_name] = DoubleColumn()
+                    self._columns[col_name] = DoubleColumn()
                 elif dtype == TYPE_CHAR256:
-                    self.columns[col_name] = AsciiColumn()
+                    self._columns[col_name] = AsciiColumn()
                 elif dtype == TYPE_UCS2:
-                    self.columns[col_name] = UCS2Column()
+                    self._columns[col_name] = UCS2Column()
                 elif dtype == TYPE_DATE:
-                    self.columns[col_name] = DateColumn()
+                    self._columns[col_name] = DateColumn()
                 elif dtype == TYPE_BOOL:
-                    self.columns[col_name] = BoolColumn()
+                    self._columns[col_name] = BoolColumn()
                 elif dtype == TYPE_CATEGORY:
-                    self.columns[col_name] = CategoryColumn()
+                    self._columns[col_name] = CategoryColumn()
                 elif dtype == TYPE_DATETIME:
-                    self.columns[col_name] = DateTimeColumn()
+                    self._columns[col_name] = DateTimeColumn()
                 elif dtype == TYPE_TIME:
-                    self.columns[col_name] = TimeColumn()
+                    self._columns[col_name] = TimeColumn()
             self._schema = parsed
             self._schema_keys = tuple(parsed.keys())
 
@@ -559,14 +559,14 @@ cdef class FastDataFrame:
         cdef FastDataFrame rhs = <FastDataFrame>other
         if self.df_length != rhs.df_length:
             return False
-        if set(self.columns.keys()) != set(rhs.columns.keys()):
+        if set(self._columns.keys()) != set(rhs._columns.keys()):
             return False
         cdef Py_ssize_t i, n = self.df_length
         cdef str name
         cdef BaseColumn col_l, col_r
-        for name in self.columns:
-            col_l = self.columns[name]
-            col_r = rhs.columns[name]
+        for name in self._columns:
+            col_l = self._columns[name]
+            col_r = rhs._columns[name]
             if col_l.dtype != col_r.dtype:
                 return False
             for i in range(n):
@@ -597,7 +597,7 @@ cdef class FastDataFrame:
             else:
                 other_cols[col_name] = dtype
 
-        self.columns = {}
+        self._columns = {}
         self._fixed_capacity = capacity
 
         cdef uint32_t c, j
@@ -611,9 +611,9 @@ cdef class FastDataFrame:
             blk_int.length = capacity * c
             self._2d_blocks.append(blk_int)
             for j, name in enumerate(names):
-                self.columns[name] = IntColumn.create_view(blk_int.data_c + j * capacity, 0, blk_int)
+                self._columns[name] = IntColumn.create_view(blk_int.data_c + j * capacity, 0, blk_int)
             for j, name in enumerate(names):
-                (<IntColumn>self.columns[name]).capacity = capacity
+                (<IntColumn>self._columns[name]).capacity = capacity
 
         if type_groups[TYPE_DOUBLE]:
             names = type_groups[TYPE_DOUBLE]
@@ -622,9 +622,9 @@ cdef class FastDataFrame:
             blk_dbl.length = capacity * c
             self._2d_blocks.append(blk_dbl)
             for j, name in enumerate(names):
-                self.columns[name] = DoubleColumn.create_view(blk_dbl.data_c + j * capacity, 0, blk_dbl)
+                self._columns[name] = DoubleColumn.create_view(blk_dbl.data_c + j * capacity, 0, blk_dbl)
             for j, name in enumerate(names):
-                (<DoubleColumn>self.columns[name]).capacity = capacity
+                (<DoubleColumn>self._columns[name]).capacity = capacity
 
         if type_groups[TYPE_DATE]:
             names = type_groups[TYPE_DATE]
@@ -633,9 +633,9 @@ cdef class FastDataFrame:
             blk_date.length = capacity * c
             self._2d_blocks.append(blk_date)
             for j, name in enumerate(names):
-                self.columns[name] = DateColumn.create_view(<int32_t*>blk_date.data_c + j * capacity, 0, blk_date)
+                self._columns[name] = DateColumn.create_view(<int32_t*>blk_date.data_c + j * capacity, 0, blk_date)
             for j, name in enumerate(names):
-                (<DateColumn>self.columns[name]).capacity = capacity
+                (<DateColumn>self._columns[name]).capacity = capacity
 
         if type_groups[TYPE_DATETIME]:
             names = type_groups[TYPE_DATETIME]
@@ -644,9 +644,9 @@ cdef class FastDataFrame:
             blk_dt.length = capacity * c
             self._2d_blocks.append(blk_dt)
             for j, name in enumerate(names):
-                self.columns[name] = DateTimeColumn.create_view(<int64_t*>blk_dt.data_c + j * capacity, 0, blk_dt)
+                self._columns[name] = DateTimeColumn.create_view(<int64_t*>blk_dt.data_c + j * capacity, 0, blk_dt)
             for j, name in enumerate(names):
-                (<DateTimeColumn>self.columns[name]).capacity = capacity
+                (<DateTimeColumn>self._columns[name]).capacity = capacity
 
         if type_groups[TYPE_TIME]:
             names = type_groups[TYPE_TIME]
@@ -655,25 +655,25 @@ cdef class FastDataFrame:
             blk_time.length = capacity * c
             self._2d_blocks.append(blk_time)
             for j, name in enumerate(names):
-                self.columns[name] = TimeColumn.create_view(<int32_t*>blk_time.data_c + j * capacity, 0, blk_time)
+                self._columns[name] = TimeColumn.create_view(<int32_t*>blk_time.data_c + j * capacity, 0, blk_time)
             for j, name in enumerate(names):
-                (<TimeColumn>self.columns[name]).capacity = capacity
+                (<TimeColumn>self._columns[name]).capacity = capacity
 
         # 3. 处理离散的非等宽字段列
         for name, dtype in other_cols.items():
             if dtype == TYPE_CHAR256:
-                self.columns[name] = AsciiColumn(capacity)
+                self._columns[name] = AsciiColumn(capacity)
             elif dtype == TYPE_UCS2:
-                self.columns[name] = UCS2Column(capacity)
+                self._columns[name] = UCS2Column(capacity)
             elif dtype == TYPE_BOOL:
-                self.columns[name] = BoolColumn(capacity)
+                self._columns[name] = BoolColumn(capacity)
             elif dtype == TYPE_CATEGORY:
-                self.columns[name] = CategoryColumn(capacity)
+                self._columns[name] = CategoryColumn(capacity)
 
         # ------------------------------------------------------------
         # 4. 构建底层的 C Pointer Mapping Arrays（核心硬件加速）
         # ------------------------------------------------------------
-        self._ordered_cols = [self.columns[k] for k in self._schema_keys]
+        self._ordered_cols = [self._columns[k] for k in self._schema_keys]
         self._num_cols = <uint32_t>len(self._schema_keys)
 
         self._c_cols = <ColMeta*>malloc(self._num_cols * sizeof(ColMeta))
@@ -945,7 +945,7 @@ cdef class FastDataFrame:
                 names.append(self._truncate_str(str(n)))
                 types.append("[multi]")
 
-        for col_name, col in self.columns.items():
+        for col_name, col in self._columns.items():
             names.append(self._truncate_str(str(col_name)))
             types.append(f"[{self._fast_type_name(col.dtype)}]")
 
@@ -972,7 +972,7 @@ cdef class FastDataFrame:
                 code = (<IntColumn>mi.codes[j]).data_c[i]
                 row_strs.append(self._truncate_str(str(mi.levels[j][code])))
 
-        for col_name, col in self.columns.items():
+        for col_name, col in self._columns.items():
             row_strs.append(self._truncate_str(self._format_value_fast(col, i)))
 
         return row_strs
@@ -988,14 +988,14 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getattr__(self, name):
-        if name in self.columns: return self.columns[name]
+        if name in self._columns: return self._columns[name]
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __dir__(self):
         cdef list base_dir = dir(type(self))
-        return sorted(set(base_dir + list(self.columns.keys())))
+        return sorted(set(base_dir + list(self._columns.keys())))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1008,39 +1008,45 @@ cdef class FastDataFrame:
             result = FastDataFrame()
             result.df_length = self.df_length
             for col_name in name:
-                if col_name not in self.columns:
+                if col_name not in self._columns:
                     raise KeyError(f"Column '{col_name}' not found")
-                result.columns[col_name] = self.columns[col_name]
+                result._columns[col_name] = self._columns[col_name]
             if self.index is not None:
                 result.index = self.index
             return result
-        return self.columns[name]
+        return self._columns[name]
 
     def __iter__(self):
-        return iter(self.columns)
+        return iter(self._columns)
 
     def __contains__(self, name):
-        return name in self.columns
+        return name in self._columns
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __setitem__(self, name, value):
-        self.columns[name] = value
+        self._columns[name] = value
 
     @property
     def shape(self):
-        return (self.df_length, len(self.columns))
+        return (self.df_length, len(self._columns))
+
+    @property
+    def columns(self):
+        return list(self._columns.keys())
 
     @property
     def col_names(self):
-        return list(self.columns.keys())
+        import warnings
+        warnings.warn("col_names is deprecated, use columns instead", DeprecationWarning, stacklevel=2)
+        return list(self._columns.keys())
 
     @property
     def dtypes(self):
         cdef dict result = {}
         cdef str name
         cdef BaseColumn col
-        for name, col in self.columns.items():
+        for name, col in self._columns.items():
             result[name] = _TYPE_PYCLASSES.get(col.dtype, None)
         return result
 
@@ -1049,8 +1055,8 @@ cdef class FastDataFrame:
         result.df_length = n
         cdef str name
         cdef BaseColumn col
-        for name, col in self.columns.items():
-            result.columns[name] = self._reorder_column(col, indices, n, False)
+        for name, col in self._columns.items():
+            result._columns[name] = self._reorder_column(col, indices, n, False)
 
         if self.index is not None:
             result.index = self.index._take(indices, n)
@@ -1074,7 +1080,7 @@ cdef class FastDataFrame:
             by_cols = [by_cols]
         cdef list by_list = list(by_cols)
         for cn in by_list:
-            if cn not in self.columns:
+            if cn not in self._columns:
                 raise KeyError(f"Column '{cn}' not found")
         cdef _DataFrameGroupByAccessor acc = _make_groupby_accessor(self, by_list)
         self._groupby_cache = acc
@@ -1180,13 +1186,13 @@ cdef class FastDataFrame:
             col_names = [col_names]
         cdef str name
         for name in col_names:
-            if name not in self.columns:
+            if name not in self._columns:
                 raise KeyError(f"Column '{name}' not found")
         cdef FastDataFrame new_df = FastDataFrame()
         new_df.df_length = self.df_length
-        for col_name, col_obj in self.columns.items():
+        for col_name, col_obj in self._columns.items():
             if col_name not in col_names:
-                new_df.columns[col_name] = col_obj
+                new_df._columns[col_name] = col_obj
         if self.index is not None:
             new_df.index = self.index
         return new_df
@@ -1372,30 +1378,30 @@ cdef class FastDataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def argmax(self, str col_name):
-        return self.columns[col_name].idxmax()
+        return self._columns[col_name].idxmax()
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def argmin(self, str col_name):
-        return self.columns[col_name].idxmin()
+        return self._columns[col_name].idxmin()
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def unique(self, str col_name):
-        return self.columns[col_name].unique()
+        return self._columns[col_name].unique()
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def factorize(self, str col_name):
-        return self.columns[col_name].factorize()
+        return self._columns[col_name].factorize()
 
     @cython.binding(False)
     def isin(self, str col_name, set values):
-        return self.columns[col_name].isin(values)
+        return self._columns[col_name].isin(values)
 
     @cython.binding(False)
     def between(self, str col_name, low, high):
-        return self.columns[col_name].between(low, high)
+        return self._columns[col_name].between(low, high)
 
     # I/O
     def __str__(self):
@@ -1492,14 +1498,14 @@ cdef class FastDataFrame:
         return _argsort_by_impl(self, col_name, reverse)
 
     @cython.binding(False)
-    def sort_values(self, str col_name, bint reverse=False, bint inplace=False):
-        return _sort_values_impl(self, col_name, reverse, inplace)
+    def sort_values(self, str col_name, bint ascending=True, bint inplace=False):
+        return _sort_values_impl(self, col_name, not ascending, inplace)
 
     @cython.binding(False)
     def sort_index(self, bint ascending=True, bint inplace=False):
-        if 'index' not in self.columns:
+        if 'index' not in self._columns:
             raise KeyError("No 'index' column found. Call reset_index() first.")
-        return self.sort_values('index', reverse=not ascending, inplace=inplace)
+        return self.sort_values('index', ascending=ascending, inplace=inplace)
 
     @cython.binding(False)
     def diff(self, str col_name, int periods=1):

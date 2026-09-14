@@ -232,14 +232,14 @@ class TestLinalgZeroCopy:
         df = FastDataFrame()
         df.df_length = data.shape[0]
         df.index = RangeIndex(0, data.shape[0])
-        for name in names: df.columns[name] = cols[name]
+        for name in names: df._columns[name] = cols[name]
         return df
 
     def test_euclidean(self):
         data = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y'])
         d = df.linalg.euclidean_dist()
-        names = list(d.columns.keys())
+        names = d.columns
         check('d00', near(d[names[0]][0], 0.0))
         check('d01', near(d[names[1]][0], math.sqrt(2.0)))
 
@@ -247,35 +247,35 @@ class TestLinalgZeroCopy:
         data = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y'])
         d = df.linalg.manhattan_dist()
-        names = list(d.columns.keys())
+        names = d.columns
         check('d01', near(d[names[1]][0], 2.0))
 
     def test_cosine(self):
         data = np.array([[1.0, 0.0], [1.0, 1.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y'])
         d = df.linalg.cosine_dist()
-        names = list(d.columns.keys())
+        names = d.columns
         check('cos', near(d[names[1]][0], 1.0 - 1.0/math.sqrt(2.0)))
 
     def test_cosine_sim(self):
         data = np.array([[1.0, 0.0], [1.0, 1.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y'])
         d = df.linalg.cosine_similarity()
-        names = list(d.columns.keys())
+        names = d.columns
         check('sim', near(d[names[1]][0], 1.0/math.sqrt(2.0)))
 
     def test_hamming(self):
         data = np.array([[1.0, 2.0, 3.0], [1.0, 5.0, 3.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['A', 'B', 'C'])
         d = df.linalg.hamming_dist()
-        names = list(d.columns.keys())
+        names = d.columns
         check('hamm', near(d[names[1]][0], 1.0/3.0))
 
     def test_jaccard(self):
         data = np.array([[1.0, 0.0, 1.0], [1.0, 1.0, 0.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['A', 'B', 'C'])
         d = df.linalg.jaccard_sim()
-        names = list(d.columns.keys())
+        names = d.columns
         check('jacc', near(d[names[1]][0], 1.0/3.0))
 
     def test_norm(self):
@@ -289,14 +289,14 @@ class TestLinalgZeroCopy:
         df_a = self._build_df(a, ['A', 'B'])
         df_b = self._build_df(b, ['C', 'D'])
         r = df_a.linalg.dot(df_b)
-        names = list(r.columns.keys())
+        names = r.columns
         check('dot', near(r[names[0]][0], 19.0) and near(r[names[1]][1], 50.0))
 
     def test_transpose(self):
         data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float64, order='F')
         df = self._build_df(data, ['X', 'Y', 'Z'])
         r = df.linalg.transpose()
-        names = list(r.columns.keys())
+        names = r.columns
         check('T rows', r.df_length == 3)
         check('T val', near(r[names[0]][0], 1.0) and near(r[names[0]][2], 3.0))
 
@@ -307,9 +307,9 @@ class TestLinalgMixed:
         df.df_length = 2; df.index = RangeIndex(0, 2)
         ic = IntColumn(); ic.append(1); ic.append(0)
         dc = DoubleColumn(); dc.append(0.0); dc.append(1.0)
-        df.columns['I'] = ic; df.columns['D'] = dc
+        df._columns['I'] = ic; df._columns['D'] = dc
         d = df.linalg.euclidean_dist()
-        names = list(d.columns.keys())
+        names = d.columns
         check('mixed', near(d[names[1]][0], math.sqrt(2.0)))
 
     def test_non_contiguous(self):
@@ -318,9 +318,9 @@ class TestLinalgMixed:
         for name, vals in [('A', [1.0, 0.0, 1.0]), ('B', [0.0, 1.0, 1.0])]:
             col = DoubleColumn()
             for v in vals: col.append(v)
-            df.columns[name] = col
+            df._columns[name] = col
         d = df.linalg.euclidean_dist()
-        names = list(d.columns.keys())
+        names = d.columns
         check('non-contig', near(d[names[1]][0], math.sqrt(2.0)))
 
 

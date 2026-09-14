@@ -2,11 +2,11 @@
 # Included at module level in fastdataframe.pyx (after class definition)
 
 cdef _concat_impl(FastDataFrame self, FastDataFrame other):
-    if set(self.columns.keys()) != set(other.columns.keys()):
+    if set(self._columns.keys()) != set(other._columns.keys()):
         raise ValueError("Schema mismatch during concat")
     cdef FastDataFrame result = self.copy()
-    for col_name, col_obj in result.columns.items():
-        col_obj.concat(other.columns[col_name])
+    for col_name, col_obj in result._columns.items():
+        col_obj.concat(other._columns[col_name])
     result.df_length = self.df_length + other.df_length
     result.index = self.index._concat(other.index)
     return result
@@ -253,10 +253,10 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
     if on is not None:
         join_cols = on if isinstance(on, list) else [on]
         for jc in join_cols:
-            if jc not in self.columns: raise KeyError(f"Column '{jc}' not found in left DataFrame")
-            if jc not in other.columns: raise KeyError(f"Column '{jc}' not found in right DataFrame")
+            if jc not in self._columns: raise KeyError(f"Column '{jc}' not found in left DataFrame")
+            if jc not in other._columns: raise KeyError(f"Column '{jc}' not found in right DataFrame")
     else:
-        common = set(self.columns.keys()) & set(other.columns.keys())
+        common = set(self._columns.keys()) & set(other._columns.keys())
         if not common: raise ValueError("No common columns to merge on")
         join_cols = sorted(common)
 
@@ -266,8 +266,8 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
     # =========================================================
     # 批处理提取 Join 键 (O(1) 替代 O(N*C))
     # =========================================================
-    cdef list l_cols_data = [_col_to_keys(self.columns[jc]) for jc in join_cols]
-    cdef list r_cols_data = [_col_to_keys(other.columns[jc]) for jc in join_cols]
+    cdef list l_cols_data = [_col_to_keys(self._columns[jc]) for jc in join_cols]
+    cdef list r_cols_data = [_col_to_keys(other._columns[jc]) for jc in join_cols]
 
     cdef list left_keys = [None] * self.df_length
     cdef list right_keys = [None] * other.df_length
@@ -347,8 +347,8 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
     result.index = RangeIndex(0, result_len)
 
     cdef set join_set = set(join_cols)
-    cdef list left_col_names = [n for n in self.columns.keys() if n not in join_set]
-    cdef list right_col_names = [n for n in other.columns.keys() if n not in join_set]
+    cdef list left_col_names = [n for n in self._columns.keys() if n not in join_set]
+    cdef list right_col_names = [n for n in other._columns.keys() if n not in join_set]
 
     cdef Py_ssize_t* left_idx_c = <Py_ssize_t*>aligned_malloc(max(result_len, 1) * sizeof(Py_ssize_t))
     cdef Py_ssize_t* right_idx_c = <Py_ssize_t*>aligned_malloc(max(result_len, 1) * sizeof(Py_ssize_t))
@@ -368,23 +368,23 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
 
         # 2. 列数据聚合搬运
         for cn in join_cols:
-            src_col = self.columns[cn]
+            src_col = self._columns[cn]
             if src_col.dtype == TYPE_CHAR256 or src_col.dtype == TYPE_UCS2:
-                jc_col = _join_gather_str(src_col, other.columns[cn], left_idx_c, right_idx_c, result_len)
+                jc_col = _join_gather_str(src_col, other._columns[cn], left_idx_c, right_idx_c, result_len)
             else:
                 jc_col = _gather_or_reorder(self, src_col, left_idx_c, result_len)
-                _join_col_fixup(jc_col, other.columns[cn], left_idx_c, right_idx_c, result_len)
-            result.columns[cn] = jc_col
+                _join_col_fixup(jc_col, other._columns[cn], left_idx_c, right_idx_c, result_len)
+            result._columns[cn] = jc_col
 
         for cn in left_col_names:
-            src_col = self.columns[cn]
+            src_col = self._columns[cn]
             out_name = cn + '_x' if cn in right_col_names else cn
-            result.columns[out_name] = _gather_or_reorder(self, src_col, left_idx_c, result_len)
+            result._columns[out_name] = _gather_or_reorder(self, src_col, left_idx_c, result_len)
 
         for cn in right_col_names:
-            src_col = other.columns[cn]
-            out_name = cn + '_y' if cn in result.columns or cn in left_col_names else cn
-            result.columns[out_name] = _gather_or_reorder(other, src_col, right_idx_c, result_len)
+            src_col = other._columns[cn]
+            out_name = cn + '_y' if cn in result._columns or cn in left_col_names else cn
+            result._columns[out_name] = _gather_or_reorder(other, src_col, right_idx_c, result_len)
 
         return result
     finally:
@@ -399,7 +399,7 @@ cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
         return result
 
     if subset is None:
-        subset = list(self.columns.keys())
+        subset = list(self._columns.keys())
 
     cdef dict seen = {}
     cdef Py_ssize_t i
@@ -408,7 +408,7 @@ cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
 
     if keep == 'first':
         for i in range(n):
-            row_key = tuple(_col_row_key(self.columns[c], i) for c in subset)
+            row_key = tuple(_col_row_key(self._columns[c], i) for c in subset)
             if row_key in seen:
                 result.data_c[i] = 1
             else:
@@ -416,12 +416,12 @@ cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
                 result.data_c[i] = 0
     elif keep == 'last':
         for i in range(n):
-            row_key = tuple(_col_row_key(self.columns[c], i) for c in subset)
+            row_key = tuple(_col_row_key(self._columns[c], i) for c in subset)
             if row_key in seen:
                 result.data_c[seen[row_key]] = 1
             seen[row_key] = i
         for i in range(n):
-            row_key = tuple(_col_row_key(self.columns[c], i) for c in subset)
+            row_key = tuple(_col_row_key(self._columns[c], i) for c in subset)
             if seen[row_key] == i:
                 result.data_c[i] = 0
     else:
@@ -444,7 +444,7 @@ cdef _drop_duplicates_impl(FastDataFrame self, subset=None, str keep='first', bi
     cdef FastDataFrame result = self._take(keep_idx, keep_count)
     os_aligned_free(keep_idx)
     if inplace:
-        self.columns = result.columns
+        self._columns = result._columns
         self.df_length = result.df_length
         self.index = result.index
         return self

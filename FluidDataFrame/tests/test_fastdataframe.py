@@ -75,19 +75,19 @@ def test_init():
     check('empty shape', df.shape == (0, 0))
 
     df = FastDataFrame({'a': int})
-    check('schema int', isinstance(df.columns['a'], IntColumn))
+    check('schema int', isinstance(df._columns['a'], IntColumn))
 
     df = FastDataFrame({'a': float})
-    check('schema float', isinstance(df.columns['a'], DoubleColumn))
+    check('schema float', isinstance(df._columns['a'], DoubleColumn))
 
     df = FastDataFrame({'a': str})
-    check('schema str', isinstance(df.columns['a'], UCS2Column))
+    check('schema str', isinstance(df._columns['a'], UCS2Column))
 
     df = FastDataFrame({'a': Char256})
-    check('schema char256', isinstance(df.columns['a'], AsciiColumn))
+    check('schema char256', isinstance(df._columns['a'], AsciiColumn))
 
     df = FastDataFrame({'a': Date})
-    check('schema timestamp', isinstance(df.columns['a'], DateColumn))
+    check('schema timestamp', isinstance(df._columns['a'], DateColumn))
 
     df = FastDataFrame({'id': int, 'name': str, 'score': float})
     check('schema multiple', df.shape == (0, 3))
@@ -397,7 +397,7 @@ def test_contains():
 # =====================================================================
 def test_sort_int():
     df = make_complex_df()
-    s = df.sort_values('id', reverse=True)
+    s = df.sort_values('id', ascending=False)
     check('sort id desc', [s['id'][i] for i in range(10)] == [10, 9, 8, 7, 6, 5, 4, 3, 2, 1])
 
 def test_sort_float():
@@ -426,7 +426,7 @@ def test_sort_timestamp():
 
 def test_sort_index():
     df = make_complex_df()
-    s = df.sort_values('id', reverse=True)
+    s = df.sort_values('id', ascending=False)
     check('sort index desc', s.index.values() == [9, 8, 7, 6, 5, 4, 3, 2, 1, 0])
 
 
@@ -507,8 +507,8 @@ def test_2d_count_describe_info():
     """2D 列：count/describe/info 以逻辑行数为准（physical length = rows*cols）"""
     df = FastDataFrame()
     df.df_length = 4
-    df.columns['a'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
-    df.columns['d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
+    df._columns['a'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    df._columns['d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
 
     cnt = df.count()
     check('2d count logical rows', cnt['a'] == 4 and cnt['d'] == 4)
@@ -531,12 +531,12 @@ def test_2d_agg_withcol():
     """_withcol 聚合族：2D 列逐子列独立聚合（不跨子列混合），1D 列与普通聚合一致"""
     df = FastDataFrame()
     df.df_length = 4
-    df.columns['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
-    df.columns['d2d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
+    df._columns['a2d'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    df._columns['d2d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
     x = DoubleColumn()
     for v in [1.0, 2.0, 3.0, 4.0]:
         x.append(v)
-    df.columns['x'] = x
+    df._columns['x'] = x
 
     m = df.mean_withcol()
     check('withcol mean 2d', m['a2d'] == [2.5, 25.0] and m['d2d'] == [2.5, 25.0])
@@ -608,16 +608,16 @@ def test_pickle_2d_roundtrip():
     """2D 列 to_pickle/from_pickle 往返保持 is_2d/rows/cols"""
     df = FastDataFrame()
     df.df_length = 4
-    df.columns['a'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
-    df.columns['d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
+    df._columns['a'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    df._columns['d'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
     date_codes = IntColumn.from_2d([
         20230101, 20230102, 20230103, 20230104,
         20240101, 20240102, 20240103, 20240104], 4, 2)
-    df.columns['dd'] = to_date(date_codes)
-    df.columns['dt'] = to_datetime(date_codes)
-    df.columns['s'] = UCS2Column()
+    df._columns['dd'] = to_date(date_codes)
+    df._columns['dt'] = to_datetime(date_codes)
+    df._columns['s'] = UCS2Column()
     for v in ['x', 'y', 'z', 'w']:
-        df.columns['s'].append(v)
+        df._columns['s'].append(v)
     with tempfile.NamedTemporaryFile(suffix='.pkl', delete=False) as f:
         fname = f.name
     try:
@@ -694,12 +694,12 @@ def test_merge():
 def test_2d_concat_df():
     df1 = FastDataFrame()
     df1.df_length = 2
-    df1.columns['a'] = IntColumn.from_2d([1, 2, 3, 4], 2, 2)
+    df1._columns['a'] = IntColumn.from_2d([1, 2, 3, 4], 2, 2)
     df2 = FastDataFrame()
     df2.df_length = 1
-    df2.columns['a'] = IntColumn.from_2d([5, 6], 1, 2)
+    df2._columns['a'] = IntColumn.from_2d([5, 6], 1, 2)
     r = df1.concat(df2)
-    a = r.columns['a']
+    a = r._columns['a']
     check('2d concat df rows', r.df_length == 3)
     check('2d concat df index', r.index.length == 3)
     check('2d concat df cols', a.rows == 3 and a.cols == 2)
@@ -708,12 +708,12 @@ def test_2d_concat_df():
 def test_2d_merge_df():
     df1 = FastDataFrame()
     df1.df_length = 3
-    df1.columns['k'] = IntColumn.from_2d([1, 2, 7, 5, 6, 8], 3, 2)
+    df1._columns['k'] = IntColumn.from_2d([1, 2, 7, 5, 6, 8], 3, 2)
     df2 = FastDataFrame()
     df2.df_length = 2
-    df2.columns['k'] = IntColumn.from_2d([2, 9, 6, 0], 2, 2)
+    df2._columns['k'] = IntColumn.from_2d([2, 9, 6, 0], 2, 2)
     r = df1.merge(df2, on='k', how='inner')
-    k = r.columns['k']
+    k = r._columns['k']
     check('2d merge inner rows', r.df_length == 1)
     check('2d merge k 2d', k.rows == 1 and k.cols == 2)
     check('2d merge k flat', [k[i] for i in range(k.length)] == [2, 6])
@@ -1051,7 +1051,7 @@ def test_from_list():
     check('from_list ch[2]', df['ch'][2] == 'c')
 
     df2 = FastDataFrame.from_list([[10, 20]], schema={'x': int, 'y': int}, columns=['a', 'b'])
-    check('from_list rename', set(df2.columns.keys()) == {'a', 'b'})
+    check('from_list rename', set(df2.columns) == {'a', 'b'})
 
 def test_from_arrays():
     df = FastDataFrame.from_arrays([[1, 2, 3], [10.0, 20.0, 30.0]], schema={'id': int, 'val': float})
@@ -1068,17 +1068,17 @@ def test_factory_methods():
     check('arange vals', [df['0'][i] for i in range(7)] == [0, 1, 2, 3, 4, 5, 6])
 
     df = FastDataFrame.zeros(3, 2)
-    check('zeros', all(df.columns[c][i] == 0.0 for c in df.columns for i in range(3)))
+    check('zeros', all(df._columns[c][i] == 0.0 for c in df.columns for i in range(3)))
 
     df = FastDataFrame.ones(2, 3)
-    check('ones', all(df.columns[c][i] == 1.0 for c in df.columns for i in range(2)))
+    check('ones', all(df._columns[c][i] == 1.0 for c in df.columns for i in range(2)))
 
     df = FastDataFrame.randn(100, 2)
     check('randn shape', df.shape == (100, 2))
 
     df = FastDataFrame.rand(50, 2)
     check('rand shape', df.shape == (50, 2))
-    check('rand range', all(0 <= df.columns[c][i] < 1 for c in df.columns for i in range(50)))
+    check('rand range', all(0 <= df._columns[c][i] < 1 for c in df.columns for i in range(50)))
 
 
 # =====================================================================
@@ -1087,7 +1087,7 @@ def test_factory_methods():
 def test_rename():
     df = make_complex_df().head(3)
     df2 = df.rename({'id': 'ID', 'name': 'NAME'})
-    check('rename cols', set(df2.columns.keys()) == {'ID', 'score', 'NAME', 'tag', 'dt'})
+    check('rename cols', set(df2.columns) == {'ID', 'score', 'NAME', 'tag', 'dt'})
     check('rename val', df2['ID'][0] == 1)
     check('rename original unchanged', 'id' in df.columns)
 
@@ -1095,11 +1095,11 @@ def test_insert_column():
     df = FastDataFrame({'a': int})
     df.append_row(a=1); df.append_row(a=2)
     df.insert_column('b', [10, 20], pos=0)
-    check('insert pos 0', list(df.columns.keys()) == ['b', 'a'])
+    check('insert pos 0', df.columns == ['b', 'a'])
     check('insert val', df['b'][1] == 20)
 
     df.insert_column('c', [100], pos=1)
-    check('insert pos 1', list(df.columns.keys()) == ['b', 'c', 'a'])
+    check('insert pos 1', df.columns == ['b', 'c', 'a'])
 
 def test_insert_column_2d():
     col = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
@@ -1136,7 +1136,7 @@ def test_setitem():
     df.append_row(a=1)
     df['b'] = [10]
     check('setitem list', df['b'][0] == 10)
-    check('setitem cols', set(df.columns.keys()) == {'a', 'b'})
+    check('setitem cols', set(df.columns) == {'a', 'b'})
 
     df['a'] = [99]
     check('setitem replace', df['a'][0] == 99)
@@ -1196,9 +1196,9 @@ def test_drop_duplicates():
 def test_select_dtypes():
     df = make_complex_df()
     int_only = df.select_dtypes(include_types=['int'])
-    check('select int', set(int_only.columns.keys()) == {'id'})
+    check('select int', set(int_only.columns) == {'id'})
     float_only = df.select_dtypes(include_types=['float'])
-    check('select float', set(float_only.columns.keys()) == {'score'})
+    check('select float', set(float_only.columns) == {'score'})
     no_int = df.select_dtypes(exclude_types=['int'])
     check('exclude int', 'id' not in no_int.columns)
 
@@ -1704,10 +1704,10 @@ def _make_2d_corr_df():
     # c 为 2D 列（cols=2，列优先）：子列 c_0=10a，c_1=3a；e 与 a 相关系数为 -0.2
     df = FastDataFrame()
     df.df_length = 4
-    df.columns['a'] = DoubleColumn.from_2d([1, 2, 3, 4], 4, 1)
-    df.columns['b'] = DoubleColumn.from_2d([2, 4, 6, 8], 4, 1)
-    df.columns['c'] = DoubleColumn.from_2d([10, 20, 30, 40, 3, 6, 9, 12], 4, 2)
-    df.columns['e'] = DoubleColumn.from_2d([4, 1, 2, 3], 4, 1)
+    df._columns['a'] = DoubleColumn.from_2d([1, 2, 3, 4], 4, 1)
+    df._columns['b'] = DoubleColumn.from_2d([2, 4, 6, 8], 4, 1)
+    df._columns['c'] = DoubleColumn.from_2d([10, 20, 30, 40, 3, 6, 9, 12], 4, 2)
+    df._columns['e'] = DoubleColumn.from_2d([4, 1, 2, 3], 4, 1)
     return df
 
 def test_corr_cov_2d():
@@ -1817,11 +1817,11 @@ def test_where_mask_row_2d():
     """2D 列：where/mask 掩码按逻辑行判定（每行一个 cond），where_row 按行掩码，结果保持源维度"""
     df = FastDataFrame()
     df.df_length = 4
-    df.columns['v'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
-    df.columns['iv'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    df._columns['v'] = DoubleColumn.from_2d([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], 4, 2)
+    df._columns['iv'] = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
     cond = IntColumn()
     for c in [1, 0, 1, 0]: cond.append(c)
-    df.columns['cond'] = cond
+    df._columns['cond'] = cond
 
     r = df.where_column('v', 'cond', 99.0)
     check('2d where dims', r.rows == 4 and r.is_2d and r.cols == 2)
@@ -1841,7 +1841,7 @@ def test_where_mask_row_2d():
     check('2d where_row int', [rr['iv'][i] for i in range(8)] == [1, -1, 3, -1, 10, -1, 30, -1])
 
     bad = IntColumn.from_2d([1]*8, 4, 2)
-    df.columns['badc'] = bad
+    df._columns['badc'] = bad
     raised = False
     try:
         df.where_column('v', 'badc', 0.0)
@@ -2038,7 +2038,7 @@ def test_transpose():
     df.append_row(a=1, b=10); df.append_row(a=2, b=20)
     t = df.T
     check('T shape', t.shape == (2, 2))
-    check('T cols', set(t.columns.keys()) == {'a', 'b'})
+    check('T cols', set(t.columns) == {'a', 'b'})
     check('T a[0]', t['a'][0] == 1.0)
     check('T a[1]', t['a'][1] == 10.0)
 

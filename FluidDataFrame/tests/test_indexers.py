@@ -139,7 +139,7 @@ class TestLoc:
         mask = df['age'] > 25
         r = df.loc[mask, ['name', 'score']]
         check('shape', r.shape == (2, 2))
-        check('cols', set(r.columns.keys()) == {'name', 'score'})
+        check('cols', set(r.columns) == {'name', 'score'})
 
     def test_single_col(self):
         df = FastDataFrame({'name': str, 'age': int})

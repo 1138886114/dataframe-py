@@ -92,9 +92,9 @@ cdef _rank_col(NumericType* data, Py_ssize_t n, str method, bint ascending):
     return res
 
 cdef _rank_impl(FastDataFrame self, str col_name, str method, bint ascending, str na_option):
-    if col_name not in self.columns:
+    if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
-    cdef BaseColumn col = self.columns[col_name]
+    cdef BaseColumn col = self._columns[col_name]
     cdef Py_ssize_t n = self.df_length
     if _col_is_2d(col):
         return _rank_row_keys(col, n, method, ascending)
@@ -148,9 +148,9 @@ cdef _rank_row_keys(BaseColumn col, Py_ssize_t n, str method, bint ascending):
     return res
 
 cdef _cut_impl(FastDataFrame self, str col_name, list bins, bint include_lowest, str right):
-    if col_name not in self.columns:
+    if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
-    cdef BaseColumn col = self.columns[col_name]
+    cdef BaseColumn col = self._columns[col_name]
     if _col_is_2d(col):
         raise TypeError(f"cut not supported for 2D column '{col_name}' (单元格为整行向量，无标量可切分)")
     cdef Py_ssize_t n = self.df_length
@@ -189,9 +189,9 @@ cdef _cut_impl(FastDataFrame self, str col_name, list bins, bint include_lowest,
     return _column_from_list_impl(self, col_name, results)
 
 cdef _qcut_impl(FastDataFrame self, str col_name, int q, str labels, double precision):
-    if col_name not in self.columns:
+    if col_name not in self._columns:
         raise KeyError(f"Column '{col_name}' not found")
-    cdef BaseColumn col = self.columns[col_name]
+    cdef BaseColumn col = self._columns[col_name]
     cdef Py_ssize_t n = self.df_length
     if _col_is_2d(col):
         raise TypeError(f"qcut not supported for 2D column '{col_name}' (单元格为整行向量，无标量可分位)")

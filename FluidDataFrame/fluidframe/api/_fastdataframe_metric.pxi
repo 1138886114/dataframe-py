@@ -8,7 +8,7 @@ cdef list _numeric_logical_features(FastDataFrame self):
     cdef BaseColumn col
     cdef bint is2d
     cdef Py_ssize_t c, r, k
-    for name, col in self.columns.items():
+    for name, col in self._columns.items():
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
             is2d, c, r = _col_shape_probe(col)
             if is2d and c > 1:
@@ -25,7 +25,7 @@ cdef list _numeric_logical_features(FastDataFrame self):
 cdef inline DoubleColumn _ensure_double_1d(FastDataFrame self, object col_ident):
     """防止 IntColumn 被暴力转为 DoubleColumn 导致 SegFault"""
     cdef str name = col_ident if isinstance(col_ident, str) else None
-    cdef BaseColumn col = self.columns[name] if name is not None else <BaseColumn>col_ident
+    cdef BaseColumn col = self._columns[name] if name is not None else <BaseColumn>col_ident
 
     if col.dtype == TYPE_DOUBLE and not getattr(col, 'is_2d', False):
         return <DoubleColumn>col
@@ -117,7 +117,7 @@ cdef _corr_impl(FastDataFrame self):
         result.df_length = n_feats
         result.index = RangeIndex(0, n_feats)
         for i in range(n_feats):
-            result.columns[feats[i][0]] = DoubleColumn.create_view(res_ptr + i * n_feats, n_feats, res_block)
+            result._columns[feats[i][0]] = DoubleColumn.create_view(res_ptr + i * n_feats, n_feats, res_block)
 
         if not hasattr(result, '_2d_blocks'):
             result._2d_blocks = []
@@ -165,7 +165,7 @@ cdef _cov_impl(FastDataFrame self):
         result.df_length = n_feats
         result.index = RangeIndex(0, n_feats)
         for i in range(n_feats):
-            result.columns[feats[i][0]] = DoubleColumn.create_view(res_ptr + i * n_feats, n_feats, res_block)
+            result._columns[feats[i][0]] = DoubleColumn.create_view(res_ptr + i * n_feats, n_feats, res_block)
 
         if not hasattr(result, '_2d_blocks'):
             result._2d_blocks = []
