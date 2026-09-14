@@ -183,6 +183,16 @@ cdef class CategoryColumn(BaseColumn):
 
     @property
     def _cate(self):
+        """向后兼容的访问器"""
+        return _CategoryAccessor(self)
+    
+    @property
+    def cate(self):
+        return _CategoryAccessor(self)
+    
+    @property
+    def cat(self):
+        """pandas风格的.cat访问器"""
         return _CategoryAccessor(self)
 
     @cython.always_allow_keywords(False)

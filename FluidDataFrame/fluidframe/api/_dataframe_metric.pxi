@@ -25,7 +25,14 @@ cdef list _numeric_logical_features(DataFrame self):
 cdef inline DoubleColumn _ensure_double_1d(DataFrame self, object col_ident):
     """防止 IntColumn 被暴力转为 DoubleColumn 导致 SegFault"""
     cdef str name = col_ident if isinstance(col_ident, str) else None
-    cdef BaseColumn col = self._columns[name] if name is not None else <BaseColumn>col_ident
+    cdef BaseColumn col
+    if name is not None:
+        col = self._columns[name]
+    elif hasattr(col_ident, '_col'):
+        # 处理Series对象
+        col = (<object>col_ident)._col
+    else:
+        col = <BaseColumn>col_ident
 
     if col.dtype == TYPE_DOUBLE and not getattr(col, 'is_2d', False):
         return <DoubleColumn>col

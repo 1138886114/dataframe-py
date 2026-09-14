@@ -245,8 +245,8 @@ df3 = df3.append({'X': 'high'})
 df3 = df3.append({'X': 'low'})
 check(df3['X'][0] == 'low', "schema category [0]")
 check(df3['X'][1] == 'high', "schema category [1]")
-check(df3['X']._cate.codes[0] == 0, "schema category codes")
-check(len(df3['X']._cate.categories) == 2, "schema category 2 cats")
+check(df3['X'].cat.codes[0] == 0, "schema category codes")
+check(len(df3['X'].cat.categories) == 2, "schema category 2 cats")
 
 print(f"\nResults: {PASSED} passed, {FAILED} failed")
 if FAILED > 0:

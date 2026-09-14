@@ -1118,3 +1118,8 @@ cdef _duplicate_rows_impl(DataFrame self, list indices):
         return self._take(idx_c, n)
     finally:
         os_aligned_free(idx_c)
+
+# Python-callable wrapper for _column_from_list_impl
+def column_from_list(DataFrame df, str name, list values):
+    """Python-callable wrapper for _column_from_list_impl"""
+    return _column_from_list_impl(df, name, values)

@@ -1020,7 +1020,13 @@ cdef class DataFrame:
             if self.index is not None:
                 result.index = self.index
             return result
+        # 向后兼容：返回BaseColumn
         return self._columns[name]
+
+    def get_series(self, name):
+        """返回Series（单列代理），知道自己的名字和索引"""
+        from fluidframe.core.series import Series
+        return Series(name, self._columns[name], self.index)
 
     def __iter__(self):
         return iter(self._columns)
@@ -1031,7 +1037,15 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __setitem__(self, name, value):
-        self._columns[name] = value
+        # 如果是Series，提取底层列
+        if type(value).__name__ == 'Series':
+            self._columns[name] = value._col
+        # 如果是列表，根据元素类型创建列
+        elif isinstance(value, list):
+            from fluidframe.core.dataframe import column_from_list
+            self._columns[name] = column_from_list(self, name, value)
+        else:
+            self._columns[name] = value
 
     @property
     def shape(self):
