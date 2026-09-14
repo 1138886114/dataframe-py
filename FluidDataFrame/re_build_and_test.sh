@@ -12,7 +12,7 @@ echo ""
 echo "[0/3] 清理旧产物..."
 rm -rf build/
 find fluidframe/core -name "*.so" -delete 2>/dev/null || true
-find fluidframe/core -name "*.c" ! -name "_base.c" -delete 2>/dev/null || true
+find fluidframe/core -name "*.c" -delete 2>/dev/null || true
 find fluidframe/core -name "*.cpp" -delete 2>/dev/null || true
 echo ">>> 清理完成"
 
@@ -44,7 +44,7 @@ TESTS=(
     test_datecolumn
     test_datetimecolumn
     test_doublecolumn
-    test_fastdataframe
+    test_dataframe
     test_fluidframe
     test_groupby
     test_index
