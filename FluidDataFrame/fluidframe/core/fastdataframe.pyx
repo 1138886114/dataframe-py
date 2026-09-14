@@ -1157,9 +1157,22 @@ cdef class FastDataFrame:
         return _pop_back_impl(self)
 
     @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def rename(self, dict mapper):
-        return _rename_impl(self, mapper)
+    def rename(self, mapper=None, columns=None, index=None, bint inplace=False):
+        if columns is not None:
+            mapper = columns
+        elif mapper is None:
+            raise ValueError("Must specify either 'mapper' or 'columns'")
+        if callable(mapper):
+            result = _copy_impl(self) if not inplace else self
+            new_columns = {}
+            for old_name in list(result._columns.keys()):
+                new_name = mapper(old_name)
+                if new_name != old_name:
+                    new_columns[new_name] = result._columns.pop(old_name)
+            result._columns.update(new_columns)
+            return result
+        else:
+            return _rename_impl(self, mapper)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1187,21 +1200,36 @@ cdef class FastDataFrame:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def drop(self, col_names):
-        if isinstance(col_names, str):
-            col_names = [col_names]
+    def drop(self, labels=None, axis=0, columns=None, index=None):
         cdef str name
-        for name in col_names:
-            if name not in self._columns:
-                raise KeyError(f"Column '{name}' not found")
-        cdef FastDataFrame new_df = FastDataFrame()
-        new_df.df_length = self.df_length
-        for col_name, col_obj in self._columns.items():
-            if col_name not in col_names:
-                new_df._columns[col_name] = col_obj
-        if self.index is not None:
-            new_df.index = self.index
-        return new_df
+        cdef str col_name
+        cdef FastDataFrame new_df
+        if columns is not None:
+            labels = columns
+            axis = 1
+        elif index is not None:
+            labels = index
+            axis = 0
+        if labels is None:
+            raise ValueError("Must specify either 'labels' or 'index'/'columns'")
+        if isinstance(labels, str):
+            labels = [labels]
+        if axis == 0 and all(isinstance(x, str) for x in labels):
+            axis = 1
+        if axis == 0:
+            return self.drop_with_index(labels)
+        else:
+            for name in labels:
+                if name not in self._columns:
+                    raise KeyError(f"Column '{name}' not found")
+            new_df = FastDataFrame()
+            new_df.df_length = self.df_length
+            for col_name, col_obj in self._columns.items():
+                if col_name not in labels:
+                    new_df._columns[col_name] = col_obj
+            if self.index is not None:
+                new_df.index = self.index
+            return new_df
 
     @cython.binding(False)
     def drop_with_index(self, list drop_indices, bint inplace=False):
@@ -1215,6 +1243,10 @@ cdef class FastDataFrame:
     @cython.always_allow_keywords(False)
     def drop_raw(self, Py_ssize_t row_idx):
         return _drop_raw_impl(self, row_idx)
+
+    @cython.binding(False)
+    def insert(self, Py_ssize_t loc, str column, object value, bint allow_duplicates=False):
+        return _insert_column_impl(self, column, value, loc)
 
     @cython.binding(False)
     def insert_column(self, str col_name, object col_data, Py_ssize_t pos=-1):
@@ -1563,7 +1595,16 @@ cdef class FastDataFrame:
         return _notna_impl(self)
 
     @cython.binding(False)
-    def fillna(self, double value, col_names=None):
+    def fillna(self, value=None, method=None, col_names=None):
+        if method is not None:
+            if method == 'ffill':
+                return self.ffill()
+            elif method == 'bfill':
+                return self.bfill()
+            else:
+                raise ValueError(f"Invalid fill method: {method}")
+        if value is None:
+            raise ValueError("Must specify either 'value' or 'method'")
         return _fillna_impl(self, value, col_names)
 
     @cython.binding(False)

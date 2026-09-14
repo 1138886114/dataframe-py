@@ -444,3 +444,24 @@ cdef class BoolColumn(BaseColumn):
         elif target_type == TYPE_BOOL:
             return self.copy()
         raise TypeError(f"Failed to cast BOOL column to internal type id: {target_type}")
+
+    cdef void gather_zero_to(self, Py_ssize_t* out):
+        if out == NULL: return
+        cdef Py_ssize_t j = 0
+        cdef unsigned char* ptr = self.data_c
+        cdef Py_ssize_t i, n = self.length
+        with nogil:
+            for i in range(n):
+                if ptr[i] == 0:
+                    out[j] = i
+                    j += 1
+
+    cdef Py_ssize_t count_nonzero(self):
+        cdef Py_ssize_t count = 0
+        cdef unsigned char* ptr = self.data_c
+        cdef Py_ssize_t i, n = self.length
+        with nogil:
+            for i in range(n):
+                if ptr[i] != 0:
+                    count += 1
+        return count

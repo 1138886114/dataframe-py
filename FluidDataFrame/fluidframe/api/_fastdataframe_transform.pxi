@@ -723,79 +723,75 @@ cdef _round_impl(FastDataFrame self, int decimals):
 
 cdef _all_impl(FastDataFrame self):
     cdef Py_ssize_t n = self.df_length
-    if n == 0: return True
+    cdef dict result = {}
     cdef str name
     cdef BaseColumn col
     cdef Py_ssize_t i, total
+    cdef bint all_true
 
     cdef int* i_ptr
     cdef double* d_ptr
     cdef unsigned char* bool_ptr
-    cdef bint bad = False
 
     for name, col in self._columns.items():
-        if bad: break
         total = col.length
+        all_true = True
         if col.dtype == TYPE_INT:
             i_ptr = (<IntColumn>col).data_c
-            with nogil:
-                for i in range(total):
-                    if i_ptr[i] == 0:
-                        bad = True
-                        break
+            for i in range(total):
+                if i_ptr[i] == 0:
+                    all_true = False
+                    break
         elif col.dtype == TYPE_DOUBLE:
             d_ptr = (<DoubleColumn>col).data_c
-            with nogil:
-                for i in range(total):
-                    if d_ptr[i] == 0.0 or isnan(d_ptr[i]):
-                        bad = True
-                        break
+            for i in range(total):
+                if d_ptr[i] == 0.0 or isnan(d_ptr[i]):
+                    all_true = False
+                    break
         elif col.dtype == TYPE_BOOL:
             bool_ptr = (<BoolColumn>col).data_c
-            with nogil:
-                for i in range(total):
-                    if bool_ptr[i] == 0:
-                        bad = True
-                        break
-    return not bad
+            for i in range(total):
+                if bool_ptr[i] == 0:
+                    all_true = False
+                    break
+        result[name] = all_true
+    return result
 
 cdef _any_impl(FastDataFrame self):
     cdef Py_ssize_t n = self.df_length
-    if n == 0: return False
+    cdef dict result = {}
     cdef str name
     cdef BaseColumn col
     cdef Py_ssize_t i, total
+    cdef bint any_true
 
     cdef int* i_ptr
     cdef double* d_ptr
     cdef unsigned char* bool_ptr
-    cdef bint found = False
 
     for name, col in self._columns.items():
-        if found: break
         total = col.length
+        any_true = False
         if col.dtype == TYPE_INT:
             i_ptr = (<IntColumn>col).data_c
-            with nogil:
-                for i in range(total):
-                    if i_ptr[i] != 0:
-                        found = True
-                        break
+            for i in range(total):
+                if i_ptr[i] != 0:
+                    any_true = True
+                    break
         elif col.dtype == TYPE_DOUBLE:
             d_ptr = (<DoubleColumn>col).data_c
-            with nogil:
-                for i in range(total):
-                    if d_ptr[i] != 0.0 and not isnan(d_ptr[i]):
-                        found = True
-                        break
+            for i in range(total):
+                if d_ptr[i] != 0.0 and not isnan(d_ptr[i]):
+                    any_true = True
+                    break
         elif col.dtype == TYPE_BOOL:
             bool_ptr = (<BoolColumn>col).data_c
-            with nogil:
-                for i in range(total):
-                    if bool_ptr[i] != 0:
-                        found = True
-                        break
-    return found
+            for i in range(total):
+                if bool_ptr[i] != 0:
+                    any_true = True
+                    break
+        result[name] = any_true
+    return result
 
 cdef _pct_change_impl(FastDataFrame self, int periods=1):
     cdef FastDataFrame result = FastDataFrame()

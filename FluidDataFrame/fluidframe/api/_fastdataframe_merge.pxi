@@ -393,7 +393,7 @@ cdef _merge_impl(FastDataFrame self, FastDataFrame other, list on, str how='inne
 
 cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
     cdef Py_ssize_t n = self.df_length
-    cdef IntColumn result = IntColumn(max(n, 1))
+    cdef BoolColumn result = BoolColumn(max(n, 1))
     result.length = n
     if n == 0:
         return result
@@ -430,7 +430,7 @@ cdef _duplicated_impl(FastDataFrame self, subset=None, str keep='first'):
     return result
 
 cdef _drop_duplicates_impl(FastDataFrame self, subset=None, str keep='first', bint inplace=False):
-    cdef IntColumn mask = _duplicated_impl(self, subset, keep)
+    cdef BoolColumn mask = _duplicated_impl(self, subset, keep)
     cdef Py_ssize_t n = self.df_length
     cdef Py_ssize_t keep_count = n - mask.count_nonzero()
 

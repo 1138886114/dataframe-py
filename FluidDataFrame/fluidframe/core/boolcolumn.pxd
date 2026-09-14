@@ -11,6 +11,8 @@ cdef class BoolColumn(BaseColumn):
     cdef void _reserve(self, Py_ssize_t new_cap)
     cdef void append_nolen(self, object val) except *
     cdef BoolColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
+    cdef void gather_zero_to(self, Py_ssize_t* out)
+    cdef Py_ssize_t count_nonzero(self)
     @staticmethod
     cdef BoolColumn create_view(unsigned char* ptr, Py_ssize_t length, object base_obj)
 

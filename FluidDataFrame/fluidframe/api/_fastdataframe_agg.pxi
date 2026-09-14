@@ -233,11 +233,36 @@ cdef _describe_withcol_impl(FastDataFrame self):
 cdef _count_impl(FastDataFrame self, col_names=None):
     cdef dict result = {}
     cdef str name
+    cdef BaseColumn col
+    cdef Py_ssize_t count, i, total
+    cdef int* i_ptr
+    cdef double* d_ptr
+    cdef unsigned char* bool_ptr
     if col_names is None:
         col_names = list(self._columns.keys())
     for name in col_names:
         if name in self._columns:
-            result[name] = self.df_length
+            col = self._columns[name]
+            total = col.length
+            count = 0
+            if col.dtype == TYPE_INT:
+                i_ptr = (<IntColumn>col).data_c
+                for i in range(total):
+                    if i_ptr[i] != 0:
+                        count += 1
+            elif col.dtype == TYPE_DOUBLE:
+                d_ptr = (<DoubleColumn>col).data_c
+                for i in range(total):
+                    if not isnan(d_ptr[i]):
+                        count += 1
+            elif col.dtype == TYPE_BOOL:
+                bool_ptr = (<BoolColumn>col).data_c
+                for i in range(total):
+                    if bool_ptr[i] != 0:
+                        count += 1
+            else:
+                count = total
+            result[name] = count
     return result
 
 cdef inline double _qs_double(double* a, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
