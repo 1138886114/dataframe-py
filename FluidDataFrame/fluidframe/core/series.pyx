@@ -4,6 +4,15 @@
 
 cimport cython
 from fluidframe.core._base cimport BaseColumn, TYPE_INT, TYPE_DOUBLE, TYPE_BOOL, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE, TYPE_DATETIME, TYPE_TIME, TYPE_CATEGORY
+from fluidframe.core.intcolumn cimport IntColumn
+from fluidframe.core.asciicolumn cimport AsciiColumn
+from fluidframe.core.ucs2column cimport UCS2Column
+from fluidframe.core.categorycolumn cimport CategoryColumn
+from fluidframe.core.index cimport IndexBase
+
+include "_string_accessor.pxi"
+include "_datetime_accessor.pxi"
+include "_category_accessor.pxi"
 
 
 @cython.final
@@ -607,23 +616,31 @@ cdef class Series:
         return Series(self.name, self._col, RangeIndex(len(self)))
 
     # =================================================================
-    #  访问器桥接
+    #  访问器（使用pxi文件中的访问器类）
     # =================================================================
     
     @property
     def str(self):
-        """字符串访问器，桥接到BaseColumn.str"""
-        return self._col.str
+        """字符串访问器，返回_StringAccessor实例"""
+        cdef int dt = self._col.dtype
+        if dt != TYPE_CHAR256 and dt != TYPE_UCS2:
+            raise AttributeError("Can only use .str accessor with string values!")
+        return _StringAccessor(self)
 
     @property
     def dt(self):
-        """日期时间访问器，桥接到BaseColumn.dt"""
-        return self._col.dt
+        """日期时间访问器，返回_DateTimeAccessor实例"""
+        cdef int dt = self._col.dtype
+        if dt not in (TYPE_DATE, TYPE_DATETIME, TYPE_TIME):
+            raise AttributeError("Can only use .dt accessor with datetimelike values!")
+        return _DateTimeAccessor(self)
 
     @property
     def cat(self):
-        """分类访问器，桥接到BaseColumn.cat"""
-        return self._col.cat
+        """分类访问器，返回_CategoryAccessor实例"""
+        if self._col.dtype != TYPE_CATEGORY:
+            raise AttributeError("Can only use .cat accessor with categorical values!")
+        return _CategoryAccessor(self)
 
     # =================================================================
     #  导出
