@@ -48,9 +48,14 @@ cdef class _ILocIndexer:
 
 cdef class _LocIndexer:
     cdef DataFrame frame
-    cdef DataFrame _apply_mask(self, IntColumn mask)
+    cdef DataFrame _apply_mask(self, object mask)
     cdef DataFrame _apply_bool_list(self, list mask)
     cdef DataFrame _get_rows(self, key)
+
+
+cdef object _wrap_series(str name, object res, IndexBase index)
+cdef BaseColumn _col_take(BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace)
+cdef BaseColumn _column_from_scalar(DataFrame df, str name, object val, Py_ssize_t n)
 
 
 cdef class Series:
@@ -61,6 +66,7 @@ cdef class Series:
 # Forward declarations for accessors
 cdef class _StringAccessor:
     cdef Series _series
+    cdef object _wrap(self, object res)
 
 cdef class _DateTimeAccessor:
     cdef Series _series
@@ -136,7 +142,6 @@ cdef class DataFrame:
     cdef public list _ordered_cols
     cdef public list _2d_blocks
     cdef public dict _columns
-
     cdef public uint32_t _fixed_capacity
     cdef public uint32_t df_length
     cdef bint _is_sealed         # 明确标识是否已锁定内存
@@ -153,7 +158,9 @@ cdef class DataFrame:
     cdef BaseColumn _diff_column(self, BaseColumn col, int periods)
     cdef void _drop_row_column(self, BaseColumn col, Py_ssize_t row_idx)
     cdef void _rollback_pending_writes(self, uint32_t n_cols) noexcept
+    cdef void _check_assign_length(self, str name, BaseColumn new_col) except *
     cdef DataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n)
+    cdef DataFrame _slice_rows(self, object key)
     cdef BaseColumn _column_from_list(self, str name, list values)
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos)
     cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos)

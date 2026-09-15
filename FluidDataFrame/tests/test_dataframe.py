@@ -7,6 +7,7 @@ import time
 sys.path.insert(0, '..')
 from fluidframe.core.dataframe import DataFrame, read_json, from_pickle, to_numeric, to_date, to_time, to_datetime
 from fluidframe.core.intcolumn import IntColumn
+from fluidframe.core.series import Series
 from fluidframe.core.doublecolumn import DoubleColumn
 from fluidframe.core.asciicolumn import AsciiColumn
 from fluidframe.core.ucs2column import UCS2Column
@@ -282,7 +283,7 @@ def test_append_complex():
 
 def test_access():
     df = DataFrame({'a': int}); df.append_row(a=42)
-    check('getitem', isinstance(df['a'], IntColumn))
+    check('getitem', isinstance(df['a'], Series))
     check('getitem val', df['a'][0] == 42)
     check('getitem missing', expect_exception(KeyError, df.__getitem__, 'b'))
 
@@ -1340,7 +1341,7 @@ def test_elementwise_2d():
     # abs：保形 2D，全 flat 逐元素
     o = df.abs()
     c = o['a2d']
-    check('elem2d abs int shape', c.cols == 2 and c.rows == 4 and c.length == 8)
+    check('elem2d abs int shape', c.cols == 2 and c.rows == 4 and c.length == 4)
     check('elem2d abs int flat', [c[i] for i in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
     c = o['d2d']
     check('elem2d abs dbl flat', [c[i] for i in range(8)] == [1.5, 2.4, 3.6, 4.2, 10.7, 20.1, 30.9, 40.5])
@@ -1399,7 +1400,7 @@ def test_series_row_2d():
     # pct_change：逐子列独立序列，输出保形 2D
     pc = df.pct_change()
     c = pc['a2d']
-    check('sr2d pct shape', c.cols == 2 and c.rows == 4 and c.length == 8)
+    check('sr2d pct shape', c.cols == 2 and c.rows == 4 and c.length == 4)
     check('sr2d pct nan0', math.isnan(c[0]) and math.isnan(c[4]))
     check('sr2d pct sub0 r1', abs(c[1] - 1.0) < 1e-9)
     check('sr2d pct sub1 r1', abs(c[5] - 1.0) < 1e-9)

@@ -69,6 +69,48 @@ cdef dict _TYPE_PYCLASSES = {
     TYPE_CATEGORY: Category, TYPE_DATETIME: DateTime, TYPE_TIME: Time,
 }
 
+# ============================================================
+#  Series / DataFrame 桥接助手
+#  原则：DataFrame._columns 永远只存原生 BaseColumn，
+#  Series 是「随用随建、用完即毁」的临时包装视图。
+# ============================================================
+
+cdef object _wrap_series(str name, object res, IndexBase index):
+    """若结果为单列，则包成带索引的 Series 视图；否则原样返回。"""
+    if isinstance(res, BaseColumn):
+        return Series(name, <BaseColumn>res, index)
+    return res
+
+
+cdef BaseColumn _col_take(BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
+    """与 DataFrame._reorder_column 等价的列级 take（含 2D 列行级重排）。"""
+    if col.dtype == TYPE_INT:
+        return (<IntColumn>col).take_by_indices(indices, n, inplace)
+    elif col.dtype == TYPE_DOUBLE:
+        return (<DoubleColumn>col).take_by_indices(indices, n, inplace)
+    elif col.dtype == TYPE_CHAR256:
+        return (<AsciiColumn>col).take_by_indices(indices, n, inplace)
+    elif col.dtype == TYPE_UCS2:
+        return (<UCS2Column>col).take_by_indices(indices, n, inplace)
+    elif col.dtype == TYPE_DATE:
+        return (<DateColumn>col).take_by_indices(indices, n, inplace)
+    elif col.dtype == TYPE_BOOL:
+        return (<BoolColumn>col).take_by_indices(indices, n, inplace)
+    elif col.dtype == TYPE_CATEGORY:
+        return (<CategoryColumn>col).take_by_indices(indices, n, inplace)
+    elif col.dtype == TYPE_DATETIME:
+        return (<DateTimeColumn>col).take_by_indices(indices, n, inplace)
+    elif col.dtype == TYPE_TIME:
+        return (<TimeColumn>col).take_by_indices(indices, n, inplace)
+    raise TypeError(f"Unsupported column dtype: {col.dtype}")
+
+
+cdef BaseColumn _column_from_scalar(DataFrame df, str name, object val, Py_ssize_t n):
+    """标量 → 定长列（长度与 df 对齐），内部走 _column_from_list_impl。"""
+    if n <= 0:
+        return IntColumn(0)
+    return _column_from_list_impl(df, name, [val] * n)
+
 
 # ============================================================
 #  C 头文件声明（extern 注入）
@@ -509,6 +551,23 @@ cdef class IndexBase:
     def values(self):
         raise NotImplementedError()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __getitem__(self, object key):
+        if not isinstance(key, int):
+            raise TypeError("Index keys must be integers")
+        cdef Py_ssize_t i = key
+        cdef list vals = self.values()
+        if i < 0: i += self.length
+        if i < 0 or i >= self.length:
+            raise IndexError("Index out of range")
+        return vals[i]
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __len__(self):
+        return self.length
+
 
 cdef class IntIndex(IndexBase):
     def __cinit__(self, IntColumn col):
@@ -524,6 +583,17 @@ cdef class IntIndex(IndexBase):
         for i in range(self.length):
             result.append(self.data.data_c[i])
         return result
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __getitem__(self, object key):
+        if not isinstance(key, int):
+            raise TypeError("Index keys must be integers")
+        cdef Py_ssize_t i = key
+        if i < 0: i += self.length
+        if i < 0 or i >= self.length:
+            raise IndexError("Index out of range")
+        return self.data.data_c[i]
 
     cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n):
         cdef IntColumn new_col = IntColumn(n)
@@ -623,6 +693,17 @@ cdef class RangeIndex(IndexBase):
             result.append(self.start + i * self.step)
         return result
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __getitem__(self, object key):
+        if not isinstance(key, int):
+            raise TypeError("Index keys must be integers")
+        cdef Py_ssize_t i = key
+        if i < 0: i += self.length
+        if i < 0 or i >= self.length:
+            raise IndexError("Index out of range")
+        return self.start + i * self.step
+
     cdef IndexBase _concat(self, IndexBase other):
         cdef RangeIndex o
         cdef IntColumn new_col
@@ -709,6 +790,22 @@ cdef class MultiIndex(IndexBase):
                     new_col.data_c[i] = col.data_c[indices[i]]
             new_codes.append(new_col)
         return MultiIndex(self.levels, new_codes, self.names)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __getitem__(self, object key):
+        if not isinstance(key, int):
+            raise TypeError("Index keys must be integers")
+        cdef Py_ssize_t i = key
+        if i < 0: i += self.length
+        if i < 0 or i >= self.length:
+            raise IndexError("Index out of range")
+        cdef list result = []
+        cdef int code
+        for j in range(self.nlevels):
+            code = (<IntColumn>self.codes[j]).data_c[i]
+            result.append(self.levels[j][code])
+        return tuple(result) if self.nlevels > 1 else result[0]
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -1064,7 +1161,7 @@ cdef class _LocIndexer:
             elif isinstance(col_key, str):
                 if col_key not in row_result._columns:
                     raise KeyError(f"Column '{col_key}' not found")
-                return row_result._columns[col_key]
+                return Series(col_key, row_result._columns[col_key], row_result.index)
             raise TypeError(f"Unsupported column key type: {type(col_key).__name__}")
 
         return self._get_rows(key)
@@ -1072,14 +1169,25 @@ cdef class _LocIndexer:
     cdef DataFrame _get_rows(self, key):
         cdef Py_ssize_t n_orig = self.frame.df_length
         cdef object loc_res
+        cdef BaseColumn key_col
 
         # Callable filter — df.loc[lambda df: df.col > 5]
         if callable(key):
             mask = key(self.frame)
             return self._apply_mask(mask)
 
-        # IntColumn boolean mask — df.loc[mask_col]
+        # Series 布尔掩码（封装了 IntColumn 0/1 或 BoolColumn 掩码列）
+        if isinstance(key, Series):
+            key_col = (<Series>key)._col
+            if key_col.dtype != TYPE_BOOL and key_col.dtype != TYPE_INT:
+                raise TypeError(
+                    "DataFrame mask must be a boolean Series (compare a column, e.g. df['a'] > 5)")
+            return self._apply_mask(key)
+
+        # 裸掩码列 — df.loc[mask_int_col] / df.loc[mask_bool_col]
         if isinstance(key, IntColumn):
+            return self._apply_mask(key)
+        if isinstance(key, BoolColumn):
             return self._apply_mask(key)
 
         # list of booleans — df.loc[[True, False, True]]
@@ -1093,20 +1201,37 @@ cdef class _LocIndexer:
 
         raise TypeError(f"Unsupported loc key type: {type(key).__name__}")
 
-    cdef DataFrame _apply_mask(self, IntColumn mask):
+    cdef DataFrame _apply_mask(self, object mask):
+        cdef BaseColumn mask_col
         cdef Py_ssize_t n_orig = self.frame.df_length
-        if isinstance(mask, IntColumn):
-            if (<IntColumn>mask).length != n_orig:
-                raise ValueError(f"Mask length {(<IntColumn>mask).length} != DataFrame length {n_orig}")
+        if isinstance(mask, Series):
+            mask_col = (<Series>mask)._col
+        elif isinstance(mask, IntColumn):
+            mask_col = <BaseColumn>mask
+        elif isinstance(mask, BoolColumn):
+            mask_col = <BaseColumn>mask
         else:
-            raise TypeError("Mask must be an IntColumn (0/1 boolean)")
+            raise TypeError("Mask must be a boolean Series, IntColumn (0/1), or BoolColumn")
 
-        cdef IntColumn mask_col = <IntColumn>mask
+        if mask_col.length != n_orig:
+            raise ValueError(f"Mask length {mask_col.length} != DataFrame length {n_orig}")
+        if mask_col.dtype != TYPE_INT and mask_col.dtype != TYPE_BOOL:
+            raise TypeError("Mask column must be int (0/1) or bool")
+
         cdef Py_ssize_t keep_count = 0
         cdef Py_ssize_t i
-        for i in range(n_orig):
-            if mask_col.data_c[i] != 0:
-                keep_count += 1
+        cdef int* int_ptr
+        cdef unsigned char* bool_ptr
+        if mask_col.dtype == TYPE_INT:
+            int_ptr = (<IntColumn>mask_col).data_c
+            for i in range(n_orig):
+                if int_ptr[i] != 0:
+                    keep_count += 1
+        else:
+            bool_ptr = (<BoolColumn>mask_col).data_c
+            for i in range(n_orig):
+                if bool_ptr[i] != 0:
+                    keep_count += 1
 
         if keep_count == 0:
             result = DataFrame()
@@ -1119,10 +1244,16 @@ cdef class _LocIndexer:
         cdef Py_ssize_t* keep_idx = <Py_ssize_t*>aligned_malloc(keep_count * sizeof(Py_ssize_t))
         if not keep_idx: raise MemoryError()
         cdef Py_ssize_t j = 0
-        for i in range(n_orig):
-            if mask_col.data_c[i] != 0:
-                keep_idx[j] = i
-                j += 1
+        if mask_col.dtype == TYPE_INT:
+            for i in range(n_orig):
+                if int_ptr[i] != 0:
+                    keep_idx[j] = i
+                    j += 1
+        else:
+            for i in range(n_orig):
+                if bool_ptr[i] != 0:
+                    keep_idx[j] = i
+                    j += 1
 
         try:
             return self.frame._take(keep_idx, keep_count)
@@ -1178,6 +1309,11 @@ cdef class _StringAccessor:
 
     def __cinit__(self, Series series):
         self._series = series
+    cdef object _wrap(self, object res):
+        """访问器结果若是单列 → 包成随身 Series 视图；否则原样返回。"""
+        if isinstance(res, BaseColumn):
+            return Series(self._series.name, <BaseColumn>res, self._series._index)
+        return res
 
     # ==================== Search / Match ====================
 
@@ -1186,9 +1322,9 @@ cdef class _StringAccessor:
     def contains(self, object pat):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).str_contains_mask(pat)
+            return self._wrap((<AsciiColumn>col).str_contains_mask(pat))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).contains(pat)
+            return self._wrap((<UCS2Column>col).contains(pat))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1196,9 +1332,9 @@ cdef class _StringAccessor:
     def startswith(self, prefix):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).startswith(prefix)
+            return self._wrap((<AsciiColumn>col).startswith(prefix))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).startswith(prefix)
+            return self._wrap((<UCS2Column>col).startswith(prefix))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1206,9 +1342,9 @@ cdef class _StringAccessor:
     def endswith(self, suffix):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).endswith(suffix)
+            return self._wrap((<AsciiColumn>col).endswith(suffix))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).endswith(suffix)
+            return self._wrap((<UCS2Column>col).endswith(suffix))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1216,9 +1352,9 @@ cdef class _StringAccessor:
     def find(self, str sub):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).find(sub)
+            return self._wrap((<AsciiColumn>col).find(sub))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).find(sub)
+            return self._wrap((<UCS2Column>col).find(sub))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1226,9 +1362,9 @@ cdef class _StringAccessor:
     def rfind(self, str sub):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).rfind(sub)
+            return self._wrap((<AsciiColumn>col).rfind(sub))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).rfind(sub)
+            return self._wrap((<UCS2Column>col).rfind(sub))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1236,9 +1372,9 @@ cdef class _StringAccessor:
     def index(self, str sub):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).find(sub)
+            return self._wrap((<AsciiColumn>col).find(sub))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).find(sub)
+            return self._wrap((<UCS2Column>col).find(sub))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1246,9 +1382,9 @@ cdef class _StringAccessor:
     def rindex(self, str sub):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).rindex(sub)
+            return self._wrap((<AsciiColumn>col).rindex(sub))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).rindex(sub)
+            return self._wrap((<UCS2Column>col).rindex(sub))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1256,9 +1392,9 @@ cdef class _StringAccessor:
     def count(self, str sub):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).count(sub)
+            return self._wrap((<AsciiColumn>col).count(sub))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).count(sub)
+            return self._wrap((<UCS2Column>col).count(sub))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1266,9 +1402,9 @@ cdef class _StringAccessor:
     def match(self, str pattern):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).match(pattern)
+            return self._wrap((<AsciiColumn>col).match(pattern))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).match(pattern)
+            return self._wrap((<UCS2Column>col).match(pattern))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1276,9 +1412,9 @@ cdef class _StringAccessor:
     def fullmatch(self, str pattern):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).fullmatch(pattern)
+            return self._wrap((<AsciiColumn>col).fullmatch(pattern))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).fullmatch(pattern)
+            return self._wrap((<UCS2Column>col).fullmatch(pattern))
         raise TypeError("String accessor requires string column")
 
     # ==================== Extract / Findall ====================
@@ -1287,9 +1423,9 @@ cdef class _StringAccessor:
     def extract(self, str pattern, int group=1):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).extract(pattern)
+            return self._wrap((<AsciiColumn>col).extract(pattern))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).extract(pattern, group)
+            return self._wrap((<UCS2Column>col).extract(pattern, group))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1297,9 +1433,9 @@ cdef class _StringAccessor:
     def extractall(self, str pattern):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).extractall(pattern)
+            return self._wrap((<AsciiColumn>col).extractall(pattern))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).extractall(pattern)
+            return self._wrap((<UCS2Column>col).extractall(pattern))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1307,9 +1443,9 @@ cdef class _StringAccessor:
     def findall(self, str pattern):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).findall(pattern)
+            return self._wrap((<AsciiColumn>col).findall(pattern))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).findall(pattern)
+            return self._wrap((<UCS2Column>col).findall(pattern))
         raise TypeError("String accessor requires string column")
 
     # ==================== Type Check ====================
@@ -1319,9 +1455,9 @@ cdef class _StringAccessor:
     def isalpha(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).isalpha()
+            return self._wrap((<AsciiColumn>col).isalpha())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).isalpha()
+            return self._wrap((<UCS2Column>col).isalpha())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1329,9 +1465,9 @@ cdef class _StringAccessor:
     def isnumeric(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).isnumeric()
+            return self._wrap((<AsciiColumn>col).isnumeric())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).isnumeric()
+            return self._wrap((<UCS2Column>col).isnumeric())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1339,9 +1475,9 @@ cdef class _StringAccessor:
     def isalnum(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).isalnum()
+            return self._wrap((<AsciiColumn>col).isalnum())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).isalnum()
+            return self._wrap((<UCS2Column>col).isalnum())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1349,9 +1485,9 @@ cdef class _StringAccessor:
     def isdigit(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).isdigit()
+            return self._wrap((<AsciiColumn>col).isdigit())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).isdigit()
+            return self._wrap((<UCS2Column>col).isdigit())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1359,9 +1495,9 @@ cdef class _StringAccessor:
     def isdecimal(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).isdecimal()
+            return self._wrap((<AsciiColumn>col).isdecimal())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).isdecimal()
+            return self._wrap((<UCS2Column>col).isdecimal())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1369,9 +1505,9 @@ cdef class _StringAccessor:
     def islower(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).islower()
+            return self._wrap((<AsciiColumn>col).islower())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).islower()
+            return self._wrap((<UCS2Column>col).islower())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1379,9 +1515,9 @@ cdef class _StringAccessor:
     def isupper(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).isupper()
+            return self._wrap((<AsciiColumn>col).isupper())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).isupper()
+            return self._wrap((<UCS2Column>col).isupper())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1389,9 +1525,9 @@ cdef class _StringAccessor:
     def isspace(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).isspace()
+            return self._wrap((<AsciiColumn>col).isspace())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).isspace()
+            return self._wrap((<UCS2Column>col).isspace())
         raise TypeError("String accessor requires string column")
 
     # ==================== Case Conversion ====================
@@ -1401,9 +1537,9 @@ cdef class _StringAccessor:
     def upper(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).upper()
+            return self._wrap((<AsciiColumn>col).upper())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).upper()
+            return self._wrap((<UCS2Column>col).upper())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1411,9 +1547,9 @@ cdef class _StringAccessor:
     def lower(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).lower()
+            return self._wrap((<AsciiColumn>col).lower())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).lower()
+            return self._wrap((<UCS2Column>col).lower())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1421,9 +1557,9 @@ cdef class _StringAccessor:
     def title(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).title()
+            return self._wrap((<AsciiColumn>col).title())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).title()
+            return self._wrap((<UCS2Column>col).title())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1431,9 +1567,9 @@ cdef class _StringAccessor:
     def capitalize(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).capitalize()
+            return self._wrap((<AsciiColumn>col).capitalize())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).capitalize()
+            return self._wrap((<UCS2Column>col).capitalize())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1441,9 +1577,9 @@ cdef class _StringAccessor:
     def swapcase(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).swapcase()
+            return self._wrap((<AsciiColumn>col).swapcase())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).swapcase()
+            return self._wrap((<UCS2Column>col).swapcase())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1451,9 +1587,9 @@ cdef class _StringAccessor:
     def casefold(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).casefold()
+            return self._wrap((<AsciiColumn>col).casefold())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).casefold()
+            return self._wrap((<UCS2Column>col).casefold())
         raise TypeError("String accessor requires string column")
 
     # ==================== Strip / Pad ====================
@@ -1462,63 +1598,63 @@ cdef class _StringAccessor:
     def strip(self, chars=None):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).strip(chars) if chars is not None else (<AsciiColumn>col).strip()
+            return self._wrap((<AsciiColumn>col).strip(chars) if chars is not None else (<AsciiColumn>col).strip())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).strip(chars) if chars is not None else (<UCS2Column>col).strip()
+            return self._wrap((<UCS2Column>col).strip(chars) if chars is not None else (<UCS2Column>col).strip())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
     def lstrip(self, chars=None):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).lstrip(chars) if chars is not None else (<AsciiColumn>col).lstrip()
+            return self._wrap((<AsciiColumn>col).lstrip(chars) if chars is not None else (<AsciiColumn>col).lstrip())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).lstrip(chars) if chars is not None else (<UCS2Column>col).lstrip()
+            return self._wrap((<UCS2Column>col).lstrip(chars) if chars is not None else (<UCS2Column>col).lstrip())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
     def rstrip(self, chars=None):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).rstrip(chars) if chars is not None else (<AsciiColumn>col).rstrip()
+            return self._wrap((<AsciiColumn>col).rstrip(chars) if chars is not None else (<AsciiColumn>col).rstrip())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).rstrip(chars) if chars is not None else (<UCS2Column>col).rstrip()
+            return self._wrap((<UCS2Column>col).rstrip(chars) if chars is not None else (<UCS2Column>col).rstrip())
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
     def center(self, int width, str fillchar=' '):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).center(width, fillchar)
+            return self._wrap((<AsciiColumn>col).center(width, fillchar))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).center(width, fillchar)
+            return self._wrap((<UCS2Column>col).center(width, fillchar))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
     def ljust(self, int width, str fillchar=' '):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).ljust(width, fillchar)
+            return self._wrap((<AsciiColumn>col).ljust(width, fillchar))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).ljust(width, fillchar)
+            return self._wrap((<UCS2Column>col).ljust(width, fillchar))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
     def rjust(self, int width, str fillchar=' '):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).rjust(width, fillchar)
+            return self._wrap((<AsciiColumn>col).rjust(width, fillchar))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).rjust(width, fillchar)
+            return self._wrap((<UCS2Column>col).rjust(width, fillchar))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
     def pad(self, int width, str side='left', str fillchar=' '):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).pad(width, side, fillchar)
+            return self._wrap((<AsciiColumn>col).pad(width, side, fillchar))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).pad(width, side, fillchar)
+            return self._wrap((<UCS2Column>col).pad(width, side, fillchar))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1526,9 +1662,9 @@ cdef class _StringAccessor:
     def zfill(self, int width):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).zfill(width)
+            return self._wrap((<AsciiColumn>col).zfill(width))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).zfill(width)
+            return self._wrap((<UCS2Column>col).zfill(width))
         raise TypeError("String accessor requires string column")
 
     # ==================== Replace ====================
@@ -1537,9 +1673,9 @@ cdef class _StringAccessor:
     def replace(self, str old, str new, int count=-1):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).replace(old, new)
+            return self._wrap((<AsciiColumn>col).replace(old, new))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).replace(old, new)
+            return self._wrap((<UCS2Column>col).replace(old, new))
         raise TypeError("String accessor requires string column")
 
     # ==================== Split ====================
@@ -1548,18 +1684,18 @@ cdef class _StringAccessor:
     def split(self, str sep=None, int maxsplit=-1):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).str_split(sep, maxsplit)
+            return self._wrap((<AsciiColumn>col).str_split(sep, maxsplit))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).str_split(sep, maxsplit)
+            return self._wrap((<UCS2Column>col).str_split(sep, maxsplit))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
     def rsplit(self, str sep=None, int maxsplit=-1):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).rsplit(sep, maxsplit)
+            return self._wrap((<AsciiColumn>col).rsplit(sep, maxsplit))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).rsplit(sep, maxsplit)
+            return self._wrap((<UCS2Column>col).rsplit(sep, maxsplit))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1567,9 +1703,9 @@ cdef class _StringAccessor:
     def partition(self, str sep):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).partition(sep)
+            return self._wrap((<AsciiColumn>col).partition(sep))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).partition(sep)
+            return self._wrap((<UCS2Column>col).partition(sep))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1577,9 +1713,9 @@ cdef class _StringAccessor:
     def rpartition(self, str sep):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).rpartition(sep)
+            return self._wrap((<AsciiColumn>col).rpartition(sep))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).rpartition(sep)
+            return self._wrap((<UCS2Column>col).rpartition(sep))
         raise TypeError("String accessor requires string column")
 
     # ==================== Slicing / Access ====================
@@ -1588,18 +1724,18 @@ cdef class _StringAccessor:
     def get(self, int index, str default=''):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).get(index, default)
+            return self._wrap((<AsciiColumn>col).get(index, default))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).get(index, default)
+            return self._wrap((<UCS2Column>col).get(index, default))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
     def slice(self, int start=0, int stop=-1, int step=1):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).slice(start, stop, step)
+            return self._wrap((<AsciiColumn>col).slice(start, stop, step))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).slice(start, stop, step)
+            return self._wrap((<UCS2Column>col).slice(start, stop, step))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1607,17 +1743,17 @@ cdef class _StringAccessor:
     def len(self):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).len()
+            return self._wrap((<AsciiColumn>col).len())
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).len()
+            return self._wrap((<UCS2Column>col).len())
         raise TypeError("String accessor requires string column")
 
     def __getitem__(self, key):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).str_getitem(key)
+            return self._wrap((<AsciiColumn>col).str_getitem(key))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).str_getitem(key)
+            return self._wrap((<UCS2Column>col).str_getitem(key))
         raise TypeError("String accessor requires string column")
 
     # ==================== Concat ====================
@@ -1626,9 +1762,9 @@ cdef class _StringAccessor:
     def cat(self, other, str sep=''):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).cat(other, sep)
+            return self._wrap((<AsciiColumn>col).cat(other, sep))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).cat(other, sep)
+            return self._wrap((<UCS2Column>col).cat(other, sep))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1636,9 +1772,9 @@ cdef class _StringAccessor:
     def prefix(self, str pre):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).prefix(pre)
+            return self._wrap((<AsciiColumn>col).prefix(pre))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).prefix(pre)
+            return self._wrap((<UCS2Column>col).prefix(pre))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1646,9 +1782,9 @@ cdef class _StringAccessor:
     def suffix(self, str suf):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).suffix(suf)
+            return self._wrap((<AsciiColumn>col).suffix(suf))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).suffix(suf)
+            return self._wrap((<UCS2Column>col).suffix(suf))
         raise TypeError("String accessor requires string column")
 
     @cython.binding(False)
@@ -1656,9 +1792,9 @@ cdef class _StringAccessor:
     def repeat(self, int repeats):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return (<AsciiColumn>col).repeat(repeats)
+            return self._wrap((<AsciiColumn>col).repeat(repeats))
         elif col.dtype == TYPE_UCS2:
-            return (<UCS2Column>col).repeat(repeats)
+            return self._wrap((<UCS2Column>col).repeat(repeats))
         raise TypeError("String accessor requires string column")
 
 @cython.final
@@ -1682,27 +1818,27 @@ cdef class _DateTimeAccessor:
         if fn is None or not callable(fn):
             raise AttributeError(
                 f"`.dt.{name}` not supported for column type {type(col).__name__}")
-        return fn()
+        return _wrap_series(self._series.name, fn(), self._series._index)
 
     @cython.binding(False)
     def weekday(self):
-        return self._series._col.day_of_week()
+        return _wrap_series(self._series.name, self._series._col.day_of_week(), self._series._index)
 
     @cython.binding(False)
     def dayofweek(self):
-        return self._series._col.day_of_week()
+        return _wrap_series(self._series.name, self._series._col.day_of_week(), self._series._index)
 
     @cython.binding(False)
     def dayofyear(self):
-        return self._series._col.day_of_year()
+        return _wrap_series(self._series.name, self._series._col.day_of_year(), self._series._index)
 
     @cython.binding(False)
     def weekofyear(self):
-        return self._series._col.week_of_year()
+        return _wrap_series(self._series.name, self._series._col.week_of_year(), self._series._index)
 
     @cython.binding(False)
     def strftime(self, str fmt):
-        return getattr(self._series._col, 'strftime')(fmt)
+        return _wrap_series(self._series.name, getattr(self._series._col, 'strftime')(fmt), self._series._index)
 
 # ============================================================
 #  Category Accessor for Series
@@ -1897,6 +2033,40 @@ cdef class Series:
         return [self._col[i] for i in range(n)]
 
     # =================================================================
+    #  迭代 / 包含 / 属性透传
+    # =================================================================
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self._col[i]
+
+    def __contains__(self, val):
+        for i in range(len(self)):
+            if self._col[i] == val:
+                return True
+        return False
+
+    def __getattr__(self, name):
+        """透传列级方法/属性的临时包装视图：
+        - 调用列方法且返回 BaseColumn → 包成 Series（支持 s.col.startswith().len() 链）
+        - 返回标量/列表等非列 → 原样返回（如 .cols、.rows、.is_2d）
+        """
+        cdef BaseColumn col = self._col
+        if col is None or (name.startswith('__') and name.endswith('__')):
+            raise AttributeError(f"'Series' object has no attribute '{name}'")
+        attr = getattr(col, name, None)
+        if callable(attr):
+            def _forward(*args, **kwargs):
+                res = attr(*args, **kwargs)
+                if isinstance(res, BaseColumn):
+                    return Series(self.name, <BaseColumn>res, self._index)
+                return res
+            return _forward
+        if attr is None:
+            raise AttributeError(f"'Series' object has no attribute '{name}'")
+        return attr
+
+    # =================================================================
     #  基本信息
     # =================================================================
     
@@ -1938,44 +2108,77 @@ cdef class Series:
     # =================================================================
     
     def __getitem__(self, key):
-        """支持切片、标量、布尔掩码"""
-        from fluidframe.core.intcolumn import IntColumn
-        from fluidframe.core.index import IntIndex
-        
-        # 布尔掩码筛选
-        if isinstance(key, Series) and key.dtype == TYPE_BOOL:
-            if key._index is not self._index:
-                key = key.reindex(self._index)
-            new_col = self._col.filter(key._col)
-            new_index = self._index.filter(key._col)
-            return Series(self.name, new_col, new_index)
-        
-        # 整数索引
+        """支持切片、标量、布尔掩码（视图过滤）"""
+        cdef Py_ssize_t n = len(self)
+        cdef BaseColumn m
+        cdef list keep
+        cdef Py_ssize_t i, k, total
+        cdef Py_ssize_t* keep_c
+
+        # 布尔掩码筛选（Series 封装 IntColumn 0/1 或 BoolColumn）
+        if isinstance(key, Series):
+            m = (<Series>key)._col
+            if m.dtype != TYPE_BOOL and m.dtype != TYPE_INT:
+                raise TypeError("Series boolean mask required")
+            if m.length != n:
+                raise ValueError(f"Boolean Series length {m.length} != Series length {n}")
+            keep = []
+            for i in range(n):
+                if m[i]:
+                    keep.append(i)
+            k = len(keep)
+            if k == 0:
+                new_col = self._col.copy()
+                new_col.length = 0
+                return Series(self.name, new_col, self._index)
+            keep_c = <Py_ssize_t*>aligned_malloc(k * sizeof(Py_ssize_t))
+            if not keep_c: raise MemoryError()
+            try:
+                for i in range(k):
+                    keep_c[i] = keep[i]
+                new_col = _col_take(self._col, keep_c, k, False)
+                new_index = self._index._take(keep_c, k)
+                return Series(self.name, new_col, new_index)
+            finally:
+                os_aligned_free(keep_c)
+
+        # 整数索引（2D 列按底层扁平索引取元素，与 DataFrame 旧语义一致）
         if isinstance(key, int):
+            total = self._col.length
             if key < 0:
-                key = len(self) + key
-            if key < 0 or key >= len(self):
+                key = total + key
+            if key < 0 or key >= total:
                 raise IndexError("index out of range")
             return self._col[key]
-        
+
         # 切片
         if isinstance(key, slice):
             start, stop, step = key.indices(len(self))
             indices = list(range(start, stop, step))
-            n = len(indices)
-            indices_arr = IntColumn.from_list(indices)
-            new_col = self._col.take_by_indices_c(indices, n, False)
-            new_index = self._index.take_by_indices_c(indices, n)
-            return Series(self.name, new_col, new_index)
-        
+            k = len(indices)
+            if k == 0:
+                new_col = self._col.copy()
+                new_col.length = 0
+                return Series(self.name, new_col, self._index)
+            keep_c = <Py_ssize_t*>aligned_malloc(k * sizeof(Py_ssize_t))
+            if not keep_c: raise MemoryError()
+            try:
+                for i in range(k):
+                    keep_c[i] = indices[i]
+                new_col = _col_take(self._col, keep_c, k, False)
+                new_index = self._index._take(keep_c, k)
+                return Series(self.name, new_col, new_index)
+            finally:
+                os_aligned_free(keep_c)
+
         raise TypeError(f"invalid index type: {type(key)}")
 
     def __setitem__(self, key, value):
         """标量赋值"""
         if isinstance(key, int):
             if key < 0:
-                key = len(self) + key
-            if key < 0 or key >= len(self):
+                key = self._col.length + key
+            if key < 0 or key >= self._col.length:
                 raise IndexError("index out of range")
             self._col[key] = value
         else:
@@ -2072,63 +2275,81 @@ cdef class Series:
     
     def __eq__(self, other):
         if isinstance(other, Series):
-            if self._index is (<Series>other)._index:
-                return self._col == (<Series>other)._col
-            else:
-                aligned_other = other.reindex(self._index)
-                return self._col == aligned_other._col
+            if self._index is not (<Series>other)._index:
+                other = (<Series>other).reindex(self._index)
+            res = self._col == (<Series>other)._col
         else:
-            return self._col == other
+            res = self._col == other
+        return _wrap_series(self.name, res, self._index)
 
     def __ne__(self, other):
         if isinstance(other, Series):
-            if self._index is (<Series>other)._index:
-                return self._col != (<Series>other)._col
-            else:
-                aligned_other = other.reindex(self._index)
-                return self._col != aligned_other._col
+            if self._index is not (<Series>other)._index:
+                other = (<Series>other).reindex(self._index)
+            res = self._col != (<Series>other)._col
         else:
-            return self._col != other
+            res = self._col != other
+        return _wrap_series(self.name, res, self._index)
 
     def __lt__(self, other):
         if isinstance(other, Series):
-            if self._index is (<Series>other)._index:
-                return self._col < (<Series>other)._col
-            else:
-                aligned_other = other.reindex(self._index)
-                return self._col < aligned_other._col
+            if self._index is not (<Series>other)._index:
+                other = (<Series>other).reindex(self._index)
+            res = self._col < (<Series>other)._col
         else:
-            return self._col < other
+            res = self._col < other
+        return _wrap_series(self.name, res, self._index)
 
     def __le__(self, other):
         if isinstance(other, Series):
-            if self._index is (<Series>other)._index:
-                return self._col <= (<Series>other)._col
-            else:
-                aligned_other = other.reindex(self._index)
-                return self._col <= aligned_other._col
+            if self._index is not (<Series>other)._index:
+                other = (<Series>other).reindex(self._index)
+            res = self._col <= (<Series>other)._col
         else:
-            return self._col <= other
+            res = self._col <= other
+        return _wrap_series(self.name, res, self._index)
 
     def __gt__(self, other):
         if isinstance(other, Series):
-            if self._index is (<Series>other)._index:
-                return self._col > (<Series>other)._col
-            else:
-                aligned_other = other.reindex(self._index)
-                return self._col > aligned_other._col
+            if self._index is not (<Series>other)._index:
+                other = (<Series>other).reindex(self._index)
+            res = self._col > (<Series>other)._col
         else:
-            return self._col > other
+            res = self._col > other
+        return _wrap_series(self.name, res, self._index)
 
     def __ge__(self, other):
         if isinstance(other, Series):
-            if self._index is (<Series>other)._index:
-                return self._col >= (<Series>other)._col
-            else:
-                aligned_other = other.reindex(self._index)
-                return self._col >= aligned_other._col
+            if self._index is not (<Series>other)._index:
+                other = (<Series>other).reindex(self._index)
+            res = self._col >= (<Series>other)._col
         else:
-            return self._col >= other
+            res = self._col >= other
+        return _wrap_series(self.name, res, self._index)
+
+    def __and__(self, other):
+        if isinstance(other, Series):
+            new_col = self._col & (<Series>other)._col
+        else:
+            new_col = self._col & other
+        return Series(self.name, new_col, self._index)
+
+    def __or__(self, other):
+        if isinstance(other, Series):
+            new_col = self._col | (<Series>other)._col
+        else:
+            new_col = self._col | other
+        return Series(self.name, new_col, self._index)
+
+    def __xor__(self, other):
+        if isinstance(other, Series):
+            new_col = self._col ^ (<Series>other)._col
+        else:
+            new_col = self._col ^ other
+        return Series(self.name, new_col, self._index)
+
+    def __invert__(self):
+        return Series(self.name, ~self._col, self._index)
 
     # =================================================================
     #  单列统计
@@ -2487,6 +2708,10 @@ cdef class Series:
     
     def to_list(self):
         """转换为Python列表"""
+        return self.values
+
+    def tolist(self):
+        """pandas 风格别名：转换为 Python 列表"""
         return self.values
 
     def to_dict(self):
@@ -3172,7 +3397,8 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def __getattr__(self, name):
-        if name in self._columns: return self._columns[name]
+        if name in self._columns:
+            return Series(name, self._columns[name], self.index)
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     @cython.binding(False)
@@ -3183,23 +3409,71 @@ cdef class DataFrame:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def __getitem__(self, name):
+    def __getitem__(self, object name):
         cdef DataFrame result
         cdef str col_name
-        if isinstance(name, IntColumn):
-            return self.loc[name]
+        cdef dict columns = self._columns
+        if isinstance(name, str):
+            if name in columns:
+                return Series(name, columns[name], self.index)
+            raise KeyError(f"Column '{name}' not found")
         if isinstance(name, list):
             result = DataFrame()
             result.df_length = self.df_length
             for col_name in name:
-                if col_name not in self._columns:
+                if col_name not in columns:
                     raise KeyError(f"Column '{col_name}' not found")
-                result._columns[col_name] = self._columns[col_name]
+                result._columns[col_name] = columns[col_name]
             if self.index is not None:
                 result.index = self.index
             return result
-        # 向后兼容：返回BaseColumn
-        return self._columns[name]
+        if isinstance(name, slice):
+            return self._slice_rows(name)
+        if isinstance(name, Series):
+            c = (<Series>name)._col
+            if c.dtype == TYPE_BOOL or c.dtype == TYPE_INT:
+                return self.loc[name]
+            raise TypeError("DataFrame boolean mask must be a boolean Series")
+        if isinstance(name, IntColumn):
+            return self.loc[name]
+        if isinstance(name, BoolColumn):
+            return self.loc[name]
+        if name in columns:
+            return Series(name, columns[name], self.index)
+        raise KeyError(f"Column '{name}' not found")
+
+    cdef DataFrame _slice_rows(self, object key):
+        cdef Py_ssize_t n = self.df_length
+        cdef Py_ssize_t start, stop, step, count, i
+        start, stop, step = key.indices(n)
+        count = 0
+        if step > 0:
+            if start < stop:
+                count = (stop - start + step - 1) // step
+        else:
+            if start > stop:
+                count = (start - stop - step - 1) // (-step)
+
+        if count == 0:
+            result = DataFrame()
+            result.df_length = 0
+            for col_name, col_obj in self._columns.items():
+                result._columns[col_name] = col_obj.copy()
+                result._columns[col_name].length = 0
+            if self.index is not None:
+                result.index = self.index._take(<Py_ssize_t*>NULL, 0)
+            return result
+
+        cdef Py_ssize_t* idx = <Py_ssize_t*>aligned_malloc(count * sizeof(Py_ssize_t))
+        if not idx: raise MemoryError()
+        i = 0
+        for j in range(start, stop, step):
+            idx[i] = j
+            i += 1
+        try:
+            return self._take(idx, count)
+        finally:
+            os_aligned_free(idx)
 
     def get_series(self, name):
         """返回Series（单列代理），知道自己的名字和索引"""
@@ -3214,16 +3488,42 @@ cdef class DataFrame:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def __setitem__(self, name, value):
-        # 如果是Series，提取底层列
-        if type(value).__name__ == 'Series':
-            self._columns[name] = value._col
-        # 如果是列表，根据元素类型创建列
+    def __setitem__(self, object name, object value):
+        cdef BaseColumn new_col
+        cdef Series s
+        if not isinstance(name, str):
+            raise TypeError(f"DataFrame column names must be strings, got {type(name).__name__}")
+
+        if isinstance(value, Series):
+            s = <Series>value
+            if self.df_length > 0 and s._index is not self.index:
+                s = s.reindex(self.index)
+            new_col = s._col
+        elif isinstance(value, BaseColumn):
+            new_col = <BaseColumn>value
         elif isinstance(value, list):
-            from fluidframe.core.dataframe import column_from_list
-            self._columns[name] = column_from_list(self, name, value)
+            new_col = _column_from_list_impl(self, name, value)
+            self._check_assign_length(name, new_col)
         else:
-            self._columns[name] = value
+            new_col = _column_from_scalar(self, name, value, self.df_length)
+            self._check_assign_length(name, new_col)
+
+        self._columns[name] = new_col
+
+    cdef void _check_assign_length(self, str name, BaseColumn new_col) except *:
+        # 长度防爆校验：允许 2D 列 rows 数匹配的特例
+        if self.df_length > 0:
+            if new_col.length != self.df_length:
+                if new_col.is_2d and new_col._get_rows_c() == self.df_length:
+                    return
+                raise ValueError(
+                    f"Length of assignment column {new_col.length} != DataFrame length {self.df_length}")
+        elif new_col.length > 0:
+            self.df_length = new_col.length
+            self.index = RangeIndex(0, new_col.length)
+
+    def __delitem__(self, object name):
+        del self._columns[name]
 
     @property
     def shape(self):
@@ -4180,7 +4480,7 @@ cdef class DataFrame:
 # ============================================================
 #  DataFrame 模块级实现 —— 核心 / CRUD
 # ============================================================
-cdef BaseColumn _column_from_list_impl(DataFrame self, str name, list values):
+cpdef BaseColumn _column_from_list_impl(DataFrame self, str name, list values):
     cdef Py_ssize_t n = len(values)
     cdef Py_ssize_t i
     cdef IntColumn int_col
@@ -8207,6 +8507,9 @@ cdef _corrwith_impl(DataFrame self, other):
     cdef Py_ssize_t n = self.df_length
     if n == 0: return result
 
+    if isinstance(other, Series):
+        other = (<Series>other)._col
+
     cdef DoubleColumn other_buf = DoubleColumn(max(n, 1))
     other_buf.length = n
     self._col_to_double_buffer(other, other_buf.data_c, n, 0)
@@ -8224,6 +8527,10 @@ cdef _corrwith_impl(DataFrame self, other):
 cdef _corrcoef_impl(DataFrame self, col_a, col_b):
     cdef bint is2d
     cdef Py_ssize_t c_a, r_a, c_b, r_b
+    if isinstance(col_a, Series):
+        col_a = (<Series>col_a)._col
+    if isinstance(col_b, Series):
+        col_b = (<Series>col_b)._col
     is2d, c_a, r_a = _col_shape_probe(col_a)
     is2d, c_b, r_b = _col_shape_probe(col_b)
 
@@ -8243,6 +8550,10 @@ cdef _corrcoef_impl(DataFrame self, col_a, col_b):
 cdef _cov_withcols_impl(DataFrame self, col_a, col_b):
     cdef bint is2d
     cdef Py_ssize_t c_a, r_a, c_b, r_b
+    if isinstance(col_a, Series):
+        col_a = (<Series>col_a)._col
+    if isinstance(col_b, Series):
+        col_b = (<Series>col_b)._col
     is2d, c_a, r_a = _col_shape_probe(col_a)
     is2d, c_b, r_b = _col_shape_probe(col_b)
 
