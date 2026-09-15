@@ -7659,28 +7659,18 @@ cdef _value_counts_impl(DataFrame self, str col_name):
         val = keys[i]
         counts[val] = counts.get(val, 0) + 1
 
+    # 按频次降序（稳定排序），构造 pandas 风格：以值为索引的 count Series
     sorted_items = sorted(counts.items(), key=lambda x: -x[1])
-    cdef DataFrame result = DataFrame()
-    result.df_length = len(sorted_items)
-    result.index = RangeIndex(0, len(sorted_items))
     cdef list key_list = [k for k, v in sorted_items]
-
-    if _col_is_2d(col):
-        key_col = _col_from_keys_2d(col, key_list)
-    else:
-        key_col = _column_from_list_impl(result, col_name, key_list)
+    cdef list cnt_list = [v for k, v in sorted_items]
 
     cdef IntColumn cnt_col = IntColumn(len(sorted_items))
     cnt_col.length = len(sorted_items)
     cdef int* cnt_ptr = cnt_col.data_c
-
     for i in range(len(sorted_items)):
-        cnt_ptr[i] = sorted_items[i][1]
+        cnt_ptr[i] = cnt_list[i]
 
-    result._columns[col_name] = key_col
-    result._columns['count'] = cnt_col
-
-    return result
+    return Series('count', cnt_col, StringIndex(key_list))
 
 cdef _nunique_impl(DataFrame self, str col_name=None):
     cdef dict result = {}
@@ -7979,20 +7969,24 @@ cdef _memory_usage_impl(DataFrame self):
     return total
 
 cdef _to_dict_impl(DataFrame self):
-    """导出为字段字典 (Columnar Dictionary)"""
+    """导出为字段字典：{列名: Series}（值列与 self.index 对齐；对标 pandas 列式导出语义）"""
     cdef dict result = {}
     cdef str name
     cdef BaseColumn col
 
     for name, col in self._columns.items():
-        result[name] = _col_to_list(col)
+        result[name] = Series(name, col, self.index)
     return result
 
 cdef _to_json_impl(DataFrame self, bint orient_records=True):
     """导出为 JSON"""
     import json
 
-    cdef dict columns_dict = _to_dict_impl(self)
+    cdef dict columns_dict = {}
+    cdef str jname
+    cdef BaseColumn jcol
+    for jname, jcol in self._columns.items():
+        columns_dict[jname] = _col_to_list(jcol)
 
     if not orient_records:
         return json.dumps(columns_dict)

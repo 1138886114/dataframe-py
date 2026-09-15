@@ -1387,9 +1387,10 @@ def test_display_export_2d():
     s = df.to_string()
     check('disp 2d row0', '[1, 10]' in s)
     check('disp 2d row3', '[4, 40]' in s)
-    # to_dict：每个逻辑行一个行向量
+    # to_dict：{列名: Series}（2D 列与 df[col] 语义一致，值按底层扁平索引）
     d = df.to_dict()
-    check('exp 2d dict', d['a2d'] == [[1, 10], [2, 20], [3, 30], [4, 40]])
+    check('exp 2d dict is Series', isinstance(d['a2d'], Series))
+    check('exp 2d dict flat', d['a2d'].tolist() == [1, 2, 3, 4])
     # to_numpy
     arr = df.to_numpy()
     check('exp 2d numpy', arr[0][2] == [1, 10] and arr[3][2] == [4, 40])
@@ -1645,12 +1646,12 @@ def test_agg_stats_2d():
     # nunique：整行去重 = 3（旧实现 flat 读子列0 只得 2）
     check('agg2d nunique', df.nunique('a2d') == 3)
 
-    # value_counts：行 (2,30) 计 2，(1,10)/(1,20) 各 1；结果 key 列保持 2D
+    # value_counts：2D 列 → Series：行 (2,30) 计 2，(1,10)/(1,20) 各 1；索引为行 key，按频次降序
     vc = df.value_counts('a2d')
+    check('agg2d vc is Series', isinstance(vc, Series))
     check('agg2d vc total', len(vc) == 3)
-    check('agg2d vc cols', vc['a2d'].cols == 2 and vc['a2d'].rows == 3)
-    check('agg2d vc flat', [vc['a2d'][i] for i in range(6)] == [2, 1, 1, 30, 10, 20])
-    check('agg2d vc counts', [vc['count'][i] for i in range(3)] == [2, 1, 1])
+    check('agg2d vc top key', vc.index[0] == (2, 30))
+    check('agg2d vc counts', vc[0] == 2 and vc[1] == 1 and vc[2] == 1)
 
     # argsort_by：整行字典序 [0,1,2,3]（旧实现 flat 排子列0 → [1,0,3,2]）
     check('agg2d argsort', df.argsort_by('a2d') == [0, 1, 2, 3])
@@ -1875,9 +1876,12 @@ def test_value_counts():
     df = DataFrame({'tag': str})
     for t in ['a', 'b', 'a', 'c', 'a', 'b']: df.append_row(tag=t)
     vc = df.value_counts('tag')
-    check('value_counts shape', vc.shape[0] == 3)
-    check('value_counts top', vc['tag'][0] == 'a')
-    check('value_counts count', vc['count'][0] == 3)
+    check('value_counts is Series', isinstance(vc, Series))
+    check('value_counts len', len(vc) == 3)
+    check('value_counts top', vc.index[0] == 'a')
+    check('value_counts label a', vc['a'] == 3)
+    check('value_counts label b', vc['b'] == 2)
+    check('value_counts label c', vc['c'] == 1)
 
 def test_clip_column():
     df = DataFrame({'a': float})
@@ -2218,13 +2222,14 @@ def test_to_dict():
     df.append_row(a=3, b=4.0, c='world')
     d = df.to_dict()
     check('to_dict keys', set(d.keys()) == {'a', 'b', 'c'})
-    check('to_dict int', d['a'] == [1, 3])
-    check('to_dict float', d['b'] == [2.5, 4.0])
-    check('to_dict str', d['c'] == ['hello', 'world'])
+    check('to_dict is Series', isinstance(d['a'], Series))
+    check('to_dict int', d['a'].tolist() == [1, 3])
+    check('to_dict float', d['b'].tolist() == [2.5, 4.0])
+    check('to_dict str', d['c'].tolist() == ['hello', 'world'])
 
     # Empty DataFrame
     df2 = DataFrame({'a': int})
-    check('to_dict empty', df2.to_dict() == {'a': []})
+    check('to_dict empty', df2.to_dict()['a'].tolist() == [])
 
 def test_to_json():
     import json
@@ -2256,7 +2261,7 @@ def test_abs():
 
     # Empty
     df2 = DataFrame({'x': int})
-    check('abs empty', df2.abs().to_dict() == {'x': []})
+    check('abs empty', df2.abs().to_dict()['x'].tolist() == [])
 
     # Mixed types (string passthrough)
     df3 = DataFrame({'a': str})
