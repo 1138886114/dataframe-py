@@ -7722,26 +7722,15 @@ cdef class DateColumn(BaseColumn):
         if self.length == 0: raise ValueError("empty column")
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
-        cdef int32_t* ptr = <int32_t*>self.data_c
-        cdef Py_ssize_t i, j, base
-        cdef int32_t max_val
-
         if not self.is_2d or c <= 1:
-            max_val = ptr[0]
-            with nogil:
-                for i in range(1, self.length):
-                    if ptr[i] > max_val:
-                        max_val = ptr[i]
-            return self._to_ymd_int(max_val)
+            return self._to_ymd_int(_n_max[int32_t](self.data_c, self.length))
 
+        cdef Py_ssize_t j
+        cdef int32_t mv
         cdef list results = [None] * c
         for j in range(c):
-            base = j * r
-            max_val = ptr[base]
-            for i in range(1, r):
-                if ptr[base + i] > max_val:
-                    max_val = ptr[base + i]
-            results[j] = self._to_ymd_int(max_val)
+            mv = _n_max[int32_t](self.data_c + j * r, r)
+            results[j] = self._to_ymd_int(mv)
         return results
 
     @cython.binding(False)
@@ -7750,26 +7739,15 @@ cdef class DateColumn(BaseColumn):
         if self.length == 0: raise ValueError("empty column")
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
-        cdef int32_t* ptr = <int32_t*>self.data_c
-        cdef Py_ssize_t i, j, base
-        cdef int32_t min_val
-
         if not self.is_2d or c <= 1:
-            min_val = ptr[0]
-            with nogil:
-                for i in range(1, self.length):
-                    if ptr[i] < min_val:
-                        min_val = ptr[i]
-            return self._to_ymd_int(min_val)
+            return self._to_ymd_int(_n_min[int32_t](self.data_c, self.length))
 
+        cdef Py_ssize_t j
+        cdef int32_t mv
         cdef list results = [None] * c
         for j in range(c):
-            base = j * r
-            min_val = ptr[base]
-            for i in range(1, r):
-                if ptr[base + i] < min_val:
-                    min_val = ptr[base + i]
-            results[j] = self._to_ymd_int(min_val)
+            mv = _n_min[int32_t](self.data_c + j * r, r)
+            results[j] = self._to_ymd_int(mv)
         return results
 
     @cython.binding(False)
@@ -7986,13 +7964,9 @@ cdef class DateColumn(BaseColumn):
         if n == 0: return col
 
         cdef int32_t fill_val = self._resolve_date(fill)
-        cdef int32_t* col_ptr = <int32_t*>col.data_c
-        cdef int32_t* self_ptr = <int32_t*>self.data_c
-        cdef int* mask_ptr = mask.data_c
-        cdef Py_ssize_t i
         with nogil:
-            for i in range(n):
-                col_ptr[i] = self_ptr[i] if mask_ptr[i] != 0 else fill_val
+            _n_where_mask(<int32_t*>col.data_c, <int32_t*>self.data_c,
+                          mask.data_c, fill_val, n)
         return col
 
     # ------------------------------------------------------------
@@ -8406,13 +8380,10 @@ cdef class DateColumn(BaseColumn):
     # 纯 C 32 位整数比较算子 (完全向量化)
     # ------------------------------------------------------------
     cdef IntColumn _cmp_op(self, val, int op):
-        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t n = self.length
         cdef IntColumn res = IntColumn(max(n, 1), cols=self.num_cols)
         res.length = n
 
-        cdef int32_t* s_ptr = <int32_t*>self.data_c
-        cdef int32_t* o_ptr
-        cdef int* r_ptr = res.data_c
         cdef char err_buf[128]
         cdef int32_t v
         cdef DateColumn other
@@ -8422,35 +8393,13 @@ cdef class DateColumn(BaseColumn):
             if other.length != n:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", n, other.length)
                 raise ValueError(err_buf.decode('ascii'))
-            o_ptr = <int32_t*>other.data_c
             with nogil:
-                if op == 0:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] < o_ptr[i] else 0
-                elif op == 1:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] <= o_ptr[i] else 0
-                elif op == 2:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] > o_ptr[i] else 0
-                elif op == 3:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] >= o_ptr[i] else 0
-                elif op == 4:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] == o_ptr[i] else 0
-                elif op == 5:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] != o_ptr[i] else 0
+                _n_cmp_col(<int32_t*>self.data_c, <int32_t*>other.data_c,
+                           res.data_c, n, op)
         else:
             v = self._resolve_date(val)
             with nogil:
-                if op == 0:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] < v else 0
-                elif op == 1:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] <= v else 0
-                elif op == 2:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] > v else 0
-                elif op == 3:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] >= v else 0
-                elif op == 4:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] == v else 0
-                elif op == 5:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] != v else 0
+                _n_cmp_scalar(<int32_t*>self.data_c, res.data_c, v, n, op)
         return res
 
     @cython.always_allow_keywords(False)
@@ -9790,26 +9739,15 @@ cdef class DateTimeColumn(BaseColumn):
         if self.length == 0: raise ValueError("empty column")
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
-        cdef int64_t* ptr = <int64_t*>self.data_c
-        cdef Py_ssize_t i, j, base
-        cdef int64_t max_val
-
         if not self.is_2d or c <= 1:
-            max_val = ptr[0]
-            with nogil:
-                for i in range(1, self.length):
-                    if ptr[i] > max_val:
-                        max_val = ptr[i]
-            return max_val
+            return _n_max[int64_t](<int64_t*>self.data_c, self.length)
 
+        cdef Py_ssize_t j
+        cdef int64_t mv
         cdef list results = [None] * c
         for j in range(c):
-            base = j * r
-            max_val = ptr[base]
-            for i in range(1, r):
-                if ptr[base + i] > max_val:
-                    max_val = ptr[base + i]
-            results[j] = max_val
+            mv = _n_max[int64_t](<int64_t*>self.data_c + j * r, r)
+            results[j] = mv
         return results
 
     @cython.binding(False)
@@ -9818,26 +9756,15 @@ cdef class DateTimeColumn(BaseColumn):
         if self.length == 0: raise ValueError("empty column")
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
-        cdef int64_t* ptr = <int64_t*>self.data_c
-        cdef Py_ssize_t i, j, base
-        cdef int64_t min_val
-
         if not self.is_2d or c <= 1:
-            min_val = ptr[0]
-            with nogil:
-                for i in range(1, self.length):
-                    if ptr[i] < min_val:
-                        min_val = ptr[i]
-            return min_val
+            return _n_min[int64_t](<int64_t*>self.data_c, self.length)
 
+        cdef Py_ssize_t j
+        cdef int64_t mv
         cdef list results = [None] * c
         for j in range(c):
-            base = j * r
-            min_val = ptr[base]
-            for i in range(1, r):
-                if ptr[base + i] < min_val:
-                    min_val = ptr[base + i]
-            results[j] = min_val
+            mv = _n_min[int64_t](<int64_t*>self.data_c + j * r, r)
+            results[j] = mv
         return results
 
     @cython.binding(False)
@@ -9852,14 +9779,7 @@ cdef class DateTimeColumn(BaseColumn):
     def unique(self):
         cdef set seen = set()
         cdef list result = []
-        cdef Py_ssize_t i, n = self.length
-        cdef int64_t* ptr = <int64_t*>self.data_c
-        for i in range(n):
-            val = ptr[i]
-            if val not in seen:
-                seen.add(val)
-                result.append(val)
-        return result
+        return _n_unique(<int64_t*>self.data_c, self.length, seen, result)
 
     # ------------------------------------------------------------
     # 字段提取 (时分秒直接算术提取，避免冗余的 YMD 历法计算)
@@ -9981,14 +9901,9 @@ cdef class DateTimeColumn(BaseColumn):
         if n == 0: return col
 
         cdef int64_t fill_val = self._resolve_dt(fill) if fill is not None else 0
-        cdef int64_t* col_ptr = <int64_t*>col.data_c
-        cdef int64_t* self_ptr = <int64_t*>self.data_c
-        cdef int* mask_ptr = mask.data_c
-        cdef Py_ssize_t i
-
         with nogil:
-            for i in range(n):
-                col_ptr[i] = self_ptr[i] if mask_ptr[i] != 0 else fill_val
+            _n_where_mask(<int64_t*>col.data_c, <int64_t*>self.data_c,
+                          mask.data_c, fill_val, n)
         return col
 
     @cython.always_allow_keywords(False)
@@ -10017,17 +9932,8 @@ cdef class DateTimeColumn(BaseColumn):
                 j += 1
 
         cdef Py_ssize_t valid_m = j
-        if valid_m > 0:
-            qsort(v_arr, valid_m, sizeof(int64_t), _cmp_int64)
-
-        cdef int64_t* s_ptr = <int64_t*>self.data_c
-        cdef Py_ssize_t i
-        cdef void* found
-
         with nogil:
-            for i in range(n):
-                found = bsearch(&s_ptr[i], v_arr, valid_m, sizeof(int64_t), _cmp_int64)
-                r_ptr[i] = 1 if found != NULL else 0
+            _n_isin(<int64_t*>self.data_c, v_arr, n, valid_m, <unsigned char*>r_ptr)
 
         os_aligned_free(v_arr)
         return res
@@ -10136,13 +10042,10 @@ cdef class DateTimeColumn(BaseColumn):
     # 纯 C 64 位整数比较算子 (完全向量化)
     # ------------------------------------------------------------
     cdef IntColumn _cmp_op(self, object val, int op):
-        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t n = self.length
         cdef IntColumn res = IntColumn(max(n, 1), cols=self.num_cols)
         res.length = n
 
-        cdef int64_t* s_ptr = <int64_t*>self.data_c
-        cdef int64_t* o_ptr
-        cdef int* r_ptr = res.data_c
         cdef char err_buf[128]
         cdef int64_t v
         cdef DateTimeColumn other
@@ -10152,35 +10055,13 @@ cdef class DateTimeColumn(BaseColumn):
             if other.length != n:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", n, other.length)
                 raise ValueError(err_buf.decode('ascii'))
-            o_ptr = <int64_t*>other.data_c
             with nogil:
-                if op == 0:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] < o_ptr[i] else 0
-                elif op == 1:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] <= o_ptr[i] else 0
-                elif op == 2:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] > o_ptr[i] else 0
-                elif op == 3:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] >= o_ptr[i] else 0
-                elif op == 4:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] == o_ptr[i] else 0
-                elif op == 5:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] != o_ptr[i] else 0
+                _n_cmp_col(<int64_t*>self.data_c, <int64_t*>other.data_c,
+                           res.data_c, n, op)
         else:
             v = self._resolve_dt(val)
             with nogil:
-                if op == 0:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] < v else 0
-                elif op == 1:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] <= v else 0
-                elif op == 2:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] > v else 0
-                elif op == 3:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] >= v else 0
-                elif op == 4:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] == v else 0
-                elif op == 5:
-                    for i in range(n): r_ptr[i] = 1 if s_ptr[i] != v else 0
+                _n_cmp_scalar(<int64_t*>self.data_c, res.data_c, v, n, op)
         return res
 
     @cython.always_allow_keywords(False)
@@ -10506,26 +10387,15 @@ cdef class TimeColumn(BaseColumn):
         if self.length == 0: raise ValueError("empty column")
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
-        cdef int32_t* ptr = self.data_c
-        cdef Py_ssize_t i, j, base
-        cdef int32_t max_val
-
         if not self.is_2d or c <= 1:
-            max_val = ptr[0]
-            with nogil:
-                for i in range(1, self.length):
-                    if ptr[i] > max_val:
-                        max_val = ptr[i]
-            return max_val
+            return _n_max[int32_t](self.data_c, self.length)
 
+        cdef Py_ssize_t j
+        cdef int32_t mv
         cdef list results = [None] * c
         for j in range(c):
-            base = j * r
-            max_val = ptr[base]
-            for i in range(1, r):
-                if ptr[base + i] > max_val:
-                    max_val = ptr[base + i]
-            results[j] = max_val
+            mv = _n_max[int32_t](self.data_c + j * r, r)
+            results[j] = mv
         return results
 
     @cython.binding(False)
@@ -10534,26 +10404,15 @@ cdef class TimeColumn(BaseColumn):
         if self.length == 0: raise ValueError("empty column")
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
-        cdef int32_t* ptr = self.data_c
-        cdef Py_ssize_t i, j, base
-        cdef int32_t min_val
-
         if not self.is_2d or c <= 1:
-            min_val = ptr[0]
-            with nogil:
-                for i in range(1, self.length):
-                    if ptr[i] < min_val:
-                        min_val = ptr[i]
-            return min_val
+            return _n_min[int32_t](self.data_c, self.length)
 
+        cdef Py_ssize_t j
+        cdef int32_t mv
         cdef list results = [None] * c
         for j in range(c):
-            base = j * r
-            min_val = ptr[base]
-            for i in range(1, r):
-                if ptr[base + i] < min_val:
-                    min_val = ptr[base + i]
-            results[j] = min_val
+            mv = _n_min[int32_t](self.data_c + j * r, r)
+            results[j] = mv
         return results
 
     @cython.binding(False)
@@ -10568,14 +10427,7 @@ cdef class TimeColumn(BaseColumn):
     def unique(self):
         cdef set seen = set()
         cdef list result = []
-        cdef Py_ssize_t i, n = self.length
-        cdef int32_t val
-        for i in range(n):
-            val = self.data_c[i]
-            if val not in seen:
-                seen.add(val)
-                result.append(val)
-        return result
+        return _n_unique(self.data_c, self.length, seen, result)
 
     # ------------------------------------------------------------
     # 时/分/秒提取 (定点乘法展开，完全自动 SIMD 向量化)
@@ -10633,13 +10485,8 @@ cdef class TimeColumn(BaseColumn):
         if n == 0: return col
 
         cdef int32_t fill_val = self._resolve_time(fill) if fill is not None else 0
-        cdef int32_t* col_ptr = col.data_c
-        cdef int32_t* self_ptr = self.data_c
-        cdef int32_t* mask_ptr = <int32_t*>mask.data_c
-        cdef Py_ssize_t i
         with nogil:
-            for i in range(n):
-                col_ptr[i] = self_ptr[i] if mask_ptr[i] != 0 else fill_val
+            _n_where_mask(col.data_c, self.data_c, mask.data_c, fill_val, n)
         return col
 
     # ------------------------------------------------------------
@@ -10676,17 +10523,8 @@ cdef class TimeColumn(BaseColumn):
             keys_c[ki] = <int32_t>val
             ki += 1
 
-        qsort(keys_c, num_keys, sizeof(int32_t), _cmp_int32)
-
-        cdef int32_t* ptr = self.data_c
-        cdef unsigned char* res_ptr = res.data_c
-        cdef Py_ssize_t i
-        cdef int32_t target
-
         with nogil:
-            for i in range(n):
-                target = ptr[i]
-                res_ptr[i] = 1 if bsearch(&target, keys_c, num_keys, sizeof(int32_t), _cmp_int32) != NULL else 0
+            _n_isin(self.data_c, keys_c, n, num_keys, res.data_c)
 
         os_aligned_free(keys_c)
         return res
@@ -10795,13 +10633,10 @@ cdef class TimeColumn(BaseColumn):
     # 纯 C 32位无分支比较算子 (完全向量化)
     # ------------------------------------------------------------
     cdef IntColumn _cmp_op(self, val, int op):
-        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t n = self.length
         cdef IntColumn res = IntColumn(max(n, 1), cols=self.num_cols)
         res.length = n
 
-        cdef int32_t* s_ptr = self.data_c
-        cdef int32_t* o_ptr
-        cdef int32_t* r_ptr = <int32_t*>res.data_c
         cdef char err_buf[128]
         cdef int32_t v
         cdef TimeColumn other
@@ -10811,35 +10646,12 @@ cdef class TimeColumn(BaseColumn):
             if other.length != n:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", n, other.length)
                 raise ValueError(err_buf.decode('ascii'))
-            o_ptr = other.data_c
             with nogil:
-                if op == 0:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] < o_ptr[i])
-                elif op == 1:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] <= o_ptr[i])
-                elif op == 2:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] > o_ptr[i])
-                elif op == 3:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] >= o_ptr[i])
-                elif op == 4:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] == o_ptr[i])
-                elif op == 5:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] != o_ptr[i])
+                _n_cmp_col(self.data_c, other.data_c, res.data_c, n, op)
         else:
             v = self._resolve_time(val)
             with nogil:
-                if op == 0:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] < v)
-                elif op == 1:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] <= v)
-                elif op == 2:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] > v)
-                elif op == 3:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] >= v)
-                elif op == 4:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] == v)
-                elif op == 5:
-                    for i in range(n): r_ptr[i] = <int32_t>(s_ptr[i] != v)
+                _n_cmp_scalar(self.data_c, res.data_c, v, n, op)
         return res
 
     @cython.always_allow_keywords(False)

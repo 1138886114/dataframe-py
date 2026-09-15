@@ -1083,5 +1083,99 @@ cdef int _cmp_int32(const void* a, const void* b) noexcept nogil:
 
 
 # ============================================================
+#  DateColumn / DateTimeColumn / TimeColumn 共享的固定宽度整数核
+#  (fused over int32_t/int64_t)：三列只保留「2D 簿记 + 值域解析」外壳，
+#  纯元素循环统一委托到这里，语义与旧的逐列实现逐字节等价。
+# ============================================================
+ctypedef fused DateLike:
+    int32_t
+    int64_t
+
+cdef inline DateLike _n_max(DateLike* ptr, Py_ssize_t n) noexcept nogil:
+    """返回 ptr[0..n) 的最大值（调用方保证 n > 0）。"""
+    cdef Py_ssize_t i
+    cdef DateLike m = ptr[0]
+    for i in range(1, n):
+        if ptr[i] > m:
+            m = ptr[i]
+    return m
+
+cdef inline DateLike _n_min(DateLike* ptr, Py_ssize_t n) noexcept nogil:
+    """返回 ptr[0..n) 的最小值（调用方保证 n > 0）。"""
+    cdef Py_ssize_t i
+    cdef DateLike m = ptr[0]
+    for i in range(1, n):
+        if ptr[i] < m:
+            m = ptr[i]
+    return m
+
+cdef inline void _n_where_mask(DateLike* dst, DateLike* src, int* mask,
+                               DateLike fill, Py_ssize_t n) noexcept nogil:
+    """无分支向量化掩码选择：mask != 0 取 src，否则取 fill。"""
+    cdef Py_ssize_t i
+    for i in range(n):
+        dst[i] = src[i] if mask[i] != 0 else fill
+
+cdef inline void _n_cmp_scalar(DateLike* s, int* r, DateLike v,
+                               Py_ssize_t n, int op) noexcept nogil:
+    """元素级与标量比较，把布尔结果写入 0/1 的 int 掩码。"""
+    cdef Py_ssize_t i
+    if op == 0:
+        for i in range(n): r[i] = s[i] < v
+    elif op == 1:
+        for i in range(n): r[i] = s[i] <= v
+    elif op == 2:
+        for i in range(n): r[i] = s[i] > v
+    elif op == 3:
+        for i in range(n): r[i] = s[i] >= v
+    elif op == 4:
+        for i in range(n): r[i] = s[i] == v
+    else:
+        for i in range(n): r[i] = s[i] != v
+
+cdef inline void _n_cmp_col(DateLike* s, DateLike* o, int* r,
+                            Py_ssize_t n, int op) noexcept nogil:
+    """元素级同类型列比较，把布尔结果写入 0/1 的 int 掩码。"""
+    cdef Py_ssize_t i
+    if op == 0:
+        for i in range(n): r[i] = s[i] < o[i]
+    elif op == 1:
+        for i in range(n): r[i] = s[i] <= o[i]
+    elif op == 2:
+        for i in range(n): r[i] = s[i] > o[i]
+    elif op == 3:
+        for i in range(n): r[i] = s[i] >= o[i]
+    elif op == 4:
+        for i in range(n): r[i] = s[i] == o[i]
+    else:
+        for i in range(n): r[i] = s[i] != o[i]
+
+cdef list _n_unique(DateLike* ptr, Py_ssize_t n, set seen, list result) except *:
+    """按存储值域去重（DateTime/Time 使用）；Date 因返回 YYYYMMDD 保留自身实现。"""
+    cdef Py_ssize_t i
+    cdef DateLike val
+    for i in range(n):
+        val = ptr[i]
+        if val not in seen:
+            seen.add(val)
+            result.append(val)
+    return result
+
+cdef inline void _n_isin(DateLike* src, DateLike* keys, Py_ssize_t n,
+                         Py_ssize_t m, unsigned char* out) noexcept nogil:
+    """齐集检索：就地 qsort keys 后逐元素二分查找，结果写入 0/1 掩码。"""
+    cdef Py_ssize_t i
+    cdef int (*comp)(const void*, const void*) noexcept nogil
+    if DateLike is int32_t:
+        comp = _cmp_int32
+    else:
+        comp = _cmp_int64
+    if m > 0:
+        qsort(keys, m, sizeof(DateLike), comp)
+    for i in range(n):
+        out[i] = 1 if bsearch(&src[i], keys, m, sizeof(DateLike), comp) != NULL else 0
+
+
+# ============================================================
 #  TimeColumn 类实现 (全面 int32_t 与 SIMD 向量化优化)
 # ============================================================
