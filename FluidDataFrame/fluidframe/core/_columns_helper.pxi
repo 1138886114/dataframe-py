@@ -794,6 +794,288 @@ cdef inline double _n_accum_mad(numeric_t* ptr, Py_ssize_t n, double m) noexcept
         total_dev += fabs(<double>ptr[i] - m)
     return total_dev / <double>n
 
+cdef inline void _n_roll_sum(numeric_t* src, double* dst, Py_ssize_t c,
+                             Py_ssize_t r, Py_ssize_t window) noexcept nogil:
+    """滚动求和（O(N) 滑窗），输出 double。c/r 为列数/行数（列优先布局）。"""
+    cdef Py_ssize_t col_idx, offset, i
+    cdef double s
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            s = 0.0
+            for i in range(window):
+                s += <double>src[offset + i]
+            dst[offset + window - 1] = s
+            for i in range(window, r):
+                s += <double>src[offset + i] - <double>src[offset + i - window]
+                dst[offset + i] = s
+
+cdef inline void _n_roll_mean(numeric_t* src, double* dst, Py_ssize_t c,
+                              Py_ssize_t r, Py_ssize_t window) noexcept nogil:
+    """滚动均值（O(N) 滑窗），输出 double。"""
+    cdef double inv_w = 1.0 / <double>window
+    cdef Py_ssize_t col_idx, offset, i
+    cdef double s
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            s = 0.0
+            for i in range(window):
+                s += <double>src[offset + i]
+            dst[offset + window - 1] = s * inv_w
+            for i in range(window, r):
+                s += <double>src[offset + i] - <double>src[offset + i - window]
+                dst[offset + i] = s * inv_w
+
+cdef inline void _n_roll_var(numeric_t* src, double* dst, Py_ssize_t c,
+                             Py_ssize_t r, Py_ssize_t window,
+                             bint ddof) noexcept nogil:
+    """滚动方差（O(N) 稳定滑窗），输出 double。"""
+    cdef double inv_w = 1.0 / <double>window
+    cdef Py_ssize_t col_idx, offset, i
+    cdef double s, s2, val, val_old, var_val
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            s = 0.0; s2 = 0.0
+            for i in range(window):
+                val = <double>src[offset + i]
+                s += val; s2 += val * val
+            var_val = s2 - (s * s) * inv_w
+            if var_val < 0.0: var_val = 0.0
+            if ddof:
+                dst[offset + window - 1] = var_val / <double>(window - 1)
+            else:
+                dst[offset + window - 1] = var_val * inv_w
+            for i in range(window, r):
+                val = <double>src[offset + i]
+                val_old = <double>src[offset + i - window]
+                s += val - val_old
+                s2 += val * val - val_old * val_old
+                var_val = s2 - (s * s) * inv_w
+                if var_val < 0.0: var_val = 0.0
+                if ddof:
+                    dst[offset + i] = var_val / <double>(window - 1)
+                else:
+                    dst[offset + i] = var_val * inv_w
+
+cdef inline void _n_roll_skew(numeric_t* src, double* dst, Py_ssize_t c,
+                              Py_ssize_t r, Py_ssize_t window) noexcept nogil:
+    """滚动偏度（直接窗口重算，O(N*W)），输出 double。"""
+    cdef double n_f = <double>window
+    cdef Py_ssize_t col_idx, offset, i, j
+    cdef double s, mean, m2, m3, val, std_dev
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            for i in range(window - 1, r):
+                s = 0.0
+                for j in range(i - window + 1, i + 1):
+                    s += <double>src[offset + j]
+                mean = s / n_f
+                m2 = 0.0; m3 = 0.0
+                for j in range(i - window + 1, i + 1):
+                    val = <double>src[offset + j] - mean
+                    m2 += val * val
+                    m3 += val * val * val
+                if m2 > 1e-14:
+                    std_dev = sqrt(m2 / n_f)
+                    dst[offset + i] = (m3 / n_f) / (std_dev * std_dev * std_dev)
+                else:
+                    dst[offset + i] = 0.0
+
+cdef inline void _n_roll_kurt(numeric_t* src, double* dst, Py_ssize_t c,
+                              Py_ssize_t r, Py_ssize_t window) noexcept nogil:
+    """滚动峰度（直接窗口重算，O(N*W)），输出 double。"""
+    cdef double n_f = <double>window
+    cdef Py_ssize_t col_idx, offset, i, j
+    cdef double s, mean, m2, m4, val, variance
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            for i in range(window - 1, r):
+                s = 0.0
+                for j in range(i - window + 1, i + 1):
+                    s += <double>src[offset + j]
+                mean = s / n_f
+                m2 = 0.0; m4 = 0.0
+                for j in range(i - window + 1, i + 1):
+                    val = <double>src[offset + j] - mean
+                    m2 += val * val
+                    m4 += val * val * val * val
+                if m2 > 1e-14:
+                    variance = m2 / n_f
+                    dst[offset + i] = (m4 / n_f) / (variance * variance) - 3.0
+                else:
+                    dst[offset + i] = 0.0
+
+cdef inline void _n_roll_quantile(numeric_t* src, double* dst, Py_ssize_t c,
+                                  Py_ssize_t r, Py_ssize_t window,
+                                  double q) except *:
+    """滚动分位数（线性插值，每窗口 qsort），输出 double。"""
+    cdef numeric_t* buf = <numeric_t*>aligned_malloc(window * sizeof(numeric_t))
+    if buf == NULL:
+        raise MemoryError()
+    cdef double pos = q * <double>(window - 1)
+    cdef Py_ssize_t i_low = <Py_ssize_t>pos
+    cdef double frac = pos - <double>i_low
+    cdef int (*comp)(const void*, const void*) noexcept nogil
+    if numeric_t is int:
+        comp = _cmp_int
+    else:
+        comp = _cmp_double_asc
+    cdef Py_ssize_t col_idx, offset, i
+    try:
+        with nogil:
+            for col_idx in range(c):
+                offset = col_idx * r
+                for i in range(window - 1, r):
+                    memcpy(buf, src + offset + (i - window + 1), window * sizeof(numeric_t))
+                    qsort(buf, window, sizeof(numeric_t), comp)
+                    if i_low >= window - 1:
+                        dst[offset + i] = <double>buf[window - 1]
+                    else:
+                        dst[offset + i] = <double>buf[i_low] + frac * (<double>buf[i_low + 1] - <double>buf[i_low])
+    finally:
+        os_aligned_free(buf)
+
+cdef inline void _n_cumsum(numeric_t* src, numeric_t* dst, Py_ssize_t c,
+                           Py_ssize_t r) noexcept nogil:
+    """逐列独立累计求和（列优先布局）。"""
+    cdef numeric_t total
+    cdef Py_ssize_t col_idx, offset, i
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            if numeric_t is int:
+                total = 0
+            else:
+                total = 0.0
+            for i in range(r):
+                total += src[offset + i]
+                dst[offset + i] = total
+
+cdef inline void _n_cumprod(numeric_t* src, numeric_t* dst, Py_ssize_t c,
+                            Py_ssize_t r) noexcept nogil:
+    """逐列独立累计乘积（double 累加器，写出时强转回目标类型）。"""
+    cdef double total
+    cdef Py_ssize_t col_idx, offset, i
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            total = 1.0
+            for i in range(r):
+                total *= <double>src[offset + i]
+                dst[offset + i] = <numeric_t>total
+
+cdef inline void _n_cummax(numeric_t* src, numeric_t* dst, Py_ssize_t c,
+                           Py_ssize_t r) noexcept nogil:
+    """逐列独立累计最大值（列优先布局，r==0 时跳过）。"""
+    cdef numeric_t cur_max
+    cdef Py_ssize_t col_idx, offset, i
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            if r > 0:
+                cur_max = src[offset]
+                dst[offset] = cur_max
+                for i in range(1, r):
+                    if src[offset + i] > cur_max:
+                        cur_max = src[offset + i]
+                    dst[offset + i] = cur_max
+
+cdef inline void _n_cummin(numeric_t* src, numeric_t* dst, Py_ssize_t c,
+                           Py_ssize_t r) noexcept nogil:
+    """逐列独立累计最小值（列优先布局，r==0 时跳过）。"""
+    cdef numeric_t cur_min
+    cdef Py_ssize_t col_idx, offset, i
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            if r > 0:
+                cur_min = src[offset]
+                dst[offset] = cur_min
+                for i in range(1, r):
+                    if src[offset + i] < cur_min:
+                        cur_min = src[offset + i]
+                    dst[offset + i] = cur_min
+
+cdef inline void _n_diff(numeric_t* src, numeric_t* dst, Py_ssize_t c,
+                         Py_ssize_t r, int periods) noexcept nogil:
+    """逐列差分：periods>=0 时后值减前值，periods<0 时前值减后值。
+    非差分位填 0（int）或 NAN（double），与历史语义一致。"""
+    cdef numeric_t fill
+    cdef Py_ssize_t col_idx, offset, i
+    cdef int p = periods if periods >= 0 else -periods
+    with nogil:
+        if numeric_t is int:
+            fill = 0
+        else:
+            fill = NAN
+        if periods >= 0:
+            for col_idx in range(c):
+                offset = col_idx * r
+                for i in range(min(p, r)):
+                    dst[offset + i] = fill
+                for i in range(p, r):
+                    dst[offset + i] = src[offset + i] - src[offset + i - p]
+        else:
+            for col_idx in range(c):
+                offset = col_idx * r
+                for i in range(max(0, r - p), r):
+                    dst[offset + i] = fill
+                for i in range(r - p):
+                    dst[offset + i] = src[offset + i] - src[offset + i + p]
+
+cdef inline void _n_clip(numeric_t* ptr, Py_ssize_t n,
+                         numeric_t lower, numeric_t upper) noexcept nogil:
+    """就地裁剪到 [lower, upper]，覆盖 NaN 即原样保留的双精度语义。"""
+    cdef numeric_t v
+    cdef Py_ssize_t i
+    with nogil:
+        for i in range(n):
+            v = ptr[i]
+            if v < lower:
+                v = lower
+            elif v > upper:
+                v = upper
+            ptr[i] = v
+
+cdef inline void _n_add_val(numeric_t* src, numeric_t* dst, Py_ssize_t n,
+                            numeric_t val) noexcept nogil:
+    cdef Py_ssize_t i
+    with nogil:
+        for i in range(n):
+            dst[i] = src[i] + val
+
+cdef inline void _n_sub_val(numeric_t* src, numeric_t* dst, Py_ssize_t n,
+                            numeric_t val) noexcept nogil:
+    cdef Py_ssize_t i
+    with nogil:
+        for i in range(n):
+            dst[i] = src[i] - val
+
+cdef inline void _n_mul_val(numeric_t* src, numeric_t* dst, Py_ssize_t n,
+                            numeric_t val) noexcept nogil:
+    cdef Py_ssize_t i
+    with nogil:
+        for i in range(n):
+            dst[i] = src[i] * val
+
+cdef inline void _n_div_val(numeric_t* src, double* dst, Py_ssize_t n,
+                            double val) noexcept nogil:
+    """除法（乘以倒数），输出 double；val==0 时填 NAN。"""
+    cdef Py_ssize_t i
+    cdef double inv_val
+    with nogil:
+        if val != 0.0:
+            inv_val = 1.0 / val
+            for i in range(n):
+                dst[i] = <double>src[i] * inv_val
+        else:
+            for i in range(n):
+                dst[i] = NAN
+
 cdef int _cmp_int32(const void* a, const void* b) noexcept nogil:
     cdef int32_t va = (<const int32_t*>a)[0]
     cdef int32_t vb = (<const int32_t*>b)[0]

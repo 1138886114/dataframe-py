@@ -760,17 +760,8 @@ cdef class IntColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.capacity, 1), cols=self.cols)
         res.length = self.length
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
-        cdef int total
         cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                total = 0
-                for i in range(r):
-                    total += ptr[offset + i]
-                    res_ptr[offset + i] = total
+        _n_cumsum(ptr, res.data_c, c, r)
         return res
 
     @cython.binding(False)
@@ -780,20 +771,8 @@ cdef class IntColumn(BaseColumn):
         res.length = self.length
         if self.length == 0: return res
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
-        cdef int cur_max
         cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                if r > 0:
-                    cur_max = ptr[offset]
-                    res_ptr[offset] = cur_max
-                    for i in range(1, r):
-                        if ptr[offset + i] > cur_max:
-                            cur_max = ptr[offset + i]
-                        res_ptr[offset + i] = cur_max
+        _n_cummax(ptr, res.data_c, c, r)
         return res
 
     @cython.binding(False)
@@ -803,20 +782,8 @@ cdef class IntColumn(BaseColumn):
         res.length = self.length
         if self.length == 0: return res
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
-        cdef int cur_min
         cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                if r > 0:
-                    cur_min = ptr[offset]
-                    res_ptr[offset] = cur_min
-                    for i in range(1, r):
-                        if ptr[offset + i] < cur_min:
-                            cur_min = ptr[offset + i]
-                        res_ptr[offset + i] = cur_min
+        _n_cummin(ptr, res.data_c, c, r)
         return res
 
     @cython.binding(False)
@@ -826,24 +793,7 @@ cdef class IntColumn(BaseColumn):
         res.length = self.length
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        cdef int p = periods if periods >= 0 else -periods
-        with nogil:
-            if periods >= 0:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    for i in range(min(p, r)):
-                        res_ptr[offset + i] = 0
-                    for i in range(p, r):
-                        res_ptr[offset + i] = ptr[offset + i] - ptr[offset + i - p]
-            else:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    for i in range(max(0, r - p), r):
-                        res_ptr[offset + i] = 0
-                    for i in range(r - p):
-                        res_ptr[offset + i] = ptr[offset + i] - ptr[offset + i + p]
+        _n_diff(ptr, res.data_c, c, r, periods)
         return res
 
     @cython.binding(False)
@@ -978,17 +928,8 @@ cdef class IntColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.capacity, 1), cols=self.cols)
         res.length = self.length
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
-        cdef int64_t total
         cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                total = 1
-                for i in range(r):
-                    total *= ptr[offset + i]
-                    res_ptr[offset + i] = <int>total
+        _n_cumprod(ptr, res.data_c, c, r)
         return res
 
     @cython.binding(False)
@@ -1103,11 +1044,7 @@ cdef class IntColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.cols)
         res.length = self.length
         cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(n):
-                res_ptr[i] = ptr[i] + val
+        _n_add_val(ptr, res.data_c, self.length, val)
         return res
 
     @cython.binding(False)
@@ -1116,11 +1053,7 @@ cdef class IntColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.cols)
         res.length = self.length
         cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(n):
-                res_ptr[i] = ptr[i] - val
+        _n_sub_val(ptr, res.data_c, self.length, val)
         return res
 
     @cython.binding(False)
@@ -1129,11 +1062,7 @@ cdef class IntColumn(BaseColumn):
         cdef IntColumn res = IntColumn(max(self.length, 1), cols=self.cols)
         res.length = self.length
         cdef int* ptr = self.data_c
-        cdef int* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(n):
-                res_ptr[i] = ptr[i] * val
+        _n_mul_val(ptr, res.data_c, self.length, val)
         return res
 
     @cython.binding(False)
@@ -1142,17 +1071,7 @@ cdef class IntColumn(BaseColumn):
         cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.cols)
         res.length = self.length
         cdef int* ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        cdef double inv_val
-        with nogil:
-            if val != 0:
-                inv_val = 1.0 / <double>val
-                for i in range(n):
-                    res_ptr[i] = <double>ptr[i] * inv_val
-            else:
-                for i in range(n):
-                    res_ptr[i] = NAN
+        _n_div_val(ptr, res.data_c, self.length, <double>val)
         return res
 
     @cython.always_allow_keywords(False)
@@ -1642,18 +1561,9 @@ cdef class IntColumn(BaseColumn):
     def clip(self, object lower=None, object upper=None, bint inplace=False):
         cdef IntColumn col = self if inplace else self.copy()
         cdef int* ptr = col.data_c
-        cdef Py_ssize_t i, n = col.length
-        cdef bint has_lower = lower is not None
-        cdef bint has_upper = upper is not None
-        cdef int l = <int>lower if has_lower else -2147483648
-        cdef int u = <int>upper if has_upper else 2147483647
-        cdef int val
-        with nogil:
-            for i in range(n):
-                val = ptr[i]
-                if val < l: val = l
-                elif val > u: val = u
-                ptr[i] = val
+        cdef int l = <int>lower if lower is not None else -2147483648
+        cdef int u = <int>upper if upper is not None else 2147483647
+        _n_clip(ptr, col.length, l, u)
         return col
 
     @cython.binding(False)
@@ -2092,21 +2002,8 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if window <= 0 or r < window: return res
-        cdef double* dst = res.data_c
         cdef int* src = self.data_c
-        cdef double inv_w = 1.0 / <double>window
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double s
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                s = 0.0
-                for i in range(window):
-                    s += <double>src[offset + i]
-                dst[offset + window - 1] = s * inv_w
-                for i in range(window, r):
-                    s += <double>src[offset + i] - <double>src[offset + i - window]
-                    dst[offset + i] = s * inv_w
+        _n_roll_mean(src, res.data_c, c, r, window)
         return res
 
     @cython.binding(False)
@@ -2117,20 +2014,8 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if window <= 0 or r < window: return res
-        cdef double* dst = res.data_c
         cdef int* src = self.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double s
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                s = 0.0
-                for i in range(window):
-                    s += <double>src[offset + i]
-                dst[offset + window - 1] = s
-                for i in range(window, r):
-                    s += <double>src[offset + i] - <double>src[offset + i - window]
-                    dst[offset + i] = s
+        _n_roll_sum(src, res.data_c, c, r, window)
         return res
 
     @cython.binding(False)
@@ -2211,40 +2096,8 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r < window: return res
-        cdef double* dst = res.data_c
         cdef int* src = self.data_c
-        cdef double w = <double>window
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double s, s2, val, val_old, var_val
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                s = 0.0; s2 = 0.0
-                for i in range(window):
-                    val = <double>src[offset + i]
-                    s += val; s2 += val * val
-
-                var_val = s2 - (s * s) / w
-                if var_val < 0.0: var_val = 0.0
-
-                if ddof:
-                    dst[offset + window - 1] = var_val / (w - 1.0)
-                else:
-                    dst[offset + window - 1] = var_val / w
-
-                for i in range(window, r):
-                    val = <double>src[offset + i]
-                    val_old = <double>src[offset + i - window]
-                    s += val - val_old
-                    s2 += val * val - val_old * val_old
-
-                    var_val = s2 - (s * s) / w
-                    if var_val < 0.0: var_val = 0.0
-
-                    if ddof:
-                        dst[offset + i] = var_val / (w - 1.0)
-                    else:
-                        dst[offset + i] = var_val / w
+        _n_roll_var(src, res.data_c, c, r, window, ddof)
         return res
 
     @cython.binding(False)
@@ -2272,28 +2125,8 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r < window: return res
-        cdef double* dst = res.data_c
         cdef int* src = self.data_c
-        cdef double med
-        cdef Py_ssize_t col_idx, offset, i, j
-        cdef int* buf = <int*>aligned_malloc(window * sizeof(int))
-        if not buf: raise MemoryError()
-        try:
-            with nogil:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    for i in range(window - 1, r):
-                        for j in range(window):
-                            buf[j] = src[offset + i - window + 1 + j]
-                        qsort(buf, window, sizeof(int), _cmp_int)
-
-                        if window & 1:
-                            med = <double>buf[window // 2]
-                        else:
-                            med = (<double>buf[window // 2 - 1] + <double>buf[window // 2]) / 2.0
-                        dst[offset + i] = med
-        finally:
-            os_aligned_free(buf)
+        _n_roll_quantile(src, res.data_c, c, r, window, 0.5)
         return res
 
     @cython.binding(False)
@@ -2306,32 +2139,8 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r < window: return res
-        cdef double* dst = res.data_c
         cdef int* src = self.data_c
-        cdef Py_ssize_t col_idx, offset, i, j, i_low
-        cdef double pos = quantile * <double>(window - 1)
-        cdef double frac, val_low, val_high
-        i_low = <Py_ssize_t>pos
-        frac = pos - <double>i_low
-        cdef int* buf = <int*>aligned_malloc(window * sizeof(int))
-        if not buf: raise MemoryError()
-        try:
-            with nogil:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    for i in range(window - 1, r):
-                        for j in range(window):
-                            buf[j] = src[offset + i - window + 1 + j]
-                        qsort(buf, window, sizeof(int), _cmp_int)
-
-                        if i_low >= window - 1:
-                            dst[offset + i] = <double>buf[window - 1]
-                        else:
-                            val_low = <double>buf[i_low]
-                            val_high = <double>buf[i_low + 1]
-                            dst[offset + i] = val_low + frac * (val_high - val_low)
-        finally:
-            os_aligned_free(buf)
+        _n_roll_quantile(src, res.data_c, c, r, window, quantile)
         return res
 
     @cython.binding(False)
@@ -2398,29 +2207,8 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r < window or window < 3: return res
-        cdef double* dst = res.data_c
         cdef int* src = self.data_c
-        cdef double n_f = <double>window
-        cdef Py_ssize_t col_idx, offset, i, j
-        cdef double s, mean, m2, m3, val, std_dev
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                for i in range(window - 1, r):
-                    s = 0.0
-                    for j in range(i - window + 1, i + 1):
-                        s += <double>src[offset + j]
-                    mean = s / n_f
-                    m2 = 0.0; m3 = 0.0
-                    for j in range(i - window + 1, i + 1):
-                        val = <double>src[offset + j] - mean
-                        m2 += val * val
-                        m3 += val * val * val
-                    if m2 > 1e-14:
-                        std_dev = sqrt(m2 / n_f)
-                        dst[offset + i] = (m3 / n_f) / (std_dev * std_dev * std_dev)
-                    else:
-                        dst[offset + i] = 0.0
+        _n_roll_skew(src, res.data_c, c, r, window)
         return res
 
     @cython.binding(False)
@@ -2431,29 +2219,8 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r < window or window < 4: return res
-        cdef double* dst = res.data_c
         cdef int* src = self.data_c
-        cdef double n_f = <double>window
-        cdef Py_ssize_t col_idx, offset, i, j
-        cdef double s, mean, m2, m4, val, variance
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                for i in range(window - 1, r):
-                    s = 0.0
-                    for j in range(i - window + 1, i + 1):
-                        s += <double>src[offset + j]
-                    mean = s / n_f
-                    m2 = 0.0; m4 = 0.0
-                    for j in range(i - window + 1, i + 1):
-                        val = <double>src[offset + j] - mean
-                        m2 += val * val
-                        m4 += val * val * val * val
-                    if m2 > 1e-14:
-                        variance = m2 / n_f
-                        dst[offset + i] = (m4 / n_f) / (variance * variance) - 3.0
-                    else:
-                        dst[offset + i] = 0.0
+        _n_roll_kurt(src, res.data_c, c, r, window)
         return res
 
     @cython.binding(False)
@@ -3228,17 +2995,8 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
-        cdef double total
         cdef double* ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                total = 0.0
-                for i in range(r):
-                    total += ptr[offset + i]
-                    res_ptr[offset + i] = total
+        _n_cumsum(ptr, res.data_c, c, r)
         return res
 
     @cython.binding(False)
@@ -3248,20 +3006,8 @@ cdef class DoubleColumn(BaseColumn):
         res.length = self.length
         if self.length == 0: return res
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
-        cdef double cur_max
         cdef double* ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                if r > 0:
-                    cur_max = ptr[offset]
-                    res_ptr[offset] = cur_max
-                    for i in range(1, r):
-                        if ptr[offset + i] > cur_max:
-                            cur_max = ptr[offset + i]
-                        res_ptr[offset + i] = cur_max
+        _n_cummax(ptr, res.data_c, c, r)
         return res
 
     @cython.binding(False)
@@ -3271,20 +3017,8 @@ cdef class DoubleColumn(BaseColumn):
         res.length = self.length
         if self.length == 0: return res
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
-        cdef double cur_min
         cdef double* ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                if r > 0:
-                    cur_min = ptr[offset]
-                    res_ptr[offset] = cur_min
-                    for i in range(1, r):
-                        if ptr[offset + i] < cur_min:
-                            cur_min = ptr[offset + i]
-                        res_ptr[offset + i] = cur_min
+        _n_cummin(ptr, res.data_c, c, r)
         return res
 
     @cython.binding(False)
@@ -3294,24 +3028,7 @@ cdef class DoubleColumn(BaseColumn):
         res.length = self.length
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef double* ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        cdef int p = periods if periods >= 0 else -periods
-        with nogil:
-            if periods >= 0:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    for i in range(min(p, r)):
-                        res_ptr[offset + i] = NAN
-                    for i in range(p, r):
-                        res_ptr[offset + i] = ptr[offset + i] - ptr[offset + i - p]
-            else:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    for i in range(max(0, r - p), r):
-                        res_ptr[offset + i] = NAN
-                    for i in range(r - p):
-                        res_ptr[offset + i] = ptr[offset + i] - ptr[offset + i + p]
+        _n_diff(ptr, res.data_c, c, r, periods)
         return res
 
     @cython.binding(False)
@@ -3450,17 +3167,8 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn res = DoubleColumn(max(self.capacity, 1), cols=self.num_cols)
         res.length = self.length
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
-        cdef double total = 1.0
         cdef double* ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                total = 1.0
-                for i in range(r):
-                    total *= ptr[offset + i]
-                    res_ptr[offset + i] = total
+        _n_cumprod(ptr, res.data_c, c, r)
         return res
 
     @cython.binding(False)
@@ -3570,11 +3278,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef double* data_ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(n):
-                res_ptr[i] = data_ptr[i] + val
+        _n_add_val(data_ptr, res.data_c, self.length, val)
         return res
 
     @cython.binding(False)
@@ -3583,11 +3287,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef double* data_ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(n):
-                res_ptr[i] = data_ptr[i] - val
+        _n_sub_val(data_ptr, res.data_c, self.length, val)
         return res
 
     @cython.binding(False)
@@ -3596,11 +3296,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef double* data_ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        with nogil:
-            for i in range(n):
-                res_ptr[i] = data_ptr[i] * val
+        _n_mul_val(data_ptr, res.data_c, self.length, val)
         return res
 
     @cython.binding(False)
@@ -3609,17 +3305,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn res = DoubleColumn(max(self.length, 1), cols=self.num_cols)
         res.length = self.length
         cdef double* data_ptr = self.data_c
-        cdef double* res_ptr = res.data_c
-        cdef Py_ssize_t i, n = self.length
-        cdef double inv_val
-        with nogil:
-            if val != 0.0:
-                inv_val = 1.0 / val
-                for i in range(n):
-                    res_ptr[i] = data_ptr[i] * inv_val
-            else:
-                for i in range(n):
-                    res_ptr[i] = NAN
+        _n_div_val(data_ptr, res.data_c, self.length, val)
         return res
 
     # ------------------------------------------------------------
@@ -4109,17 +3795,10 @@ cdef class DoubleColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def clip(self, object lower=None, object upper=None, bint inplace=False):
         cdef DoubleColumn col = self if inplace else self.copy()
-        cdef Py_ssize_t i, n = col.length
-        cdef double v
         cdef double* ptr = col.data_c
         cdef double lower_val = float('-inf') if lower is None else <double>lower
         cdef double upper_val = float('inf') if upper is None else <double>upper
-        with nogil:
-            for i in range(n):
-                v = ptr[i]
-                v = lower_val if v < lower_val else v
-                v = upper_val if v > upper_val else v
-                ptr[i] = v
+        _n_clip(ptr, col.length, lower_val, upper_val)
         return col
 
     @cython.binding(False)
@@ -4581,35 +4260,15 @@ cdef class DoubleColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def roll_mean(self, Py_ssize_t window):
-        """
-        滚动均值计算。支持一维与二维矩阵。
-        时间复杂度: O(rows * cols)，严格常数时间增量滑动。
-        """
+        """滚动均值计算。支持一维与二维矩阵。
+        时间复杂度: O(rows * cols)，严格常数时间增量滑动。"""
         if window < 0: raise ValueError("window must be >= 0")
         cdef DoubleColumn res = self._make_like_nan()
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
         if window <= 0 or r < window: return res
-
-        cdef double inv_w = 1.0 / <double>window
         cdef double* src = self.data_c
-        cdef double* dst = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double s
-
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                s = 0.0
-                # 初始窗口预热
-                for i in range(window):
-                    s += src[offset + i]
-                dst[offset + window - 1] = s * inv_w
-
-                # 滑动更新
-                for i in range(window, r):
-                    s += src[offset + i] - src[offset + i - window]
-                    dst[offset + i] = s * inv_w
+        _n_roll_mean(src, res.data_c, c, r, window)
         return res
 
     # ============================================================
@@ -4624,23 +4283,8 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
         if window <= 0 or r < window: return res
-
         cdef double* src = self.data_c
-        cdef double* dst = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double s
-
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                s = 0.0
-                for i in range(window):
-                    s += src[offset + i]
-                dst[offset + window - 1] = s
-
-                for i in range(window, r):
-                    s += src[offset + i] - src[offset + i - window]
-                    dst[offset + i] = s
+        _n_roll_sum(src, res.data_c, c, r, window)
         return res
 
     # ============================================================
@@ -4733,33 +4377,8 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
         if r < window: return res
-
-        cdef double inv_w = 1.0 / <double>window
-        cdef double denom = 1.0 / <double>(window - 1) if ddof else inv_w
         cdef double* src = self.data_c
-        cdef double* dst = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double s, sq_s, val, old_val, v
-
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                s = 0.0
-                sq_s = 0.0
-                for i in range(window):
-                    val = src[offset + i]
-                    s += val
-                    sq_s += val * val
-                v = (sq_s - (s * s) * inv_w) * denom
-                dst[offset + window - 1] = v if v > 0.0 else 0.0
-
-                for i in range(window, r):
-                    val = src[offset + i]
-                    old_val = src[offset + i - window]
-                    s += val - old_val
-                    sq_s += val * val - old_val * old_val
-                    v = (sq_s - (s * s) * inv_w) * denom
-                    dst[offset + i] = v if v > 0.0 else 0.0
+        _n_roll_var(src, res.data_c, c, r, window, ddof)
         return res
 
     @cython.binding(False)
@@ -4788,31 +4407,8 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
         if r < window: return res
-
-        cdef double* buf = <double*>aligned_malloc(window * sizeof(double))
-        if not buf: raise MemoryError()
-
-        cdef double pos = q * <double>(window - 1)
-        cdef Py_ssize_t i_low = <Py_ssize_t>pos
-        cdef double frac = pos - <double>i_low
-
         cdef double* src = self.data_c
-        cdef double* dst = res.data_c
-        cdef Py_ssize_t col_idx, offset, i
-
-        try:
-            with nogil:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    for i in range(window - 1, r):
-                        memcpy(buf, src + offset + (i - window + 1), window * sizeof(double))
-                        qsort(buf, window, sizeof(double), _cmp_double_asc)
-                        if i_low >= window - 1:
-                            dst[offset + i] = buf[window - 1]
-                        else:
-                            dst[offset + i] = buf[i_low] + frac * (buf[i_low + 1] - buf[i_low])
-        finally:
-            os_aligned_free(buf)
+        _n_roll_quantile(src, res.data_c, c, r, window, q)
         return res
 
     @cython.binding(False)
@@ -4911,28 +4507,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn res = self._make_like_nan()
         if r < window or window < 3: return res
         cdef double* src = self.data_c
-        cdef double* dst = res.data_c
-        cdef double n_f = <double>window
-        cdef Py_ssize_t col_idx, offset, i, j
-        cdef double s, mean, m2, m3, val, std_dev
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                for i in range(window - 1, r):
-                    s = 0.0
-                    for j in range(i - window + 1, i + 1):
-                        s += src[offset + j]
-                    mean = s / n_f
-                    m2 = 0.0; m3 = 0.0
-                    for j in range(i - window + 1, i + 1):
-                        val = src[offset + j] - mean
-                        m2 += val * val
-                        m3 += val * val * val
-                    if m2 > 1e-14:
-                        std_dev = sqrt(m2 / n_f)
-                        dst[offset + i] = (m3 / n_f) / (std_dev * std_dev * std_dev)
-                    else:
-                        dst[offset + i] = 0.0
+        _n_roll_skew(src, res.data_c, c, r, window)
         return res
 
     @cython.binding(False)
@@ -4943,28 +4518,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef DoubleColumn res = self._make_like_nan()
         if r < window or window < 4: return res
         cdef double* src = self.data_c
-        cdef double* dst = res.data_c
-        cdef double n_f = <double>window
-        cdef Py_ssize_t col_idx, offset, i, j
-        cdef double s, mean, m2, m4, val, variance
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                for i in range(window - 1, r):
-                    s = 0.0
-                    for j in range(i - window + 1, i + 1):
-                        s += src[offset + j]
-                    mean = s / n_f
-                    m2 = 0.0; m4 = 0.0
-                    for j in range(i - window + 1, i + 1):
-                        val = src[offset + j] - mean
-                        m2 += val * val
-                        m4 += val * val * val * val
-                    if m2 > 1e-14:
-                        variance = m2 / n_f
-                        dst[offset + i] = (m4 / n_f) / (variance * variance) - 3.0
-                    else:
-                        dst[offset + i] = 0.0
+        _n_roll_kurt(src, res.data_c, c, r, window)
         return res
 
     @cython.binding(False)
