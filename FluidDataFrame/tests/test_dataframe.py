@@ -2231,6 +2231,27 @@ def test_to_dict():
     df2 = DataFrame({'a': int})
     check('to_dict empty', df2.to_dict()['a'].tolist() == [])
 
+def test_series_value_counts():
+    # Series.value_counts：以值为索引（StringIndex）、频次为值，按频次降序
+    df = DataFrame({'a': int, 'c': str})
+    df.append_row(a=1, c='x')
+    df.append_row(a=2, c='y')
+    df.append_row(a=2, c='x')
+    df.append_row(a=3, c='x')
+
+    vc = df['a'].value_counts()
+    check('value_counts is Series', isinstance(vc, Series))
+    check('value_counts name', vc.name == 'a')
+    check('value_counts values', vc.tolist() == [2, 1, 1])
+    check('value_counts index', list(vc.index.values()) == [2, 1, 3])
+
+    vc_str = df['c'].value_counts()
+    check('value_counts str values', vc_str.tolist() == [3, 1])
+    check('value_counts str index', list(vc_str.index.values()) == ['x', 'y'])
+
+    df2 = DataFrame({'e': int})
+    check('value_counts empty', df2['e'].value_counts().tolist() == [])
+
 def test_to_json():
     import json
     df = DataFrame({'x': int, 'y': float})
@@ -2738,6 +2759,7 @@ def run_all():
     print('\n--- new API tests ---')
     test_to_dict()
     test_to_json()
+    test_series_value_counts()
     test_abs()
     test_round()
     test_all_any()
