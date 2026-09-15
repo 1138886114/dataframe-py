@@ -5072,26 +5072,8 @@ cdef class AsciiColumn(BaseColumn):
     def isdigit(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
-        cdef Py_ssize_t* offs = self.offsets_c
-        cdef Py_ssize_t i, j, n = self.length
-        cdef char* ptr
-        cdef bint valid
-        cdef Py_ssize_t str_len
         with nogil:
-            for i in range(n):
-                str_len = offs[i + 1] - offs[i] - 1
-                if str_len == 0:
-                    out_ptr[i] = 0
-                    continue
-                ptr = data + offs[i]
-                valid = 1
-                for j in range(str_len):
-                    if not _is_digit(<unsigned char>ptr[j]):
-                        valid = 0
-                        break
-                out_ptr[i] = valid
+            _c_pred_mask(self.data_c, self.offsets_c, self.length, res.data_c, 0)
         return res
 
     @cython.binding(False)
@@ -5099,26 +5081,8 @@ cdef class AsciiColumn(BaseColumn):
     def isalpha(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
-        cdef Py_ssize_t* offs = self.offsets_c
-        cdef Py_ssize_t i, j, n = self.length
-        cdef char* ptr
-        cdef bint valid
-        cdef Py_ssize_t str_len
         with nogil:
-            for i in range(n):
-                str_len = offs[i + 1] - offs[i] - 1
-                if str_len == 0:
-                    out_ptr[i] = 0
-                    continue
-                ptr = data + offs[i]
-                valid = 1
-                for j in range(str_len):
-                    if not _is_alpha(<unsigned char>ptr[j]):
-                        valid = 0
-                        break
-                out_ptr[i] = valid
+            _c_pred_mask(self.data_c, self.offsets_c, self.length, res.data_c, 1)
         return res
 
     @cython.binding(False)
@@ -5126,26 +5090,8 @@ cdef class AsciiColumn(BaseColumn):
     def isalnum(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
-        cdef Py_ssize_t* offs = self.offsets_c
-        cdef Py_ssize_t i, j, n = self.length
-        cdef char* ptr
-        cdef bint valid
-        cdef Py_ssize_t str_len
         with nogil:
-            for i in range(n):
-                str_len = offs[i + 1] - offs[i] - 1
-                if str_len == 0:
-                    out_ptr[i] = 0
-                    continue
-                ptr = data + offs[i]
-                valid = 1
-                for j in range(str_len):
-                    if not _is_alnum(<unsigned char>ptr[j]):
-                        valid = 0
-                        break
-                out_ptr[i] = valid
+            _c_pred_mask(self.data_c, self.offsets_c, self.length, res.data_c, 2)
         return res
 
     @cython.binding(False)
@@ -5153,26 +5099,8 @@ cdef class AsciiColumn(BaseColumn):
     def isspace(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
-        cdef Py_ssize_t* offs = self.offsets_c
-        cdef Py_ssize_t i, j, n = self.length
-        cdef char* ptr
-        cdef bint valid
-        cdef Py_ssize_t str_len
         with nogil:
-            for i in range(n):
-                str_len = offs[i + 1] - offs[i] - 1
-                if str_len == 0:
-                    out_ptr[i] = 0
-                    continue
-                ptr = data + offs[i]
-                valid = 1
-                for j in range(str_len):
-                    if not _is_space(<unsigned char>ptr[j]):
-                        valid = 0
-                        break
-                out_ptr[i] = valid
+            _c_pred_mask(self.data_c, self.offsets_c, self.length, res.data_c, 3)
         return res
 
     @cython.binding(False)
@@ -5180,31 +5108,8 @@ cdef class AsciiColumn(BaseColumn):
     def islower(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
-        cdef Py_ssize_t* offs = self.offsets_c
-        cdef Py_ssize_t i, j, n = self.length
-        cdef char* ptr
-        cdef bint has_letter, all_lower
-        cdef Py_ssize_t str_len
-        cdef unsigned char c
         with nogil:
-            for i in range(n):
-                str_len = offs[i + 1] - offs[i] - 1
-                if str_len == 0:
-                    out_ptr[i] = 0
-                    continue
-                ptr = data + offs[i]
-                has_letter = 0
-                all_lower = 1
-                for j in range(str_len):
-                    c = <unsigned char>ptr[j]
-                    if _is_alpha(c):
-                        has_letter = 1
-                        if not _is_lower(c):
-                            all_lower = 0
-                            break
-                out_ptr[i] = 1 if (has_letter and all_lower) else 0
+            _c_case_mask(self.data_c, self.offsets_c, self.length, res.data_c, 0)
         return res
 
     @cython.binding(False)
@@ -5212,31 +5117,8 @@ cdef class AsciiColumn(BaseColumn):
     def isupper(self):
         cdef IntColumn res = IntColumn(max(self.length, 1))
         res.length = self.length
-        cdef int* out_ptr = res.data_c
-        cdef char* data = self.data_c
-        cdef Py_ssize_t* offs = self.offsets_c
-        cdef Py_ssize_t i, j, n = self.length
-        cdef char* ptr
-        cdef bint has_letter, all_upper
-        cdef Py_ssize_t str_len
-        cdef unsigned char c
         with nogil:
-            for i in range(n):
-                str_len = offs[i + 1] - offs[i] - 1
-                if str_len == 0:
-                    out_ptr[i] = 0
-                    continue
-                ptr = data + offs[i]
-                has_letter = 0
-                all_upper = 1
-                for j in range(str_len):
-                    c = <unsigned char>ptr[j]
-                    if _is_alpha(c):
-                        has_letter = 1
-                        if not _is_upper(c):
-                            all_upper = 0
-                            break
-                out_ptr[i] = 1 if (has_letter and all_upper) else 0
+            _c_case_mask(self.data_c, self.offsets_c, self.length, res.data_c, 1)
         return res
 
     # ------------------------------------------------------------
@@ -6567,7 +6449,6 @@ cdef class UCS2Column(BaseColumn):
     def lower(self):
         cdef UCS2Column res = UCS2Column(self.capacity)
         cdef Py_ssize_t i
-        cdef str s
         for i in range(self.length):
             s = self._get_str(i)
             res.append(s.lower())
@@ -8708,10 +8589,7 @@ cdef class BoolColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def _append_bool(self, bint val):
-        if self.length >= self.capacity:
-            self._reserve(max(16, self.capacity * 2))
-        self.data_c[self.length] = 1 if val else 0
-        self.length += 1
+        self.append(val)
 
     cdef void append_nolen(self, object val) except *:
         """写入当前行(length)位置的值，但不推进 length（由 add_row 统一提交）。"""
@@ -8855,14 +8733,8 @@ cdef class BoolColumn(BaseColumn):
 
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
-        cdef unsigned char* s_ptr = self.data_c
-        cdef unsigned char* o_ptr = other.data_c
-        cdef unsigned char* r_ptr = res.data_c
-        cdef Py_ssize_t i
-
         with nogil:
-            for i in range(n):
-                r_ptr[i] = s_ptr[i] & o_ptr[i]
+            _bool_bitwise(self.data_c, other.data_c, res.data_c, n, 0)
         return res
 
     @cython.always_allow_keywords(False)
@@ -8876,14 +8748,8 @@ cdef class BoolColumn(BaseColumn):
 
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
-        cdef unsigned char* s_ptr = self.data_c
-        cdef unsigned char* o_ptr = other.data_c
-        cdef unsigned char* r_ptr = res.data_c
-        cdef Py_ssize_t i
-
         with nogil:
-            for i in range(n):
-                r_ptr[i] = s_ptr[i] | o_ptr[i]
+            _bool_bitwise(self.data_c, other.data_c, res.data_c, n, 1)
         return res
 
     @cython.always_allow_keywords(False)
@@ -8897,14 +8763,8 @@ cdef class BoolColumn(BaseColumn):
 
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
-        cdef unsigned char* s_ptr = self.data_c
-        cdef unsigned char* o_ptr = other.data_c
-        cdef unsigned char* r_ptr = res.data_c
-        cdef Py_ssize_t i
-
         with nogil:
-            for i in range(n):
-                r_ptr[i] = s_ptr[i] ^ o_ptr[i]
+            _bool_bitwise(self.data_c, other.data_c, res.data_c, n, 2)
         return res
 
     @cython.always_allow_keywords(False)
@@ -8913,13 +8773,8 @@ cdef class BoolColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         cdef BoolColumn res = BoolColumn(max(n, 1))
         res.length = n
-        cdef unsigned char* s_ptr = self.data_c
-        cdef unsigned char* r_ptr = res.data_c
-        cdef Py_ssize_t i
-
         with nogil:
-            for i in range(n):
-                r_ptr[i] = s_ptr[i] ^ 1
+            _bool_not(self.data_c, res.data_c, n)
         return res
 
     @cython.always_allow_keywords(False)
