@@ -296,6 +296,80 @@ def test_access():
 
 
 # =====================================================================
+#  DataFrame ↔ Series 衔接契约：
+#  列级方法返回 Series（而不是原始 BaseColumn），Series 可回流成 DataFrame
+# =====================================================================
+def test_series_return_contract():
+    df = DataFrame({'a': int, 'b': int, 's': str})
+    for a, b, s in [(1, 10, 'x'), (3, 20, 'y'), (3, 30, 'x'), (4, 40, 'z')]:
+        df.append_row(a=a, b=b, s=s)
+
+    # 单列结果 → Series
+    for name, res in [
+        ('isin',       df.isin('a', {1, 3})),
+        ('between',    df.between('a', 2, 4)),
+        ('diff',       df.diff('a', 1)),
+        ('duplicated', df.duplicated()),
+        ('rank',       df.rank('a')),
+        ('cut',        df.cut('a', [0, 2, 5])),
+        ('exp_sum',    df.expanding_sum('a')),
+        ('where_col',  df.where_column('a', 'b', 0)),
+        ('mask_col',   df.mask_column('a', 'b', 0)),
+        ('add',        df.add(('a', 'b'))),
+        ('mul',        df.mul(('a', 'b'))),
+        ('roll_mean',  df.rolling(2, 'a').mean()),
+        ('eval_col',   df.eval('a * 2')),
+    ]:
+        check(f'{name} is Series', isinstance(res, Series))
+
+    # 掩码/布尔结果同样为 Series
+    check('isin vals', df.isin('a', {1, 3}).tolist() == [1, 1, 1, 0])
+    check('between vals', df.between('a', 2, 4).tolist() == [0, 1, 1, 1])
+    check('rank vals', df.rank('a').tolist() == [1.0, 2.5, 2.5, 4.0])
+
+    # 累积聚合返回 dict of Series（每列视图均为 Series）
+    cs = df.cumsum()
+    check('cumsum dict keys', set(cs.keys()) == {'a', 'b'})
+    check('cumsum Series vals', list(cs.values()) and all(isinstance(v, Series) for v in cs.values()))
+    check('cumsum a vals', cs['a'].tolist() == [1, 4, 7, 11])
+
+    # Series.isna / notna / isin / between → Series
+    check('s.isna Series', isinstance(df['a'].isna(), Series))
+    check('s.isna vals', df['a'].isna().tolist() == [0, 0, 0, 0])
+    check('s.isin Series', isinstance(df['a'].isin({1, 3}), Series))
+    check('s.between Series', isinstance(df['a'].between(2, 4), Series))
+
+    # iloc 两轴：DataFrame → Series
+    check('iloc col Series', isinstance(df.iloc[:, 'a'], Series))
+    check('iloc col int Series', isinstance(df.iloc[:, 0], Series))
+    check('iloc slice col', df.iloc[1:3, 'a'].tolist() == [3, 3])
+    check('iloc neg col', df.iloc[-1, 'a'].tolist() == [4])
+    check('iloc oob col', expect_exception(IndexError, df.iloc.__getitem__, (slice(None), 9)))
+
+    # Series → DataFrame 转换
+    fr = df['s'].to_frame()
+    check('to_frame type', isinstance(fr, DataFrame))
+    check('to_frame shape', fr.shape == (4, 1))
+    check('to_frame val', fr['s'].tolist() == ['x', 'y', 'x', 'z'])
+    fr2 = df['a'].to_frame('renamed')
+    check('to_frame renamed', list(fr2._columns.keys()) == ['renamed'])
+
+    # DataFrame 构造器直接接收 Series / list
+    dfc = DataFrame({'p': df['a'], 'q': df['b']})
+    check('from Series cols', set(dfc._columns.keys()) == {'p', 'q'})
+    check('from Series len', dfc.shape == (4, 2))
+    check('from Series val', dfc['p'].tolist() == [1, 3, 3, 4])
+    dfl = DataFrame({'x': [1, 2, 3], 'y': [10, 20, 30]})
+    check('from list cols', dfl.shape == (3, 2))
+    check('from list val', dfl['y'].tolist() == [10, 20, 30])
+
+    # factorize 修复：不再 AttributeError
+    codes, uniques = df.factorize('s')
+    check('factorize codes', codes == [0, 1, 0, 2])
+    check('factorize uniques', uniques == ['x', 'y', 'z'])
+
+
+# =====================================================================
 #  Copy & pop
 # =====================================================================
 def test_copy():
@@ -2451,6 +2525,7 @@ def run_all():
     test_append()
     test_append_complex()
     test_access()
+    test_series_return_contract()
 
     # Copy & pop
     test_copy()

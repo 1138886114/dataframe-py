@@ -242,61 +242,66 @@ class _RollingWrapper:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def __init__(self, col, window):
+    def __init__(self, col, window, name=None, index=None):
         if col.dtype not in self._SUPPORTED_TYPES:
             type_name = self._TYPE_LABELS.get(col.dtype, 'unknown')
             raise TypeError(f"Rolling window operations are not supported for {type_name} columns")
         self._col = col
         self._window = window
+        self._name = name if name is not None else '_roll'
+        self._index = index
         self.length = col.length
 
-    @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def mean(self): return self._col.roll_mean(self._window)
+    def _wrap(self, res):
+        return Series(self._name, res, self._index) if self._index is not None else res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def sum(self): return self._col.roll_sum(self._window)
+    def mean(self): return self._wrap(self._col.roll_mean(self._window))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def min(self): return self._col.roll_min(self._window)
+    def sum(self): return self._wrap(self._col.roll_sum(self._window))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def max(self): return self._col.roll_max(self._window)
+    def min(self): return self._wrap(self._col.roll_min(self._window))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def std(self, ddof=False): return self._col.roll_std(self._window, ddof)
+    def max(self): return self._wrap(self._col.roll_max(self._window))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def var(self, ddof=False): return self._col.roll_var(self._window, ddof)
+    def std(self, ddof=False): return self._wrap(self._col.roll_std(self._window, ddof))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def median(self): return self._col.roll_median(self._window)
+    def var(self, ddof=False): return self._wrap(self._col.roll_var(self._window, ddof))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def quantile(self, q=0.5): return self._col.roll_quantile(self._window, q)
+    def median(self): return self._wrap(self._col.roll_median(self._window))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def skew(self): return self._col.roll_skew(self._window)
+    def quantile(self, q=0.5): return self._wrap(self._col.roll_quantile(self._window, q))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def kurt(self): return self._col.roll_kurt(self._window)
+    def skew(self): return self._wrap(self._col.roll_skew(self._window))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def corr(self, other): return self._col.roll_corr(self._window, other._col if isinstance(other, _RollingWrapper) else other)
+    def kurt(self): return self._wrap(self._col.roll_kurt(self._window))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def cov(self, other): return self._col.roll_cov(self._window, other._col if isinstance(other, _RollingWrapper) else other)
+    def corr(self, other): return self._wrap(self._col.roll_corr(self._window, other._col if isinstance(other, _RollingWrapper) else other))
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cov(self, other): return self._wrap(self._col.roll_cov(self._window, other._col if isinstance(other, _RollingWrapper) else other))
 
 
 
@@ -941,6 +946,11 @@ cdef class _ILocIndexer:
         cdef Py_ssize_t n_new = 0
         cdef Py_ssize_t i, idx
         cdef DataFrame result
+        cdef Py_ssize_t nsub, rstart, rstop, rstep, ri, r, k
+        cdef list cnames
+        cdef str cname
+        cdef BaseColumn colsel
+        cdef Py_ssize_t* sidx = NULL
 
         # 解析用户输入的类型
         if isinstance(key, int):
@@ -995,8 +1005,67 @@ cdef class _ILocIndexer:
             except Exception:
                 os_aligned_free(indices_c)
                 raise
+        elif isinstance(key, tuple):
+            cnames = list(self.frame._columns.keys())
+            if len(key) != 2:
+                raise TypeError("iloc tuple index must have 2 elements (rows, cols)")
+            row_key, col_key = key
+            if isinstance(col_key, str):
+                cname = col_key
+            elif isinstance(col_key, int):
+                if col_key < 0:
+                    col_key = col_key + len(cnames)
+                if col_key < 0 or col_key >= len(cnames):
+                    raise IndexError("Column index out of range")
+                cname = cnames[col_key]
+            else:
+                raise TypeError("iloc column selector must be str or int")
+            if cname not in self.frame._columns:
+                raise KeyError(f"Column '{cname}' not found")
+            colsel = self.frame._columns[cname]
+            if isinstance(row_key, slice):
+                rstart, rstop, rstep = row_key.indices(n_orig)
+                nsub = len(range(rstart, rstop, rstep))
+            elif isinstance(row_key, int):
+                ri = <Py_ssize_t>row_key
+                if ri < 0: ri += n_orig
+                if ri < 0 or ri >= n_orig: raise IndexError("Index out of bounds")
+                nsub = 1
+                rstart, rstop, rstep = ri, ri + 1, 1
+            elif isinstance(row_key, list):
+                nsub = len(row_key)
+            else:
+                raise TypeError("iloc row selector must be int, slice, or list")
+
+            if nsub <= 0:
+                sub = _col_take(colsel, <Py_ssize_t*>NULL, 0, False)
+                return Series(cname, sub, self.frame.index._take(<Py_ssize_t*>NULL, 0))
+
+            sidx = <Py_ssize_t*>aligned_malloc(nsub * sizeof(Py_ssize_t))
+            if not sidx: raise MemoryError()
+            try:
+                if isinstance(row_key, slice):
+                    k = 0
+                    for r in range(rstart, rstop, rstep):
+                        sidx[k] = r
+                        k += 1
+                elif isinstance(row_key, int):
+                    sidx[0] = rstart
+                else:
+                    k = 0
+                    for r in row_key:
+                        r = <Py_ssize_t>r
+                        if r < 0: r += n_orig
+                        if r < 0 or r >= n_orig: raise IndexError("Index out of bounds")
+                        sidx[k] = r
+                        k += 1
+                sub = _col_take(colsel, sidx, nsub, False)
+                return Series(cname, sub, self.frame.index._take(sidx, nsub))
+            finally:
+                os_aligned_free(sidx)
+
         else:
-            raise TypeError("iloc requires integer, slice, or list of integers")
+            raise TypeError("iloc requires integer, slice, list of integers, or (rows, cols) tuple")
 
         # 安全地调用底层 C 提取方法
         try:
@@ -2533,19 +2602,19 @@ cdef class Series:
     
     def isna(self):
         """判断是否为NaN/None"""
-        return self._col.isna()
+        return Series(self.name, _series_isna(self._col), self._index)
 
     def notna(self):
         """判断是否非NaN/None"""
-        return self._col.notna()
+        return Series(self.name, _series_notna(self._col), self._index)
 
     def isin(self, values):
         """判断是否在值列表中"""
-        return self._col.isin(values)
+        return Series(self.name, self._col.isin(values), self._index)
 
     def between(self, low, high):
         """判断是否在区间内"""
-        return self._col.between(low, high)
+        return Series(self.name, self._col.between(low, high), self._index)
 
     def all(self):
         """判断是否全部为True"""
@@ -2729,6 +2798,15 @@ cdef class Series:
             return pd.Series(self.values, index=list(self._index), name=self.name)
         except ImportError:
             raise ImportError("pandas is required for to_pandas()")
+
+    def to_frame(self, name=None):
+        """转换为单列 DataFrame（对标 pandas Series.to_frame）"""
+        cdef DataFrame result = DataFrame()
+        cdef str cname = name if name is not None else self.name
+        result._columns[cname] = self._col
+        result.df_length = len(self)
+        result.index = self._index
+        return result
 
 
 # ============================================================
@@ -2924,7 +3002,44 @@ cdef class DataFrame:
         self._ordered_cols = []
         self._schema_keys = ()
 
+        cdef object sv
+        cdef BaseColumn scol
+        cdef Series ss
+        cdef Py_ssize_t vlen
+        cdef str col_name
+        cdef dict parsed
+        cdef bint has_values
+
         if schema:
+            has_values = False
+            for sv in schema.values():
+                if isinstance(sv, (Series, BaseColumn, list)):
+                    has_values = True
+                    break
+            if has_values:
+                vlen = -1
+                for col_name, sv in schema.items():
+                    if isinstance(sv, Series):
+                        ss = <Series>sv
+                        scol = ss._col
+                    elif isinstance(sv, BaseColumn):
+                        scol = <BaseColumn>sv
+                    elif isinstance(sv, list):
+                        scol = _column_from_list_impl(self, col_name, sv)
+                    else:
+                        raise TypeError(
+                            f"Unsupported column value for '{col_name}': {type(sv).__name__}")
+                    if vlen < 0:
+                        vlen = scol.length
+                    elif scol.length != vlen:
+                        raise ValueError(
+                            f"All columns must have the same length, got {scol.length} and {vlen}")
+                    self._columns[col_name] = scol
+                self.df_length = vlen
+                self.index = RangeIndex(0, vlen)
+                self._schema_keys = tuple(schema.keys())
+                return
+
             parsed = _parse_schema(schema)
             for col_name, dtype in parsed.items():
                 if dtype == TYPE_INT:
@@ -3475,6 +3590,14 @@ cdef class DataFrame:
         finally:
             os_aligned_free(idx)
 
+    cdef dict _cum_results(self, str method):
+        cdef dict raw = _numeric_agg_impl(self, method)
+        cdef dict result = {}
+        cdef str name
+        for name in raw:
+            result[name] = Series(name, raw[name], self.index)
+        return result
+
     def get_series(self, name):
         """返回Series（单列代理），知道自己的名字和索引"""
         from fluidframe.core.series import Series
@@ -3876,22 +3999,22 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cumsum(self):
-        return _numeric_agg_impl(self, 'cumsum')
+        return self._cum_results('cumsum')
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cumprod(self):
-        return _numeric_agg_impl(self, 'cumprod')
+        return self._cum_results('cumprod')
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cummax(self):
-        return _numeric_agg_impl(self, 'cummax')
+        return self._cum_results('cummax')
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cummin(self):
-        return _numeric_agg_impl(self, 'cummin')
+        return self._cum_results('cummin')
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -3922,15 +4045,15 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def factorize(self, str col_name):
-        return self._columns[col_name].factorize()
+        return _series_factorize(self._columns[col_name])
 
     @cython.binding(False)
     def isin(self, str col_name, set values):
-        return self._columns[col_name].isin(values)
+        return Series(col_name, self._columns[col_name].isin(values), self.index)
 
     @cython.binding(False)
     def between(self, str col_name, low, high):
-        return self._columns[col_name].between(low, high)
+        return Series(col_name, self._columns[col_name].between(low, high), self.index)
 
     # I/O
     def __str__(self):
@@ -4016,7 +4139,7 @@ cdef class DataFrame:
 
     @cython.binding(False)
     def duplicated(self, list subset=None, str keep='first'):
-        return _duplicated_impl(self, subset, keep)
+        return _wrap_series('_mask', _duplicated_impl(self, subset, keep), self.index)
 
     @cython.binding(False)
     def drop_duplicates(self, list subset=None, str keep='first', bint inplace=False):
@@ -4039,7 +4162,7 @@ cdef class DataFrame:
 
     @cython.binding(False)
     def diff(self, str col_name, int periods=1):
-        return _diff_impl(self, col_name, periods)
+        return _wrap_series(col_name, _diff_impl(self, col_name, periods), self.index)
 
     @cython.binding(False)
     def apply(self, object func, str axis='columns', bint raw=False):
@@ -4060,12 +4183,12 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def where_column(self, str col_name, str cond_col, object other):
-        return _where_column_impl(self, col_name, cond_col, other)
+        return _wrap_series(col_name, _where_column_impl(self, col_name, cond_col, other), self.index)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mask_column(self, str col_name, str cond_col, object other):
-        return _mask_column_impl(self, col_name, cond_col, other)
+        return _wrap_series(col_name, _mask_column_impl(self, col_name, cond_col, other), self.index)
 
     @cython.binding(False)
     def where_row(self, IntColumn mask, object fill=0):
@@ -4185,22 +4308,22 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def add(self, tuple col_names):
-        return _add_impl(self, col_names)
+        return _wrap_series('_result', _add_impl(self, col_names), self.index)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def sub(self, tuple col_names):
-        return _sub_impl(self, col_names)
+        return _wrap_series('_result', _sub_impl(self, col_names), self.index)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def mul(self, tuple col_names):
-        return _mul_impl(self, col_names)
+        return _wrap_series('_result', _mul_impl(self, col_names), self.index)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def div(self, tuple col_names):
-        return _div_impl(self, col_names)
+        return _wrap_series('_result', _div_impl(self, col_names), self.index)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -4442,17 +4565,17 @@ cdef class DataFrame:
     # DataFrame-level rank
     @cython.binding(False)
     def rank(self, str col_name, str method='average', bint ascending=True, str na_option='keep'):
-        return _rank_impl(self, col_name, method, ascending, na_option)
+        return _wrap_series(col_name, _rank_impl(self, col_name, method, ascending, na_option), self.index)
 
     # DataFrame-level cut
     @cython.binding(False)
     def cut(self, str col_name, list bins, bint include_lowest=False, str right='right'):
-        return _cut_impl(self, col_name, bins, include_lowest, right)
+        return _wrap_series(col_name, _cut_impl(self, col_name, bins, include_lowest, right), self.index)
 
     # DataFrame-level qcut
     @cython.binding(False)
     def qcut(self, str col_name, int q=4, str labels='True', double precision=3):
-        return _qcut_impl(self, col_name, q, labels, precision)
+        return _wrap_series(col_name, _qcut_impl(self, col_name, q, labels, precision), self.index)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -4467,12 +4590,12 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def expanding_sum(self, str col_name):
-        return _expanding_sum_impl(self, col_name)
+        return _wrap_series(col_name, _expanding_sum_impl(self, col_name), self.index)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def ewm_mean(self, str col_name, double span):
-        return _ewm_mean_impl(self, col_name, span)
+        return _wrap_series(col_name, _ewm_mean_impl(self, col_name, span), self.index)
 
 
 
@@ -4778,10 +4901,12 @@ cdef _eval_impl(DataFrame self, str expr, bint inplace):
         target_df._columns[target_col] = res_col
         return target_df
     else:
-        return res_col
+        return _wrap_series(target_col if target_col else '_result', res_col, self.index)
 
 cdef _query_impl(DataFrame self, str expr):
     mask = _eval_impl(self, expr, False)
+    if isinstance(mask, Series):
+        mask = (<Series>mask)._col
     if not type(mask).__name__ in ('IntColumn', 'BoolColumn'):
         raise TypeError("Query expression must evaluate to a boolean mask (IntColumn or BoolColumn)")
     return self.loc[mask]
@@ -8824,7 +8949,7 @@ cdef _rolling_impl(DataFrame self, Py_ssize_t window, str col_name):
     cdef int col_dtype = col.dtype
     if col_dtype != TYPE_INT and col_dtype != TYPE_DOUBLE:
         raise TypeError(f"Rolling window requires numeric column, got '{col_name}'")
-    return _RollingWrapper(col, window)
+    return _RollingWrapper(col, window, col_name, self.index)
 
 
 cdef _shift_int_column(IntColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
