@@ -8,11 +8,6 @@
 # ============================================================
 
 
-#  列处理模块（_columns.pyx）的独立辅助函数集合。
-#  通过 `include "_columns_helper.pxi"` 文本拼入列模块，
-#  保持接口签名与 _columns.pxd 中的声明一一对应。
-# ============================================================
-
 # ============================================================
 #  Astype helper
 # ============================================================
@@ -221,14 +216,6 @@ cdef void _col_to_double(object col, double* buf, Py_ssize_t n) except *:
         raise TypeError("Expected IntColumn or DoubleColumn")
 
 
-cdef extern from "<ctype.h>" nogil:
-    int isdigit(int)
-    int isspace(int)
-    int isalpha(int)
-    int isalnum(int)
-    int islower(int)
-    int isupper(int)
-
 cdef inline bint _is_lower(unsigned char c) noexcept nogil:
     return c >= 97 and c <= 122
 
@@ -301,50 +288,91 @@ cdef inline Py_ssize_t _c_count(const char *data, const char *pat, size_t pat_le
 
 cdef inline void _c_pred_mask(const char* data, const Py_ssize_t* offs, Py_ssize_t n,
                               int* out, int mode) noexcept nogil:
-    """Ascii 逐行分类掩码。mode: 0=digit 1=alpha 2=alnum 3=space"""
+    """Ascii 逐行分类掩码。mode: 0=digit 1=alpha 2=alnum 3=space。
+    mode 分派外提：4 条循环副本只做一次分支，内层逐字符零 mode 判断。"""
     cdef Py_ssize_t i, j, sl
     cdef unsigned char c
     cdef bint valid
-    for i in range(n):
-        sl = offs[i + 1] - offs[i] - 1
-        if sl == 0:
-            out[i] = 0
-            continue
-        valid = 1
-        for j in range(sl):
-            c = <unsigned char>data[offs[i] + j]
-            if mode == 0:
+    if mode == 0:
+        for i in range(n):
+            sl = offs[i + 1] - offs[i] - 1
+            if sl == 0:
+                out[i] = 0
+                continue
+            valid = 1
+            for j in range(sl):
+                c = <unsigned char>data[offs[i] + j]
                 if not _is_digit(c):  valid = 0; break
-            elif mode == 1:
+            out[i] = valid
+    elif mode == 1:
+        for i in range(n):
+            sl = offs[i + 1] - offs[i] - 1
+            if sl == 0:
+                out[i] = 0
+                continue
+            valid = 1
+            for j in range(sl):
+                c = <unsigned char>data[offs[i] + j]
                 if not _is_alpha(c):  valid = 0; break
-            elif mode == 2:
+            out[i] = valid
+    elif mode == 2:
+        for i in range(n):
+            sl = offs[i + 1] - offs[i] - 1
+            if sl == 0:
+                out[i] = 0
+                continue
+            valid = 1
+            for j in range(sl):
+                c = <unsigned char>data[offs[i] + j]
                 if not _is_alnum(c):  valid = 0; break
-            else:
+            out[i] = valid
+    else:
+        for i in range(n):
+            sl = offs[i + 1] - offs[i] - 1
+            if sl == 0:
+                out[i] = 0
+                continue
+            valid = 1
+            for j in range(sl):
+                c = <unsigned char>data[offs[i] + j]
                 if not _is_space(c):  valid = 0; break
-        out[i] = valid
+            out[i] = valid
 
 cdef inline void _c_case_mask(const char* data, const Py_ssize_t* offs, Py_ssize_t n,
                               int* out, bint upper) noexcept nogil:
-    """Ascii 逐行大小写类型掩码（要求至少含一个字母）。upper=0→islower, 1→isupper"""
+    """Ascii 逐行大小写类型掩码（要求至少含一个字母）。upper=0→islower, 1→isupper。
+    upper 分派外提：两条循环副本只做一次分支，内层逐字符零 upper 判断。"""
     cdef Py_ssize_t i, j, sl
     cdef unsigned char c
     cdef bint has_letter, all_ok
-    for i in range(n):
-        sl = offs[i + 1] - offs[i] - 1
-        if sl == 0:
-            out[i] = 0
-            continue
-        has_letter = 0
-        all_ok = 1
-        for j in range(sl):
-            c = <unsigned char>data[offs[i] + j]
-            if _is_alpha(c):
-                has_letter = 1
-                if upper:
+    if upper:
+        for i in range(n):
+            sl = offs[i + 1] - offs[i] - 1
+            if sl == 0:
+                out[i] = 0
+                continue
+            has_letter = 0
+            all_ok = 1
+            for j in range(sl):
+                c = <unsigned char>data[offs[i] + j]
+                if _is_alpha(c):
+                    has_letter = 1
                     if not _is_upper(c):  all_ok = 0; break
-                else:
+            out[i] = 1 if (has_letter and all_ok) else 0
+    else:
+        for i in range(n):
+            sl = offs[i + 1] - offs[i] - 1
+            if sl == 0:
+                out[i] = 0
+                continue
+            has_letter = 0
+            all_ok = 1
+            for j in range(sl):
+                c = <unsigned char>data[offs[i] + j]
+                if _is_alpha(c):
+                    has_letter = 1
                     if not _is_lower(c):  all_ok = 0; break
-        out[i] = 1 if (has_letter and all_ok) else 0
+            out[i] = 1 if (has_letter and all_ok) else 0
 
 
 # ============================================================
@@ -353,12 +381,14 @@ cdef inline void _c_case_mask(const char* data, const Py_ssize_t* offs, Py_ssize
 
 cdef inline void _bool_bitwise(const unsigned char* s, const unsigned char* o,
                                unsigned char* r, Py_ssize_t n, int op) noexcept nogil:
-    """op: 0=and 1=or 2=xor"""
+    """op: 0=and 1=or 2=xor。op 分派外提：内层零 op 判断。"""
     cdef Py_ssize_t i
-    for i in range(n):
-        if op == 0:    r[i] = s[i] & o[i]
-        elif op == 1:  r[i] = s[i] | o[i]
-        else:          r[i] = s[i] ^ o[i]
+    if op == 0:
+        for i in range(n): r[i] = s[i] & o[i]
+    elif op == 1:
+        for i in range(n): r[i] = s[i] | o[i]
+    else:
+        for i in range(n): r[i] = s[i] ^ o[i]
 
 cdef inline void _bool_not(const unsigned char* s, unsigned char* r, Py_ssize_t n) noexcept nogil:
     cdef Py_ssize_t i
@@ -397,11 +427,6 @@ cdef inline void _copy_py_str_to_ucs2(str val, Py_UCS2* dest, Py_ssize_t length)
         for i in range(length):
             ch = PyUnicode_READ_CHAR(val, i)
             dest[i] = <Py_UCS2>ch if ch <= 0xFFFF else 0x003F
-
-cdef inline int _ucs2_len(Py_UCS2* string) noexcept nogil:
-    cdef int i = 0
-    while string[i] != 0: i += 1
-    return i
 
 cdef inline Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle, int n_len) noexcept nogil:
     if n_len == 0: return haystack

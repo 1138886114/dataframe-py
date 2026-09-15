@@ -671,7 +671,6 @@ cdef class AsciiColumn(BaseColumn):
     cdef AsciiColumn take_by_indices(self, Py_ssize_t* indices, Py_ssize_t n, bint inplace=*)
     cdef IntColumn _cmp_op(self, object val, int op)
 
-cdef int _ucs2_len(Py_UCS2* string) noexcept nogil
 cdef Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle, int n_len) noexcept nogil
 
 @cython.boundscheck(False)
