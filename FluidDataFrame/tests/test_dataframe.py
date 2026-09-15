@@ -327,10 +327,10 @@ def test_series_return_contract():
     check('between vals', df.between('a', 2, 4).tolist() == [0, 1, 1, 1])
     check('rank vals', df.rank('a').tolist() == [1.0, 2.5, 2.5, 4.0])
 
-    # 累积聚合返回 dict of Series（每列视图均为 Series）
+    # 累积聚合返回 DataFrame（pandas 语义）
     cs = df.cumsum()
-    check('cumsum dict keys', set(cs.keys()) == {'a', 'b'})
-    check('cumsum Series vals', list(cs.values()) and all(isinstance(v, Series) for v in cs.values()))
+    check('cumsum is DataFrame', isinstance(cs, DataFrame))
+    check('cumsum cols', set(cs._columns.keys()) == {'a', 'b'})
     check('cumsum a vals', cs['a'].tolist() == [1, 4, 7, 11])
 
     # Series.isna / notna / isin / between → Series
@@ -367,6 +367,21 @@ def test_series_return_contract():
     codes, uniques = df.factorize('s')
     check('factorize codes', codes == [0, 1, 0, 2])
     check('factorize uniques', uniques == ['x', 'y', 'z'])
+
+    # 聚合返回带列名索引的 Series（pandas 语义）；非数值列不参与
+    agg = df.sum()
+    check('agg is Series', isinstance(agg, Series))
+    check('agg label a', agg['a'] == 11)
+    check('agg label b', agg['b'] == 100)
+    check('agg no str', len(agg) == 2)
+    ind_names = list(agg.index.values())
+    check('agg labels', ind_names == ['a', 'b'])
+
+    # mode 返回 DataFrame（pandas df.mode() 语义），每列独立模式、不足补 NaN
+    md = df.mode()
+    check('mode is DataFrame', isinstance(md, DataFrame))
+    check('mode a', md['a'][0] == 3)
+    check('mode cols', list(md._columns.keys()) == ['a', 'b'])
 
 
 # =====================================================================
@@ -2272,49 +2287,49 @@ def test_all_any():
     df = DataFrame({'x': int})
     df.append_row(x=1)
     df.append_row(x=2)
-    check('all true', df.all() == {'x': True})
+    check('all true', df.all()['x'] is True)
 
     # all() - one False
     df2 = DataFrame({'x': int})
     df2.append_row(x=1)
     df2.append_row(x=0)
-    check('all false', df2.all() == {'x': False})
+    check('all false', df2.all()['x'] is False)
 
     # all() - empty
     df3 = DataFrame({'x': int})
-    check('all empty', df3.all() == {'x': True})
+    check('all empty', df3.all()['x'] is True)
 
     # any() - has True
     df4 = DataFrame({'x': int})
     df4.append_row(x=0)
     df4.append_row(x=5)
-    check('any true', df4.any() == {'x': True})
+    check('any true', df4.any()['x'] is True)
 
     # any() - all False
     df5 = DataFrame({'x': int})
     df5.append_row(x=0)
     df5.append_row(x=0)
-    check('any false', df5.any() == {'x': False})
+    check('any false', df5.any()['x'] is False)
 
     # any() - empty
     df6 = DataFrame({'x': int})
-    check('any empty', df6.any() == {'x': False})
+    check('any empty', df6.any()['x'] is False)
 
     # bool column
     df7 = DataFrame({'x': bool})
     df7.append_row(x=True)
     df7.append_row(x=True)
-    check('all bool true', df7.all() == {'x': True})
+    check('all bool true', df7.all()['x'] is True)
     df7.append_row(x=False)
-    check('all bool mixed', df7.all() == {'x': False})
+    check('all bool mixed', df7.all()['x'] is False)
 
     # multi-column all/any
     df8 = DataFrame({'a': int, 'b': int})
     df8.append_row(a=1, b=2)
     df8.append_row(a=3, b=4)
-    check('multi all true', df8.all() == {'a': True, 'b': True})
+    check('multi all true', df8.all()['a'] is True and df8.all()['b'] is True)
     df8.append_row(a=0, b=1)
-    check('multi all false', df8.all() == {'a': False, 'b': True})
+    check('multi all false', df8.all()['a'] is False and df8.all()['b'] is True)
 
 def test_pct_change():
     df = DataFrame({'x': int})

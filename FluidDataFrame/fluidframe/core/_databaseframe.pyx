@@ -82,6 +82,27 @@ cdef object _wrap_series(str name, object res, IndexBase index):
     return res
 
 
+cdef Series _agg_series(dict values):
+    """把 {col_name: scalar} 聚合结果包成带列名 StringIndex 的 Series（pandas 语义）。"""
+    cdef list names = list(values.keys())
+    cdef list vals = [values[nm] for nm in names]
+    cdef BaseColumn col
+    cdef object v
+    cdef bint any_float = False
+    for v in vals:
+        if isinstance(v, float):
+            any_float = True
+            break
+    if any_float:
+        vals = [float(v) for v in vals]
+    if len(vals) == 0:
+        col = IntColumn(0)
+    else:
+        from fluidframe.core.dataframe import _column_from_list_impl
+        col = _column_from_list_impl(None, '', vals)
+    return Series('', col, StringIndex(names))
+
+
 cdef BaseColumn _col_take(BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bint inplace):
     """与 DataFrame._reorder_column 等价的列级 take（含 2D 列行级重排）。"""
     if col.dtype == TYPE_INT:
@@ -926,6 +947,54 @@ cdef class MultiIndex(IndexBase):
                     dst[self.length + i] = src2[i]
             new_codes.append(new_col)
         return MultiIndex(self.levels, new_codes, self.names)
+
+
+cdef class StringIndex(IndexBase):
+    """字符串标签索引（用于聚合结果 Series：索引为列名，等长于值列）。"""
+    def __cinit__(self, list labels):
+        self.labels = labels
+        self.length = len(labels)
+        self.index_type = INDEX_STRING
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def values(self):
+        return list(self.labels)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __getitem__(self, object key):
+        if not isinstance(key, int):
+            raise TypeError("Index keys must be integers")
+        cdef Py_ssize_t i = key
+        if i < 0: i += self.length
+        if i < 0 or i >= self.length:
+            raise IndexError("Index out of range")
+        return self.labels[i]
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def get_loc(self, object key):
+        cdef Py_ssize_t i
+        cdef object label
+        for i in range(self.length):
+            label = self.labels[i]
+            if label == key:
+                return i
+        raise KeyError(key)
+
+    cdef IndexBase _take(self, Py_ssize_t* indices, Py_ssize_t n):
+        cdef list new_labels = []
+        cdef Py_ssize_t i
+        for i in range(n):
+            new_labels.append(self.labels[indices[i]])
+        return StringIndex(new_labels)
+
+    cdef IndexBase _concat(self, IndexBase other):
+        if not isinstance(other, StringIndex):
+            raise TypeError("Cannot concat StringIndex with non-StringIndex")
+        cdef StringIndex o = <StringIndex>other
+        return StringIndex(self.labels + o.labels)
 
 
 # ============================================================
@@ -2239,6 +2308,18 @@ cdef class Series:
                 return Series(self.name, new_col, new_index)
             finally:
                 os_aligned_free(keep_c)
+
+        # 字符串标签：索引为 StringIndex（聚合结果 Series，标签为列名）时按标签查找
+        if isinstance(key, str):
+            if self._index is None or self._index.index_type != INDEX_STRING:
+                raise KeyError(key)
+            try:
+                pos = self._index.get_loc(key)
+            except KeyError:
+                raise KeyError(key)
+            if isinstance(pos, list):
+                pos = pos[0]
+            return self._col[pos]
 
         raise TypeError(f"invalid index type: {type(key)}")
 
@@ -3590,12 +3671,20 @@ cdef class DataFrame:
         finally:
             os_aligned_free(idx)
 
-    cdef dict _cum_results(self, str method):
-        cdef dict raw = _numeric_agg_impl(self, method)
-        cdef dict result = {}
+    cdef DataFrame _cum_results(self, str method):
+        cdef DataFrame result = DataFrame()
+        result.df_length = self.df_length
+        result.index = self.index
         cdef str name
-        for name in raw:
-            result[name] = Series(name, raw[name], self.index)
+        cdef object col
+        cdef object res
+        cdef BaseColumn new_col
+        for name, col in self._columns.items():
+            if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+                res = getattr(col, method)()
+                if isinstance(res, BaseColumn):
+                    new_col = <BaseColumn>res
+                    result._columns[name] = new_col
         return result
 
     def get_series(self, name):
@@ -6495,7 +6584,7 @@ cdef _all_impl(DataFrame self):
                     all_true = False
                     break
         result[name] = all_true
-    return result
+    return _agg_series(result)
 
 cdef _any_impl(DataFrame self):
     cdef Py_ssize_t n = self.df_length
@@ -6531,7 +6620,7 @@ cdef _any_impl(DataFrame self):
                     any_true = True
                     break
         result[name] = any_true
-    return result
+    return _agg_series(result)
 
 cdef _pct_change_impl(DataFrame self, int periods=1):
     cdef DataFrame result = DataFrame()
@@ -7047,7 +7136,7 @@ cdef _numeric_agg_impl(DataFrame self, str method, col_names=None):
         col = self._columns[name]
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
             result[name] = getattr(col, method)()
-    return result
+    return _agg_series(result)
 
 cdef _numeric_agg_arg_impl(DataFrame self, str method, col_names, arg):
     cdef dict result = {}
@@ -7060,10 +7149,10 @@ cdef _numeric_agg_arg_impl(DataFrame self, str method, col_names, arg):
         col = self._columns[name]
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
             result[name] = getattr(col, method)(arg)
-    return result
+    return _agg_series(result)
 
 cdef _mode_impl(DataFrame self, col_names=None):
-    cdef dict result = {}
+    cdef dict modes = {}
     cdef str name
     cdef object col
     if col_names is None:
@@ -7072,7 +7161,31 @@ cdef _mode_impl(DataFrame self, col_names=None):
         if name not in self._columns: continue
         col = self._columns[name]
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
-            result[name] = col.mode()
+            modes[name] = list(col.mode())
+    if not modes:
+        return DataFrame()
+    # 每列独立取众数列表，按最长对齐、不足补 NaN，构造 DataFrame（pandas df.mode() 语义）
+    cdef list names = list(modes.keys())
+    cdef Py_ssize_t max_len = 0
+    cdef list m
+    for m in modes.values():
+        if len(m) > max_len:
+            max_len = len(m)
+    cdef list padded
+    cdef BaseColumn new_col
+    cdef DataFrame result = DataFrame()
+    cdef Py_ssize_t i, k
+    from fluidframe.core.dataframe import _column_from_list_impl
+    for i in range(len(names)):
+        m = modes[names[i]]
+        if len(m) < max_len:
+            padded = [float(v) for v in m] + [float('nan')] * (max_len - len(m))
+        else:
+            padded = list(m)
+        new_col = _column_from_list_impl(None, names[i], padded)
+        result._columns[names[i]] = new_col
+    result.df_length = max_len
+    result.index = RangeIndex(0, max_len)
     return result
 
 
@@ -7298,7 +7411,7 @@ cdef _count_impl(DataFrame self, col_names=None):
             else:
                 count = logical_rows
             result[name] = count
-    return result
+    return _agg_series(result)
 
 cdef inline double _qs_double(double* a, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
     cdef Py_ssize_t l = 0
@@ -7581,7 +7694,7 @@ cdef _nunique_impl(DataFrame self, str col_name=None):
         return len(set(_col_to_keys(col)))
     for name, col in self._columns.items():
         result[name] = len(set(_col_to_keys(col)))
-    return result
+    return _agg_series(result)
 
 
 

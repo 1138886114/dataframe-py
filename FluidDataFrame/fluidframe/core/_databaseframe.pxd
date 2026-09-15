@@ -17,6 +17,7 @@ cdef enum IndexType:
     INDEX_RANGE = 0
     INDEX_INT = 1
     INDEX_MULTI = 2
+    INDEX_STRING = 3
 
 cdef class IndexBase:
     cdef public Py_ssize_t length
@@ -42,6 +43,9 @@ cdef class MultiIndex(IndexBase):
     cdef public list _level_maps     # 反向映射字典列表用于 O(1) 编码查找
     cdef void _build_level_maps(self)
     cdef void _build_hash_cache(self)
+
+cdef class StringIndex(IndexBase):
+    cdef public list labels          # 字符串标签 (list of str)
 
 cdef class _ILocIndexer:
     cdef DataFrame frame
@@ -161,7 +165,7 @@ cdef class DataFrame:
     cdef void _check_assign_length(self, str name, BaseColumn new_col) except *
     cdef DataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n)
     cdef DataFrame _slice_rows(self, object key)
-    cdef dict _cum_results(self, str method)
+    cdef DataFrame _cum_results(self, str method)
     cdef BaseColumn _column_from_list(self, str name, list values)
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos)
     cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos)
