@@ -1,0 +1,678 @@
+# ============================================================
+#  _columns_helper.pxi
+#  列处理模块（_columns.pyx）的模块级独立辅助函数集合。
+#  通过 `include "_columns_helper.pxi"` 文本拼入列模块，
+#  保持接口签名与 _columns.pxd 中的声明一一对应。
+#  覆盖：内存对齐分配、类型转换解析、qsort 比较器、
+#        C 层字符串/ucs2 助手、历法算法、日期/时间/日期时间解析等。
+# ============================================================
+
+
+#  列处理模块（_columns.pyx）的独立辅助函数集合。
+#  通过 `include "_columns_helper.pxi"` 文本拼入列模块，
+#  保持接口签名与 _columns.pxd 中的声明一一对应。
+# ============================================================
+
+# ============================================================
+#  Astype helper
+# ============================================================
+cdef inline bint _fast_match(const char* s, const char* expected, Py_ssize_t length) noexcept nogil:
+    cdef Py_ssize_t i
+    for i in range(length):
+        if (s[i] | 0x20) != expected[i]:
+            return False
+    return True
+
+cdef int _resolve_astype_target(object target) except -1:
+    if target is int: return TYPE_INT
+    if target is float: return TYPE_DOUBLE
+    if target is bool: return TYPE_BOOL
+    if target is str: return TYPE_UCS2
+
+    cdef Py_ssize_t length
+    cdef const char* c_str
+
+    if isinstance(target, str):
+        c_str = PyUnicode_AsUTF8AndSize(target, &length)
+        if c_str == NULL:
+            raise TypeError(f"Invalid string type: {target}")
+
+        if length == 2:
+            if _fast_match(c_str, b"i4", 2): return TYPE_INT
+            if _fast_match(c_str, b"i8", 2): return TYPE_INT
+            if _fast_match(c_str, b"f4", 2): return TYPE_DOUBLE
+            if _fast_match(c_str, b"f8", 2): return TYPE_DOUBLE
+        elif length == 3:
+            if _fast_match(c_str, b"int", 3): return TYPE_INT
+            if _fast_match(c_str, b"str", 3): return TYPE_UCS2
+            if _fast_match(c_str, b"cat", 3): return TYPE_CATEGORY
+        elif length == 4:
+            if _fast_match(c_str, b"bool", 4): return TYPE_BOOL
+            if _fast_match(c_str, b"date", 4): return TYPE_DATE
+            if _fast_match(c_str, b"time", 4): return TYPE_TIME
+            if _fast_match(c_str, b"ucs2", 4): return TYPE_UCS2
+            if _fast_match(c_str, b"cate", 4): return TYPE_CATEGORY
+        elif length == 5:
+            if _fast_match(c_str, b"float", 5): return TYPE_DOUBLE
+            if _fast_match(c_str, b"int32", 5): return TYPE_INT
+            if _fast_match(c_str, b"int64", 5): return TYPE_INT
+            if _fast_match(c_str, b"ascii", 5): return TYPE_CHAR256
+        elif length == 6:
+            if _fast_match(c_str, b"double", 6): return TYPE_DOUBLE
+            if _fast_match(c_str, b"string", 6): return TYPE_UCS2
+        elif length == 7:
+            if _fast_match(c_str, b"integer", 7): return TYPE_INT
+            if _fast_match(c_str, b"float64", 7): return TYPE_DOUBLE
+            if _fast_match(c_str, b"boolean", 7): return TYPE_BOOL
+            if _fast_match(c_str, b"unicode", 7): return TYPE_UCS2
+            if _fast_match(c_str, b"char256", 7): return TYPE_CHAR256
+        elif length == 8:
+            if _fast_match(c_str, b"datetime", 8): return TYPE_DATETIME
+            if _fast_match(c_str, b"category", 8): return TYPE_CATEGORY
+        elif length == 9:
+            if _fast_match(c_str, b"timestamp", 9): return TYPE_DATE
+
+    raise TypeError(f"Cannot cast to unsupported target type: {target}")
+
+
+# ============================================================
+#  qsort / 二分查找等纯 C 辅助
+# ============================================================
+cdef int _cmp_int(const void* a, const void* b) noexcept nogil:
+    cdef int va = (<const int*>a)[0]
+    cdef int vb = (<const int*>b)[0]
+    if va < vb: return -1
+    if va > vb: return 1
+    return 0
+
+cdef inline bint _binary_search(int* arr, Py_ssize_t n, int target) noexcept nogil:
+    cdef Py_ssize_t low = 0, high = n - 1, mid
+    cdef int val
+    while low <= high:
+        mid = (low + high) // 2
+        val = arr[mid]
+        if val == target:
+            return True
+        elif val < target:
+            low = mid + 1
+        else:
+            high = mid - 1
+    return False
+
+
+cdef int64_t US_PER_DAY = 86400000000LL
+
+
+# ============================================================
+#  Platform-specific aligned allocation (C header injection)
+# ============================================================
+cdef extern from *:
+    """
+    #include <stdlib.h>
+
+    #if defined(_MSC_VER) || defined(_WIN32)
+    #include <malloc.h>
+    static inline void* os_aligned_malloc(size_t size, size_t alignment) {
+        return _aligned_malloc(size, alignment);
+    }
+    static inline void os_aligned_free(void* ptr) {
+        _aligned_free(ptr);
+    }
+    #else
+    static inline void* os_aligned_malloc(size_t size, size_t alignment) {
+        void* ptr = NULL;
+        if (posix_memalign(&ptr, alignment, size) == 0) {
+            return ptr;
+        }
+        return NULL;
+    }
+    static inline void os_aligned_free(void* ptr) {
+        free(ptr);
+    }
+    #endif
+    """
+    void* os_aligned_malloc(size_t size, size_t alignment) nogil
+    void os_aligned_free(void* ptr) nogil
+
+cdef extern from "<stdlib.h>" nogil:
+    int posix_memalign(void **memptr, size_t alignment, size_t size)
+    void free(void *ptr)
+
+
+# ============================================================
+#  Aligned memory allocation
+# ============================================================
+cdef void* aligned_malloc(size_t size, size_t alignment=64) nogil:
+    if size == 0:
+        return NULL
+    cdef size_t ptr_size = sizeof(void*)
+    if alignment < ptr_size:
+        alignment = ptr_size
+    if (alignment & (alignment - 1)) != 0:
+        return NULL
+    return os_aligned_malloc(size, alignment)
+
+
+cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t alignment=64) nogil:
+    if new_size == 0:
+        if ptr != NULL:
+            os_aligned_free(ptr)
+        return NULL
+    if ptr != NULL and new_size == old_size and (<size_t>ptr % alignment) == 0:
+        return ptr
+
+    cdef void* new_ptr = aligned_malloc(new_size, alignment)
+    if new_ptr != NULL and ptr != NULL:
+        if old_size < new_size:
+            memcpy(new_ptr, ptr, old_size)
+        else:
+            memcpy(new_ptr, ptr, new_size)
+        os_aligned_free(ptr)
+    return new_ptr
+
+
+# ============================================================
+
+#  底层纯 C 数学/度量算子 (零分支与 SIMD 优化)
+# ============================================================
+
+cdef int _cmp_double(const void* a, const void* b) noexcept nogil:
+    """提供给 qsort 和 bsearch 的严格全序比较函数，安全处理 NaN"""
+    cdef double va = (<const double*>a)[0]
+    cdef double vb = (<const double*>b)[0]
+    cdef bint anan = (va != va)
+    cdef bint bnan = (vb != vb)
+    if anan and bnan: return 0
+    if anan: return -1
+    if bnan: return 1
+    if va < vb: return -1
+    if va > vb: return 1
+    return 0
+
+cdef int _cmp_double_asc(const void* a, const void* b) noexcept nogil:
+    """升序比较，用于 qsort (NaN 视为最大值，排最后)"""
+    cdef double va = (<const double*>a)[0]
+    cdef double vb = (<const double*>b)[0]
+    cdef bint anan = (va != va)
+    cdef bint bnan = (vb != vb)
+    if anan and bnan: return 0
+    if anan: return 1
+    if bnan: return -1
+    if va < vb: return -1
+    if va > vb: return 1
+    return 0
+
+
+cdef void _col_to_double(object col, double* buf, Py_ssize_t n) except *:
+    cdef Py_ssize_t i
+    cdef int* int_data
+    cdef double* double_data
+
+    if isinstance(col, DoubleColumn):
+        double_data = (<DoubleColumn>col).data_c
+        if n > 0:
+            memcpy(buf, double_data, n * sizeof(double))
+    elif isinstance(col, IntColumn):
+        int_data = (<IntColumn>col).data_c
+        with nogil:
+            for i in range(n):
+                buf[i] = <double>int_data[i]
+    else:
+        raise TypeError("Expected IntColumn or DoubleColumn")
+
+
+cdef extern from "<ctype.h>" nogil:
+    int isdigit(int)
+    int isspace(int)
+    int isalpha(int)
+    int isalnum(int)
+    int islower(int)
+    int isupper(int)
+
+cdef inline bint _is_lower(unsigned char c) noexcept nogil:
+    return c >= 97 and c <= 122
+
+cdef inline bint _is_upper(unsigned char c) noexcept nogil:
+    return c >= 65 and c <= 90
+
+cdef inline bint _is_alpha(unsigned char c) noexcept nogil:
+    return _is_lower(c) or _is_upper(c)
+
+cdef inline bint _is_digit(unsigned char c) noexcept nogil:
+    return c >= 48 and c <= 57
+
+cdef inline bint _is_alnum(unsigned char c) noexcept nogil:
+    return _is_alpha(c) or _is_digit(c)
+
+cdef inline bint _is_space(unsigned char c) noexcept nogil:
+    return c == 32 or (c >= 9 and c <= 13)
+
+# ============================================================
+#  C helper functions (全部保留，提供原始功能支撑)
+# ============================================================
+
+cdef inline bint _c_str_contains(const char* source, const char* target) noexcept nogil:
+    return strstr(source, target) != NULL
+
+cdef inline bint _c_startswith(const char* data, const char* pat, size_t pat_len) noexcept nogil:
+    if strlen(data) < pat_len:
+        return 0
+    return strncmp(data, pat, pat_len) == 0
+
+cdef inline bint _c_endswith(const char* data, const char* pat, size_t pat_len) noexcept nogil:
+    cdef size_t n = strlen(data)
+    if n < pat_len:
+        return 0
+    return strncmp(data + (n - pat_len), pat, pat_len) == 0
+
+cdef inline Py_ssize_t _c_find(const char *data, const char *pat, size_t pat_len) noexcept nogil:
+    cdef const char* match = strstr(data, pat)
+    if match != NULL:
+        return match - data
+    return -1
+
+cdef inline Py_ssize_t _c_rfind(const char *data, const char *pat, size_t pat_len) noexcept nogil:
+    cdef Py_ssize_t n = <Py_ssize_t>strlen(data)
+    cdef Py_ssize_t p_len = <Py_ssize_t>pat_len
+    if p_len == 0:
+        return n
+    if p_len > n:
+        return -1
+    cdef Py_ssize_t i
+    for i in range(n - p_len, -1, -1):
+        if strncmp(data + i, pat, pat_len) == 0:
+            return i
+    return -1
+
+cdef inline Py_ssize_t _c_count(const char *data, const char *pat, size_t pat_len) noexcept nogil:
+    if pat_len == 0:
+        return <Py_ssize_t>strlen(data) + 1
+    cdef Py_ssize_t cnt = 0
+    cdef const char* match = strstr(data, pat)
+    while match != NULL:
+        cnt += 1
+        match = strstr(match + pat_len, pat)
+    return cnt
+
+
+# ============================================================
+#  AsciiColumn class definition
+# ============================================================
+
+cdef inline void _copy_py_str_to_ucs2(str val, Py_UCS2* dest, Py_ssize_t length) noexcept:
+    """
+    极速、安全的摄入器：解析底层 Unicode 物理布局并批量直拷
+    超限宽字符 (Emoji等) 会在这里被永久替换为 '?' (0x003F)
+    """
+    cdef int kind = PyUnicode_KIND(val)
+    cdef void* data = PyUnicode_DATA(val)
+    cdef Py_ssize_t i
+    cdef Py_UCS4 ch
+
+    if kind == PyUnicode_1BYTE_KIND:
+        # ASCII / Latin1 数据，直接宽化拷贝
+        for i in range(length):
+            dest[i] = <Py_UCS2>(<Py_UCS1*>data)[i]
+    elif kind == PyUnicode_2BYTE_KIND:
+        # BMP 基本多文种平面 (包含中文)，安全且完美对齐，内存直拷
+        memcpy(dest, data, length * sizeof(Py_UCS2))
+    elif kind == PyUnicode_4BYTE_KIND:
+        # 包含了 Emoji 的宽字符字符串，清洗拦截
+        for i in range(length):
+            ch = (<Py_UCS4*>data)[i]
+            dest[i] = <Py_UCS2>ch if ch <= 0xFFFF else 0x003F
+    else:
+        # 安全降级，理论上 Python3.3+ 不会走到这里
+        for i in range(length):
+            ch = PyUnicode_READ_CHAR(val, i)
+            dest[i] = <Py_UCS2>ch if ch <= 0xFFFF else 0x003F
+
+cdef inline int _ucs2_len(Py_UCS2* string) noexcept nogil:
+    cdef int i = 0
+    while string[i] != 0: i += 1
+    return i
+
+cdef inline Py_UCS2* _ucs2_strstr(Py_UCS2* haystack, int h_len, Py_UCS2* needle, int n_len) noexcept nogil:
+    if n_len == 0: return haystack
+    if h_len < n_len: return NULL
+    cdef int i, j
+    cdef bint match
+    for i in range(h_len - n_len + 1):
+        if haystack[i] == needle[0]:
+            match = True
+            for j in range(1, n_len):
+                if haystack[i+j] != needle[j]:
+                    match = False
+                    break
+            if match: return haystack + i
+    return NULL
+
+cdef inline bint _ucs2_startswith(Py_UCS2* s, Py_ssize_t s_len, Py_UCS2* prefix, Py_ssize_t p_len) noexcept nogil:
+    if p_len == 0: return True
+    if s_len < p_len: return False
+    cdef Py_ssize_t i
+    for i in range(p_len):
+        if s[i] != prefix[i]: return False
+    return True
+
+cdef inline bint _ucs2_endswith(Py_UCS2* s, Py_ssize_t s_len, Py_UCS2* suffix, Py_ssize_t suf_len) noexcept nogil:
+    if suf_len == 0: return True
+    if s_len < suf_len: return False
+    cdef Py_ssize_t i
+    cdef Py_ssize_t offset = s_len - suf_len
+    for i in range(suf_len):
+        if s[offset + i] != suffix[i]: return False
+    return True
+
+cdef inline int _cmp_ucs2_buffers(Py_UCS2* a, Py_ssize_t len_a, Py_UCS2* b, Py_ssize_t len_b) noexcept nogil:
+    cdef Py_ssize_t min_len = len_a if len_a < len_b else len_b
+    cdef Py_ssize_t i
+    for i in range(min_len):
+        if a[i] < b[i]: return -1
+        if a[i] > b[i]: return 1
+    if len_a < len_b: return -1
+    if len_a > len_b: return 1
+    return 0
+
+
+#  静态常量查找表（彻底消除分支预测失败）
+# ============================================================
+
+cdef struct NameEntry:
+    const char* name
+    size_t len
+
+cdef NameEntry[7] _DAY_NAMES = [
+    NameEntry(b"Monday", 6),
+    NameEntry(b"Tuesday", 7),
+    NameEntry(b"Wednesday", 9),
+    NameEntry(b"Thursday", 8),
+    NameEntry(b"Friday", 6),
+    NameEntry(b"Saturday", 8),
+    NameEntry(b"Sunday", 6)
+]
+
+cdef NameEntry[13] _MONTH_NAMES = [
+    NameEntry(b"", 0),
+    NameEntry(b"January", 7),
+    NameEntry(b"February", 8),
+    NameEntry(b"March", 5),
+    NameEntry(b"April", 5),
+    NameEntry(b"May", 3),
+    NameEntry(b"June", 4),
+    NameEntry(b"July", 4),
+    NameEntry(b"August", 6),
+    NameEntry(b"September", 9),
+    NameEntry(b"October", 7),
+    NameEntry(b"November", 8),
+    NameEntry(b"December", 8)
+]
+
+cdef int[13] _MONTH_DAYS_NORMAL = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+cdef int[13] _DOY_CUMULATIVE_NORMAL = [0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+
+# ============================================================
+#  现代顶级历法算法 (Howard Hinnant Algorithm)
+#  专为 1970-01-01 纪元设计，无除法常数表、无循环、零分支
+# ============================================================
+
+cdef inline bint _is_leap_year(int y) noexcept nogil:
+    return (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)
+
+cdef inline int _days_in_month(int y, int m) noexcept nogil:
+    if m == 2:
+        return 29 if _is_leap_year(y) else 28
+    if m >= 1 and m <= 12:
+        return _MONTH_DAYS_NORMAL[m]
+    return 30
+
+cdef inline int32_t _ymd_to_days(int y, int m, int d) noexcept nogil:
+    """YYYY-MM-DD -> 1970-01-01 起的天数 (Days since Unix Epoch)"""
+    cdef int a = (14 - m) // 12
+    cdef int y2 = y + 4800 - a
+    cdef int m2 = m + 12 * a - 3
+    return <int32_t>(d + (153 * m2 + 2) // 5 + 365 * y2 + y2 // 4 - y2 // 100 + y2 // 400 - 32045 - 2440588)
+
+cdef inline void _days_to_ymd(int32_t days, int* y, int* m, int* d) noexcept nogil:
+    """1970-01-01 起的天数 -> YYYY-MM-DD"""
+    cdef long long daynum = <long long>days + 2440588
+    cdef long long a, b, c, d2, e, m2
+    a = daynum + 32044
+    b = (4 * a + 3) // 146097
+    c = a - 146097 * b // 4
+    d2 = (4 * c + 3) // 1461
+    e = c - 1461 * d2 // 4
+    m2 = (5 * e + 2) // 153
+    d[0] = <int>(e - (153 * m2 + 2) // 5 + 1)
+    m[0] = <int>(m2 + 3 - 12 * (m2 // 10))
+    y[0] = <int>(100 * b + d2 - 4800 + m2 // 10)
+
+cdef inline int32_t _parse_date_str(str s) noexcept:
+    """极速解析 'YYYYMMDD' 或 'YYYY-MM-DD' 字符串为 Unix 纪元天数"""
+    cdef bytes b = s.encode('ascii', errors='ignore')
+    cdef const unsigned char* buf = <const unsigned char*>b
+    cdef int digits[10]
+    cdef int nd = 0, i = 0, n = len(b)
+    while i < n and nd < 8:
+        if buf[i] >= 48 and buf[i] <= 57:
+            digits[nd] = buf[i] - 48
+            nd += 1
+        i += 1
+    if nd < 8:
+        return 0
+    cdef int y = digits[0] * 1000 + digits[1] * 100 + digits[2] * 10 + digits[3]
+    cdef int m = digits[4] * 10 + digits[5]
+    cdef int d = digits[6] * 10 + digits[7]
+    return _ymd_to_days(y, m, d)
+
+
+# ============================================================
+#  DateColumn 类实现
+# ============================================================
+
+cdef tuple BOOL_STRS = ('False', 'True')
+
+
+#  时间常数定义 (基于 Unix 1970-01-01 00:00:00 纪元)
+# ============================================================
+
+cdef int64_t US_PER_SEC = 1000000
+cdef int64_t SEC_PER_DAY = 86400
+
+
+cdef inline int64_t _parse_datetime_str(str s) except -1:
+    """解析 'YYYY-MM-DD HH:MM:SS' 或 'YYYY-MM-DD' 为 1970 纪元微秒数"""
+    cdef bytes b = s.encode('ascii', errors='ignore')
+    cdef const unsigned char* buf = <const unsigned char*>b
+    cdef int max_len = len(b)
+    cdef int digits[20]
+    cdef int ndigits = 0
+    cdef int i = 0
+    cdef int year = 0, month = 1, day = 1, hour = 0, minute = 0, second = 0
+    cdef int32_t days
+    cdef int64_t us
+
+    while i < max_len and ndigits < 20:
+        if buf[i] >= 48 and buf[i] <= 57:
+            digits[ndigits] = buf[i] - 48
+            ndigits += 1
+        i += 1
+
+    if ndigits < 8:
+        raise ValueError(f"Invalid datetime string: '{s}'")
+
+    year = digits[0]*1000 + digits[1]*100 + digits[2]*10 + digits[3]
+    month = digits[4]*10 + digits[5]
+    day = digits[6]*10 + digits[7]
+    if ndigits >= 10:
+        hour = digits[8]*10 + digits[9]
+    if ndigits >= 12:
+        minute = digits[10]*10 + digits[11]
+    if ndigits >= 14:
+        second = digits[12]*10 + digits[13]
+
+    # 直接基于 1970 纪元天数换算
+    days = _ymd_to_days(year, month, day)
+    us = <int64_t>days * US_PER_DAY + <int64_t>hour * 3600000000LL + <int64_t>minute * 60000000LL + <int64_t>second * US_PER_SEC
+    return us
+
+cdef inline void _datetime_to_ymdhms(int64_t us, int* y, int* m, int* d, int* h, int* mi, int* s) noexcept nogil:
+    """1970 纪元微秒数分解为 YMD HMS"""
+    cdef int64_t total_seconds = us / US_PER_SEC
+    cdef int32_t days = <int32_t>(total_seconds / SEC_PER_DAY)
+    cdef int rem = <int>(total_seconds - (<int64_t>days * SEC_PER_DAY))
+    if rem < 0:
+        rem += SEC_PER_DAY
+        days -= 1
+
+    h[0] = rem / 3600
+    cdef int rem_m = rem - h[0] * 3600
+    mi[0] = rem_m / 60
+    s[0] = rem_m - mi[0] * 60
+
+    _days_to_ymd(days, y, m, d)
+
+cdef inline void _format_datetime_c(int64_t us, char* dest) noexcept nogil:
+    """纯 C 极速格式化 YYYY-MM-DD HH:MM:SS（零堆内存分配）"""
+    cdef int y, m, d, h, mi, s
+    _datetime_to_ymdhms(us, &y, &m, &d, &h, &mi, &s)
+    dest[0] = <char>(48 + ((y / 1000) % 10))
+    dest[1] = <char>(48 + ((y / 100) % 10))
+    dest[2] = <char>(48 + ((y / 10) % 10))
+    dest[3] = <char>(48 + (y % 10))
+    dest[4] = b'-'
+    dest[5] = <char>(48 + (m / 10))
+    dest[6] = <char>(48 + (m % 10))
+    dest[7] = b'-'
+    dest[8] = <char>(48 + (d / 10))
+    dest[9] = <char>(48 + (d % 10))
+
+    if h == 0 and mi == 0 and s == 0:
+        dest[10] = 0
+    else:
+        dest[10] = b' '
+        dest[11] = <char>(48 + (h / 10))
+        dest[12] = <char>(48 + (h % 10))
+        dest[13] = b':'
+        dest[14] = <char>(48 + (mi / 10))
+        dest[15] = <char>(48 + (mi % 10))
+        dest[16] = b':'
+        dest[17] = <char>(48 + (s / 10))
+        dest[18] = <char>(48 + (s % 10))
+        dest[19] = 0
+
+cdef inline str _datetime_to_str(int64_t us):
+    cdef char buf[32]
+    _format_datetime_c(us, buf)
+    return buf.decode('ascii')
+
+cdef int _cmp_int64(const void* a, const void* b) noexcept nogil:
+    cdef int64_t va = (<const int64_t*>a)[0]
+    cdef int64_t vb = (<const int64_t*>b)[0]
+    if va < vb: return -1
+    if va > vb: return 1
+    return 0
+
+
+#  底层纯 C 高性能时间运算、LUT 查表格式化与零拷贝解析
+# ============================================================
+
+# 00-99 两位字符查找表（LUT 优化：消除格式化中的所有除法/分支）
+cdef extern from *:
+    """
+    static const char DIGIT_PAIRS[200] =
+        "00010203040506070809"
+        "10111213141516171819"
+        "20212223242526272829"
+        "30313233343536373839"
+        "40414243444546474849"
+        "50515253545556575859"
+        "60616263646566676869"
+        "70717273747576777879"
+        "80818283848586878889"
+        "90919293949596979899";
+    """
+    const char DIGIT_PAIRS[200]
+
+cdef inline void _split_hms(int32_t secs, int32_t* h, int32_t* m, int32_t* s) noexcept nogil:
+    """提取时分秒（钳制安全范围：0 ~ 86399）"""
+    if secs < 0:
+        secs = (secs % 86400 + 86400) % 86400
+    elif secs >= 86400:
+        secs = secs % 86400
+
+    cdef int32_t tot_m = secs / 60
+    s[0] = secs - tot_m * 60
+    h[0] = tot_m / 60
+    m[0] = tot_m - h[0] * 60
+
+cdef inline void _format_time_c(int32_t secs, char* dest) noexcept nogil:
+    """纯 C 查表就地格式化为 'HH:MM:SS'（零除法、零分支、零堆分配）"""
+    cdef int32_t h, m, s
+    _split_hms(secs, &h, &m, &s)
+
+    cdef int32_t h_idx = h * 2
+    cdef int32_t m_idx = m * 2
+    cdef int32_t s_idx = s * 2
+
+    dest[0] = DIGIT_PAIRS[h_idx]
+    dest[1] = DIGIT_PAIRS[h_idx + 1]
+    dest[2] = b':'
+    dest[3] = DIGIT_PAIRS[m_idx]
+    dest[4] = DIGIT_PAIRS[m_idx + 1]
+    dest[5] = b':'
+    dest[6] = DIGIT_PAIRS[s_idx]
+    dest[7] = DIGIT_PAIRS[s_idx + 1]
+    dest[8] = 0
+
+cdef inline str _time_to_str(int32_t secs):
+    cdef char buf[16]
+    _format_time_c(secs, buf)
+    return buf.decode('ascii')
+
+cdef int32_t _parse_time_str(str s) except -1:
+    """极速解析 'HH:MM:SS', 'H:M:S', 'HH:MM' 等时间格式为自午夜起的秒数"""
+    cdef bytes b = s.encode('ascii')
+    cdef const char* buf = <const char*>b
+    cdef Py_ssize_t n = len(b)
+    cdef int32_t parts[3]
+    parts[0] = 0; parts[1] = 0; parts[2] = 0
+    cdef int32_t cur_val = 0
+    cdef int32_t part_idx = 0
+    cdef Py_ssize_t i
+    cdef int c
+
+    for i in range(n):
+        c = <int>buf[i]
+        if c >= 48 and c <= 57:
+            cur_val = cur_val * 10 + (c - 48)
+        elif c == 58:
+            if part_idx >= 2:
+                raise ValueError(f"Invalid time format: '{s}'")
+            parts[part_idx] = cur_val
+            cur_val = 0
+            part_idx += 1
+        elif c == 32 or c == 9 or c == 13 or c == 10:
+            continue
+        else:
+            raise ValueError(f"Invalid character in time string: '{s}'")
+
+    parts[part_idx] = cur_val
+
+    if part_idx == 0:
+        raise ValueError(f"Invalid time string: '{s}'")
+
+    if parts[0] < 0 or parts[0] > 23 or parts[1] < 0 or parts[1] > 59 or parts[2] < 0 or parts[2] > 59:
+        raise ValueError(f"Time component out of bounds in '{s}'")
+
+    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+
+cdef int _cmp_int32(const void* a, const void* b) noexcept nogil:
+    cdef int32_t va = (<const int32_t*>a)[0]
+    cdef int32_t vb = (<const int32_t*>b)[0]
+    return (va > vb) - (va < vb)
+
+
+# ============================================================
+#  TimeColumn 类实现 (全面 int32_t 与 SIMD 向量化优化)
+# ============================================================
