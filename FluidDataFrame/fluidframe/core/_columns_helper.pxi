@@ -667,6 +667,133 @@ cdef int32_t _parse_time_str(str s) except -1:
 
     return parts[0] * 3600 + parts[1] * 60 + parts[2]
 
+
+# ============================================================
+#  Fused numeric_t helpers（IntColumn / DoubleColumn 泛型去重）
+#  int / double 两者算法体完全一致，仅指针类型不同。
+#  通过 `numeric_t` 融合类型单份实现，两个类各留薄委托。
+# ============================================================
+ctypedef fused numeric_t:
+    int
+    double
+
+cdef inline double _n_quickselect(numeric_t* a, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
+    """3-way partition 快速选择，返回第 k 小元素（k 基于已排序副本索引）。"""
+    cdef Py_ssize_t l = 0, r = n - 1
+    cdef Py_ssize_t i, lt, gt
+    cdef numeric_t pivot, tmp
+
+    while l <= r:
+        pivot = a[l + (r - l) // 2]
+        lt = l
+        gt = r
+        i = l
+        while i <= gt:
+            if a[i] < pivot:
+                tmp = a[lt]; a[lt] = a[i]; a[i] = tmp
+                lt += 1
+                i += 1
+            elif a[i] > pivot:
+                tmp = a[i]; a[i] = a[gt]; a[gt] = tmp
+                gt -= 1
+            else:
+                i += 1
+
+        if k < lt:
+            r = lt - 1
+        elif k > gt:
+            l = gt + 1
+        else:
+            return <double>a[k]
+    return <double>a[k]
+
+cdef double _n_median(numeric_t* ptr, Py_ssize_t n) except *:
+    """中位数（内部对齐分配副本 + quickselect）。n == 0 时返回 NAN。"""
+    if n == 0:
+        return NAN
+    cdef numeric_t* temp = <numeric_t*>aligned_malloc(n * sizeof(numeric_t))
+    if temp == NULL:
+        raise MemoryError()
+    memcpy(temp, ptr, n * sizeof(numeric_t))
+    cdef Py_ssize_t mid = n // 2
+    cdef double v1, v2
+    try:
+        if n % 2 == 0:
+            v1 = _n_quickselect(temp, n, mid - 1)
+            v2 = _n_quickselect(temp, n, mid)
+            return (v1 + v2) * 0.5
+        return _n_quickselect(temp, n, mid)
+    finally:
+        os_aligned_free(temp)
+
+cdef double _n_quantile(numeric_t* ptr, Py_ssize_t n, double q) except *:
+    """分位数（线性插值）。n == 0 时返回 NAN。"""
+    if n == 0:
+        return NAN
+    cdef numeric_t* temp = <numeric_t*>aligned_malloc(n * sizeof(numeric_t))
+    if temp == NULL:
+        raise MemoryError()
+    memcpy(temp, ptr, n * sizeof(numeric_t))
+    cdef double pos = q * (n - 1)
+    cdef Py_ssize_t idx = <Py_ssize_t>pos
+    cdef double frac = pos - idx
+    cdef double v1, v2, result
+    try:
+        if idx >= n - 1:
+            return _n_quickselect(temp, n, n - 1)
+        v1 = _n_quickselect(temp, n, idx)
+        v2 = _n_quickselect(temp, n, idx + 1)
+        return v1 + frac * (v2 - v1)
+    finally:
+        os_aligned_free(temp)
+
+cdef inline void _n_central_moments(numeric_t* ptr, Py_ssize_t n,
+                                    double* out_mean, double* out_m2,
+                                    double* out_m3, double* out_m4) noexcept nogil:
+    """Welford 在线递推中心矩（与 IntColumn/DoubleColumn 原实现逐位一致）。"""
+    if n == 0:
+        out_mean[0] = 0.0; out_m2[0] = 0.0; out_m3[0] = 0.0; out_m4[0] = 0.0
+        return
+    cdef double mean = 0.0, m2 = 0.0, m3 = 0.0, m4 = 0.0
+    cdef double val, delta, delta_n, delta_n2, term1
+    cdef Py_ssize_t i, n1
+    for i in range(n):
+        n1 = i
+        val = <double>ptr[i]
+        delta = val - mean
+        mean += delta / (n1 + 1)
+        delta_n = val - mean
+        term1 = delta * delta_n * n1
+        delta_n2 = delta_n * delta_n
+        m4 += term1 * delta_n2 * ((n1 + 1) * (n1 + 1) - 3 * (n1 + 1) + 3) + 6.0 * delta_n2 * m2 - 4.0 * delta_n * m3
+        m3 += term1 * delta_n * (n1 - 2) - 3.0 * delta_n * m2
+        m2 += term1
+    out_mean[0] = mean
+    out_m2[0] = fmax(m2, 0.0)
+    out_m3[0] = m3
+    out_m4[0] = fmax(m4, 0.0)
+
+cdef inline double _n_accum_var(numeric_t* ptr, Py_ssize_t n, double m) noexcept nogil:
+    """样本方差：sum((x - m)^2) / (n - 1)，n < 2 时返回 0。"""
+    if n < 2:
+        return 0.0
+    cdef Py_ssize_t i
+    cdef double sum_sq = 0.0, diff
+    for i in range(n):
+        diff = <double>ptr[i] - m
+        sum_sq += diff * diff
+    return sum_sq / <double>(n - 1)
+
+cdef inline double _n_accum_mad(numeric_t* ptr, Py_ssize_t n, double m) noexcept nogil:
+    """平均绝对离差：mean(|x - m|)，n == 0 时返回 NAN。"""
+    if n == 0:
+        return NAN
+    cdef Py_ssize_t i
+    cdef double total_dev = 0.0
+    for i in range(n):
+        total_dev += fabs(<double>ptr[i] - m)
+    return total_dev / <double>n
+
 cdef int _cmp_int32(const void* a, const void* b) noexcept nogil:
     cdef int32_t va = (<const int32_t*>a)[0]
     cdef int32_t vb = (<const int32_t*>b)[0]

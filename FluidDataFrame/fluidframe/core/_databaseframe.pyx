@@ -1807,9 +1807,18 @@ cdef class Series:
         attr = getattr(col, name, None)
         if callable(attr):
             def _forward(*args, **kwargs):
+                cdef BaseColumn rcol
+                cdef Py_ssize_t rlen
                 res = attr(*args, **kwargs)
                 if isinstance(res, BaseColumn):
-                    return Series(self.name, <BaseColumn>res, self._index)
+                    rcol = <BaseColumn>res
+                    if rcol.is_2d and rcol.num_cols > 1:
+                        rlen = rcol._get_rows_c()
+                    else:
+                        rlen = rcol.length
+                    if self._index is not None and (<IndexBase>self._index).length == rlen:
+                        return Series(self.name, rcol, self._index)
+                    return Series(self.name, rcol, RangeIndex(0, rlen))
                 return res
             return _forward
         if attr is None:
@@ -2114,6 +2123,46 @@ cdef class Series:
         return Series(self.name, ~self._col, self._index)
 
     # =================================================================
+    #  命名算术（pandas 风格：s.add(other) 等价于 s + other）
+    # =================================================================
+
+    def add(self, other):
+        """加法：Series + other（other 可为 Series/列/标量）"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        if isinstance(o, (IntColumn, DoubleColumn)):
+            res = self._col.add(o)
+        else:
+            res = self._col.add_val(o)
+        return Series(self.name, res, self._index)
+
+    def sub(self, other):
+        """减法：Series - other"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        if isinstance(o, (IntColumn, DoubleColumn)):
+            res = self._col.sub(o)
+        else:
+            res = self._col.sub_val(o)
+        return Series(self.name, res, self._index)
+
+    def mul(self, other):
+        """乘法：Series * other"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        if isinstance(o, (IntColumn, DoubleColumn)):
+            res = self._col.mul(o)
+        else:
+            res = self._col.mul_val(o)
+        return Series(self.name, res, self._index)
+
+    def div(self, other):
+        """除法：Series / other"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        if isinstance(o, (IntColumn, DoubleColumn)):
+            res = self._col.div(o)
+        else:
+            res = self._col.div_val(o)
+        return Series(self.name, res, self._index)
+
+    # =================================================================
     #  单列统计
     # =================================================================
     
@@ -2199,6 +2248,22 @@ cdef class Series:
     def kurt(self):
         """峰度"""
         return self._col.kurt()
+
+    def mad(self):
+        """平均绝对偏差"""
+        return self._col.mad()
+
+    def sem(self):
+        """标准误"""
+        return self._col.sem()
+
+    def mode(self):
+        """众数：返回以值为列的 Series（pandas 语义，按 Mode 值升序）"""
+        cdef list vals = self._col.mode()
+        cdef Py_ssize_t n = len(vals)
+        cdef DataFrame tmp = DataFrame()
+        cdef BaseColumn col = _column_from_list_impl(tmp, self.name, vals)
+        return Series(self.name, col, RangeIndex(0, n))
 
     # =================================================================
     #  单列变换
@@ -2462,6 +2527,50 @@ cdef class Series:
         if self._col.dtype != TYPE_CATEGORY:
             raise AttributeError("Can only use .cat accessor with categorical values!")
         return _CategoryAccessor(self)
+
+    # =================================================================
+    #  滚动窗口
+    # =================================================================
+
+    def rolling(self, Py_ssize_t window):
+        """滚动窗口访问器：返回 _RollingWrapper（.mean()/.sum()/... 窗口算子）"""
+        if window <= 0:
+            raise ValueError(f"Window size must be positive, got {window}")
+        return _RollingWrapper(self._col, window, self.name, self._index)
+
+    # =================================================================
+    #  距离度量（与另一列 / Series 逐元素计算）
+    # =================================================================
+
+    def euclidean_dist(self, other):
+        """欧氏距离：与其他 Series/列 逐元素计算"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        return self._col.euclidean_dist(o)
+
+    def manhattan_dist(self, other):
+        """曼哈顿距离"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        return self._col.manhattan_dist(o)
+
+    def cosine_similarity(self, other):
+        """余弦相似度"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        return self._col.cosine_similarity(o)
+
+    def cosine_dist(self, other):
+        """余弦距离"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        return self._col.cosine_dist(o)
+
+    def jaccard_sim(self, other):
+        """Jaccard 相似度"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        return self._col.jaccard_sim(o)
+
+    def hamming_dist(self, other):
+        """汉明距离"""
+        o = (<Series>other)._col if isinstance(other, Series) else other
+        return self._col.hamming_dist(o)
 
     # =================================================================
     #  导出
