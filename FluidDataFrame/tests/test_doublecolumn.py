@@ -1194,9 +1194,9 @@ def test_2d_clip():
 
 def test_2d_unique_nunique():
     col = _make_2d(3, [[1, 2, 1], [10, 10, 20]])
-    check('2d nunique', col._nunique() == 4)  # {1, 2, 10, 20}
+    check('2d nunique per-subcolumn', col._nunique() == [2, 2])  # {1,2} | {10,20}
     u = col.unique()
-    check('2d unique len', len(u) == 4)
+    check('2d unique per-subcolumn', u == [[1.0, 2.0], [10.0, 20.0]])
 
 def test_2d_describe():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])

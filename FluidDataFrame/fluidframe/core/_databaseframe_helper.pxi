@@ -2390,6 +2390,9 @@ cdef _replace_impl(DataFrame self, object to_replace, object value):
     cdef double d_target, d_val
     cdef int* i_ptr
     cdef double* d_ptr
+    cdef AsciiColumn a2c
+    cdef UCS2Column u2c
+    cdef str sv
     cdef UCS2Column new_col
 
     for name, col in result._columns.items():
@@ -2415,13 +2418,25 @@ cdef _replace_impl(DataFrame self, object to_replace, object value):
                         d_ptr[i] = d_val
 
         elif col.dtype in (TYPE_CHAR256, TYPE_UCS2) and isinstance(to_replace, str):
-            new_col = UCS2Column(max(total, 1))
-            for i in range(total):
-                if col[i] == to_replace:
-                    new_col.append(str(value))
-                else:
-                    new_col.append(str(col[i]))
-            result._columns[name] = new_col
+            # 精确匹配替换（pandas df.replace 语义），单遍构建并保持原 dtype
+            if col.dtype == TYPE_CHAR256:
+                a2c = AsciiColumn(max(total, 1))
+                for i in range(total):
+                    sv = col[i]
+                    if sv == to_replace:
+                        a2c.append(str(value))
+                    else:
+                        a2c.append(sv)
+                result._columns[name] = a2c
+            else:
+                u2c = UCS2Column(max(total, 1))
+                for i in range(total):
+                    sv = col[i]
+                    if sv == to_replace:
+                        u2c.append(str(value))
+                    else:
+                        u2c.append(sv)
+                result._columns[name] = u2c
     return result
 
 cdef _ffill_impl(DataFrame self):
@@ -2833,6 +2848,10 @@ cdef _numeric_agg_impl(DataFrame self, str method, col_names=None):
         if name not in self._columns: continue
         col = self._columns[name]
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+            if col.is_2d and col.num_cols > 1:
+                raise ValueError(
+                    f"Cannot aggregate 2D column '{name}' with DataFrame-level {method}(); "
+                    f"aggregate each sub-column via get_series('{name}') first, or reshape to 1D")
             result[name] = getattr(col, method)()
     return _agg_series(result)
 
@@ -2846,6 +2865,10 @@ cdef _numeric_agg_arg_impl(DataFrame self, str method, col_names, arg):
         if name not in self._columns: continue
         col = self._columns[name]
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+            if col.is_2d and col.num_cols > 1:
+                raise ValueError(
+                    f"Cannot aggregate 2D column '{name}' with DataFrame-level {method}(); "
+                    f"aggregate each sub-column via get_series('{name}') first, or reshape to 1D")
             result[name] = getattr(col, method)(arg)
     return _agg_series(result)
 
@@ -2859,6 +2882,10 @@ cdef _mode_impl(DataFrame self, col_names=None):
         if name not in self._columns: continue
         col = self._columns[name]
         if col.dtype == TYPE_INT or col.dtype == TYPE_DOUBLE:
+            if col.is_2d and col.num_cols > 1:
+                raise ValueError(
+                    f"Cannot aggregate 2D column '{name}' with DataFrame-level mode(); "
+                    f"aggregate each sub-column via get_series('{name}') first, or reshape to 1D")
             modes[name] = list(col.mode())
     if not modes:
         return DataFrame()
@@ -3080,10 +3107,9 @@ cdef _count_impl(DataFrame self, col_names=None):
     cdef dict result = {}
     cdef str name
     cdef BaseColumn col
-    cdef Py_ssize_t count, i, logical_rows
-    cdef int* i_ptr
+    cdef Py_ssize_t count, i, logical_rows, j, ncols, cnt
+    cdef bint valid
     cdef double* d_ptr
-    cdef unsigned char* bool_ptr
     if col_names is None:
         col_names = list(self._columns.keys())
     for name in col_names:
@@ -3100,6 +3126,20 @@ cdef _count_impl(DataFrame self, col_names=None):
                 count = logical_rows
             elif col.dtype == TYPE_DOUBLE:
                 d_ptr = (<DoubleColumn>col).data_c
+                if col.is_2d and col.num_cols > 1:
+                    # 2D DoubleColumn：计逻辑行数；某行任一子列含 NaN 则该行不计
+                    ncols = col.num_cols
+                    cnt = 0
+                    for i in range(logical_rows):
+                        valid = True
+                        for j in range(ncols):
+                            if isnan(d_ptr[j * logical_rows + i]):
+                                valid = False
+                                break
+                        if valid:
+                            cnt += 1
+                    result[name] = cnt
+                    continue
                 for i in range(logical_rows):
                     if not isnan(d_ptr[i]):
                         count += 1
@@ -5842,33 +5882,6 @@ cdef inline Py_ssize_t _linalg_logical_cols(DataFrame df):
         is2d, c, r = _col_shape_probe(col)
         total += c if (is2d and c > 1) else 1
     return total
-
-cdef bint _linalg_is_contiguous_columns(DataFrame df):
-    """安全修复版：严谨校验多列 DataFrame 底层是否属于同一块物理连续内存"""
-    cdef list cols_list = list(df._columns.values())
-    cdef Py_ssize_t cols = len(cols_list)
-    if cols < 2:
-        return False
-
-    cdef BaseColumn col = <BaseColumn>cols_list[0]
-    if col.dtype != TYPE_DOUBLE:
-        return False
-
-    cdef double* prev_ptr = (<DoubleColumn>col).data_c
-    cdef Py_ssize_t rows = df.df_length
-    cdef double* curr_ptr
-    cdef Py_ssize_t i
-
-    for i in range(1, cols):
-        col = <BaseColumn>cols_list[i]
-        if col.dtype != TYPE_DOUBLE:
-            return False
-        curr_ptr = (<DoubleColumn>col).data_c
-        if curr_ptr != prev_ptr + rows:
-            return False
-        prev_ptr = curr_ptr
-
-    return True
 
 cdef double* _linalg_to_contiguous_fast(DataFrame df, Py_ssize_t* out_rows, Py_ssize_t* out_cols) except NULL:
     cdef Py_ssize_t rows = df.df_length

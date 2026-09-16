@@ -56,6 +56,7 @@ TESTS=(
     test_timecolumn
     test_ucs2column
     test_zero_copy
+    test_2d
 )
 
 TOTAL_PASSED=0

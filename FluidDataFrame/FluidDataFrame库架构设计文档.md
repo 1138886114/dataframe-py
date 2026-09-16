@@ -22,8 +22,8 @@ FluidFrame 是一个 **基于 Cython 实现的高性能 pandas 风格 DataFrame 
 |---|---|---|---|
 | 列存储层 | `core/_columns.pyx` + `.pxd` | 10,635 + 778 | 9 种列类型、底层 C 内核、对齐内存管理 |
 | 列帮助层 | `core/_columns_helper.pxi` | 1,277 | 列层 fused 内核、日历/时间解析格式化、对齐内存分配 |
-| 表结构层 | `core/_databaseframe.pyx` + `.pxd` | 5,539 + 193 | DataFrame、Series、Index 体系、访问器、GroupBy/Linalg/Metric |
-| 表帮助层 | `core/_databaseframe_helper.pxi` | 6,423 | CRUD/聚合/排序/滚动/GroupBy 哈希/线性代数 的实现体 |
+| 表结构层 | `core/_databaseframe.pyx` + `.pxd` | 5,651 + 193 | DataFrame、Series、Index 体系、访问器、GroupBy/Linalg/Metric |
+| 表帮助层 | `core/_databaseframe_helper.pxi` | 6,433 | CRUD/聚合/排序/滚动/GroupBy 哈希/线性代数 的实现体 |
 | Schema 层 | `_schema_types.py` | 87 | 类型常量、占位类型类、schema 解析 |
 | 包入口 | `__init__.py` / `core/__init__.py` | — | 对外 API 面、Cython 模块别名映射 |
 
@@ -306,12 +306,13 @@ DataFrame (:2749)
 - `_get_rows`（`:919`）：callable / Series 掩码 / 裸 IntColumn+BoolColumn / bool list / 其它标签五路分派。掩码路径双趟处理（计数 + 收集）后 `frame._take`。
 - `_apply_mask`（`:954`）要求掩码 dtype ∈ {INT, BOOL} 且长度一致；`_apply_bool_list`（`:1013`）处理 Python bool list。
 
-### 4.13 Series（`_databaseframe.pyx:1741-2610`，@final）
+### 4.13 Series（`_databaseframe.pyx:1741-2676`，@final）
 
 - **布局**：`(str name, BaseColumn _col, IndexBase _index)` 纯视图——"DataFrame._columns 永远存裸 BaseColumn；Series 是按需构建、用完即可丢弃的临时包装"（`_databaseframe_helper.pxi:11-14`）。
 - `__getattr__`（`:1799`）：列方法直通引擎——`getattr(col, name)` 得到方法后闭包转发，结果若为 BaseColumn 则回包 Series（索引兼容时保留原 index，否则新建 RangeIndex）。
 - 算术（`:1962-2030`）：列运算自动 index 对齐——`_index is other._index` 时才直接结合，否则先 `other.reindex(self._index)`。
 - 统计 22 种、变换 15 种、掩码 8 种、`map/factorize/apply/replace/where/mask`、`reindex/reset_index`、`rolling(window)` 返回 `_RollingWrapper`（`:192`，纯 Python 窗口包装器，委托列 `roll_*`）。
+- 补齐的 pandas 对齐 API：`shape`、`to_numpy`（别名 `values`）、`shift(periods, fill_value)`（委托 `_shift_column_impl`，Int 空位 0 / 其余 NaN，fill_value 覆盖）、`rank(method/ascending/na_option)`（复用 `_rank_col`/`_rank_row_keys`）、`describe(percentiles)`（数值列 count/mean/std/min/25/50/75/max）。
 - 导出：`to_list/tolist/to_dict/to_pandas/to_frame`。
 - 访问器属性：`.str`（要求 char256/ucs2）、`.dt`（date/datetime/time）、`.cat`（category），类型不符抛 AttributeError。
 
@@ -333,6 +334,7 @@ DataFrame (:2749)
 - **GroupBy**：见 4.16。
 - **Linalg/Metric**：见 4.17/4.18。
 - 快速设置器 `_fast_set_cell`（`:310`）、列构造 `_column_from_list_impl`（`:397`）、astype 解析 `_astype_impl`（`:2041`）。
+- 补齐的 pandas 对齐 API：`values`（`_to_numpy_impl` 列优先拼装 2D ndarray）、`size`（rows×cols）、`ndim`（=2）、`get(key, default)`、`idxmax/idxmin(col_name=None)`（单列标量或全列 Series，2D 抛错）、`astype` 支持 bare str（如 `'float'`）对全列一次性转换；`_column_from_list_impl` 对 2D 列转 1D 时按列优先重排。
 
 ### 4.16 GroupBy 引擎（`_DataFrameGroupByAccessor` :4461 + pxi 5190-5895）
 
@@ -357,7 +359,7 @@ DataFrame (:2749)
 - `_corr_impl`/`_cov_impl` 合并为 `_corr_cov_impl(self, is_corr)`（`pxi:4304`）：共享一次 malloc 特征矩阵萃取 + `DataFrame()` 视图回装；**`is_corr` 判定已抬到 nogil 循环之外**，corr/cov 各为独立的无分支 `with nogil` 填充块，仅对角线（corr=1.0 / cov=各列自协方差）与核（`_vec_pearson_corr`/`_vec_pearson_cov`）两处分叉；`_pearson_sim_impl` 即 `_corr_cov_impl(True)`。
 - `_corrcoef_impl`/`_cov_withcols_impl` 合并为 `_corrcoef_cov_withcols_impl(self, col_a, col_b, is_corr)`（`pxi:4403`），仅核不同，其在 DataFrame 的命名 `cov_withcols` 与 Metric 访问器 `cov_withcols` 保持同名薄壳。
 
-### 4.19 模块级公共函数（`_databaseframe.pyx:4923-5539`）
+### 4.19 模块级公共函数（`_databaseframe.pyx:4923-5651`）
 
 - `_SafeUnpickler`（`:4923`）：限制 `find_class` 白名单。
 - `read_csv/tsv/json`、`from_pickle`。

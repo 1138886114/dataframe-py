@@ -706,7 +706,7 @@ def test_2d_clip():
 def test_2d_unique():
     col = _make_2d(3, [[1, 1, 2], [10, 10, 20]])
     u = col.unique()
-    check('2d unique len', len(u) == 4)
+    check('2d unique per-subcolumn', u == [[1, 2], [10, 20]])
 
 def test_2d_describe():
     col = _make_2d(3, [[1, 2, 3], [10, 20, 30]])

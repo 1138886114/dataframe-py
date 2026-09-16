@@ -1782,6 +1782,11 @@ cdef class Series:
         n = len(self)
         return [self._col[i] for i in range(n)]
 
+    @property
+    def shape(self):
+        """Series 形状，对标 pandas：单列 (len,)"""
+        return (len(self),)
+
     # =================================================================
     #  迭代 / 包含 / 属性透传
     # =================================================================
@@ -2203,8 +2208,8 @@ cdef class Series:
         return self._col.count()
 
     def nunique(self):
-        """唯一值数量"""
-        return len(self.unique())
+        """唯一值数量（2D 列返回每子列的计数列表）"""
+        return self._col._nunique()
 
     def unique(self):
         """唯一值"""
@@ -2584,6 +2589,10 @@ cdef class Series:
         """pandas 风格别名：转换为 Python 列表"""
         return self.values
 
+    def to_numpy(self):
+        """导出为一维 Python 列表（本库 to_numpy 约定为 Python 容器）"""
+        return self.values
+
     def to_dict(self):
         """转换为字典（索引 -> 值）"""
         result = {}
@@ -2608,6 +2617,52 @@ cdef class Series:
         result.df_length = len(self)
         result.index = self._index
         return result
+
+    def shift(self, int periods=1, fill_value=None):
+        """移动数据（语义同 df.shift）：periods>0 下移，空位填 NaN/fill_value。"""
+        n = len(self)
+        if periods == 0:
+            return self
+        cdef BaseColumn col = _shift_column_impl(self._col, periods, n)
+        cdef Py_ssize_t k, i
+        if fill_value is not None:
+            if col.is_2d and col.num_cols > 1:
+                raise ValueError("fill_value not supported for 2D Series.shift")
+            k = periods if periods >= 0 else -periods
+            if periods > 0:
+                for i in range(k):
+                    _fast_set_cell(col, col.dtype, i, fill_value)
+            else:
+                for i in range(n - k, n):
+                    _fast_set_cell(col, col.dtype, i, fill_value)
+        cdef IndexBase idx = self._index
+        return Series(self.name, col, idx)
+
+    def rank(self, str method='average', bint ascending=True, str na_option='keep'):
+        """排名（pandas 语义）：average/min/max/first/dense。"""
+        cdef BaseColumn col = self._col
+        cdef Py_ssize_t n = len(self)
+        if col.is_2d and col.num_cols > 1:
+            return Series(self.name, _rank_row_keys(col, n, method, ascending), self._index)
+        if col.dtype == TYPE_INT:
+            return Series(self.name, _rank_col((<IntColumn>col).data_c, n, method, ascending), self._index)
+        elif col.dtype == TYPE_DOUBLE:
+            return Series(self.name, _rank_col((<DoubleColumn>col).data_c, n, method, ascending), self._index)
+        raise TypeError(f"rank not supported for column type {col.dtype}")
+
+    def describe(self, object percentiles=None):
+        """数值统计概览（对标 pandas Series.describe）：count/mean/std/min/分位/max。"""
+        cdef BaseColumn col = self._col
+        if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+            raise TypeError(f"describe only supports numeric columns, got dtype {col.dtype}")
+        if col.is_2d and col.num_cols > 1:
+            raise ValueError("describe not supported for 2D column")
+        cdef list names = ['count', 'mean', 'std', 'min', '25%', '50%', '75%', 'max']
+        cdef list vals = [
+            col.count(), col.mean(), col.std(), col.min(),
+            col.quantile(0.25), col.quantile(0.5), col.quantile(0.75), col.max(),
+        ]
+        return _agg_series(dict(zip(names, vals)))
 
 
 # ============================================================
@@ -3462,6 +3517,27 @@ cdef class DataFrame:
         return (self.df_length, len(self._columns))
 
     @property
+    def values(self):
+        """导出为二维 List of Lists（与 to_numpy 一致，本库约定）"""
+        return _to_numpy_impl(self)
+
+    @property
+    def size(self):
+        """元素总数：行 × 列"""
+        return self.df_length * len(self._columns)
+
+    @property
+    def ndim(self):
+        """始终为 2（DataFrame 语义）"""
+        return 2
+
+    def get(self, key, default=None):
+        """按列名取 Series，不存在时返回 default（pandas df.get 语义）"""
+        if key in self._columns:
+            return self.get_series(key)
+        return default
+
+    @property
     def columns(self):
         return list(self._columns.keys())
 
@@ -3847,6 +3923,38 @@ cdef class DataFrame:
         return self._columns[col_name].idxmin()
 
     @cython.binding(False)
+    def idxmax(self, str col_name=None):
+        """逐列最大值的行位置；指定列名时返回该列标量。"""
+        if col_name is not None:
+            return self._columns[col_name].idxmax()
+        cdef dict result = {}
+        cdef str name
+        cdef object col
+        for name, col in self._columns.items():
+            if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+                continue
+            if col.is_2d and col.num_cols > 1:
+                raise ValueError(f"Cannot compute idxmax for 2D column '{name}'")
+            result[name] = col.idxmax()
+        return _agg_series(result)
+
+    @cython.binding(False)
+    def idxmin(self, str col_name=None):
+        """逐列最小值的行位置；指定列名时返回该列标量。"""
+        if col_name is not None:
+            return self._columns[col_name].idxmin()
+        cdef dict result = {}
+        cdef str name
+        cdef object col
+        for name, col in self._columns.items():
+            if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+                continue
+            if col.is_2d and col.num_cols > 1:
+                raise ValueError(f"Cannot compute idxmin for 2D column '{name}'")
+            result[name] = col.idxmin()
+        return _agg_series(result)
+
+    @cython.binding(False)
     @cython.always_allow_keywords(False)
     def unique(self, str col_name):
         return self._columns[col_name].unique()
@@ -4111,7 +4219,11 @@ cdef class DataFrame:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def astype(self, dict dtype_dict):
+    def astype(self, dtype):
+        if isinstance(dtype, str):
+            dtype_dict = {name: dtype for name in self._columns}
+        else:
+            dtype_dict = dtype
         return _astype_impl(self, dtype_dict)
 
     @cython.binding(False)

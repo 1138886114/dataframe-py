@@ -647,20 +647,24 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t r = self._get_rows_c()
         if r == 0:
             if not self.is_2d or c <= 1: return 0
-            return 0
+            return [0] * c
         cdef int* ptr = self.data_c
         cdef Py_ssize_t i, j, base
         cdef set seen
         cdef int val
-        seen = set()
+        cdef list results
         if self.is_2d and c > 1:
+            results = [None] * c
             for j in range(c):
                 base = j * r
+                seen = set()
                 for i in range(r):
                     seen.add(ptr[base + i])
-        else:
-            for i in range(r):
-                seen.add(ptr[i])
+                results[j] = len(seen)
+            return results
+        seen = set()
+        for i in range(r):
+            seen.add(ptr[i])
         return len(seen)
 
     @cython.binding(False)
@@ -1080,6 +1084,9 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
+        if other.num_cols != self.num_cols:
+            raise ValueError(
+                f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
         cdef IntColumn res
         cdef DoubleColumn dbl
         cdef int* self_ptr = self.data_c
@@ -1111,6 +1118,9 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
+        if other.num_cols != self.num_cols:
+            raise ValueError(
+                f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
         cdef IntColumn res
         cdef DoubleColumn dbl
         cdef int* self_ptr = self.data_c
@@ -1142,6 +1152,9 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
+        if other.num_cols != self.num_cols:
+            raise ValueError(
+                f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
         cdef IntColumn res
         cdef DoubleColumn dbl
         cdef int* self_ptr = self.data_c
@@ -1173,6 +1186,9 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
+        if other.num_cols != self.num_cols:
+            raise ValueError(
+                f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
         cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.cols)
         res.length = n
         cdef int* self_ptr = self.data_c
@@ -1304,16 +1320,17 @@ cdef class IntColumn(BaseColumn):
             return result
 
         cdef list results = [None] * c
-        cdef set all_seen = set()
-        cdef list all_result = []
         for j in range(c):
             base = j * r
+            seen = set()
+            result = []
             for i in range(r):
                 val = ptr[base + i]
-                if val not in all_seen:
-                    all_seen.add(val)
-                    all_result.append(val)
-        return all_result
+                if val not in seen:
+                    seen.add(val)
+                    result.append(val)
+            results[j] = result
+        return results
 
     cdef IntColumn _cmp_op(self, object val, int op):
         cdef Py_ssize_t i, n = self.length
@@ -1331,6 +1348,9 @@ cdef class IntColumn(BaseColumn):
             if other.length != n:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", n, other.length)
                 raise ValueError(err_buf.decode('ascii'))
+            if other.num_cols != self.num_cols:
+                raise ValueError(
+                    f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
             o_ptr = other.data_c
             with nogil:
                 if op == 0:
@@ -1930,10 +1950,9 @@ cdef class IntColumn(BaseColumn):
 
         elif target_type == TYPE_UCS2:
             uc = UCS2Column(first_col_cap)
-            uc.length = first_col_n
             for i in range(first_col_n):
                 sz = snprintf(buf, sizeof(buf), "%d", s_ptr[i])
-                uc._set_item(i, buf[:sz].decode('ascii'))
+                uc.append(buf[:sz].decode('ascii'))
             return uc
 
         elif target_type == TYPE_CHAR256:
@@ -2898,17 +2917,21 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t r = self._get_rows_c()
         if r == 0:
             if not self.is_2d or c <= 1: return 0
-            return 0
+            return [0] * c
         cdef double* ptr = self.data_c
         cdef Py_ssize_t i, j, base
         cdef set seen
-        seen = set()
+        cdef list results
         if self.is_2d and c > 1:
+            results = [None] * c
             for j in range(c):
                 base = j * r
+                seen = set()
                 for i in range(r): seen.add(ptr[base + i])
-        else:
-            for i in range(r): seen.add(ptr[i])
+                results[j] = len(seen)
+            return results
+        seen = set()
+        for i in range(r): seen.add(ptr[i])
         return len(seen)
 
     @cython.binding(False)
@@ -3317,6 +3340,9 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
+        if other.num_cols != self.num_cols:
+            raise ValueError(
+                f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
         cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.num_cols)
         res.length = n
         cdef double* self_ptr = self.data_c
@@ -3345,6 +3371,9 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
+        if other.num_cols != self.num_cols:
+            raise ValueError(
+                f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
         cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.num_cols)
         res.length = n
         cdef double* self_ptr = self.data_c
@@ -3373,6 +3402,9 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
+        if other.num_cols != self.num_cols:
+            raise ValueError(
+                f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
         cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.num_cols)
         res.length = n
         cdef double* self_ptr = self.data_c
@@ -3401,6 +3433,9 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t n = self.length
         if other.length != n:
             raise ValueError(f"Column length {other.length} != {n}")
+        if other.num_cols != self.num_cols:
+            raise ValueError(
+                f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
         cdef DoubleColumn res = DoubleColumn(max(n, 1), cols=self.num_cols)
         res.length = n
         cdef double* self_ptr = self.data_c
@@ -3513,24 +3548,28 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t i, j, base, n
         cdef double val
         cdef set seen
-        cdef list result
-        seen = set()
-        result = []
+        cdef list result, results
         if self.is_2d and c > 1:
+            results = [None] * c
             for j in range(c):
                 base = j * r
+                seen = set()
+                result = []
                 for i in range(r):
                     val = ptr[base + i]
                     if val not in seen:
                         seen.add(val)
                         result.append(val)
-        else:
-            n = self.length
-            for i in range(n):
-                val = ptr[i]
-                if val not in seen:
-                    seen.add(val)
-                    result.append(val)
+                results[j] = result
+            return results
+        seen = set()
+        result = []
+        n = self.length
+        for i in range(n):
+            val = ptr[i]
+            if val not in seen:
+                seen.add(val)
+                result.append(val)
         return result
 
     # ------------------------------------------------------------
@@ -3553,6 +3592,9 @@ cdef class DoubleColumn(BaseColumn):
             if other.length != n:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", n, other.length)
                 raise ValueError(err_buf.decode('ascii'))
+            if other.num_cols != self.num_cols:
+                raise ValueError(
+                    f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
             o_ptr = other.data_c
             with nogil:
                 if op == 0:
@@ -4172,13 +4214,12 @@ cdef class DoubleColumn(BaseColumn):
 
         elif target_type == TYPE_UCS2:
             uc = UCS2Column(first_col_cap)
-            uc.length = first_col_n
             for i in range(first_col_n):
                 if d_ptr[i] != d_ptr[i]:
-                    uc._set_item(i, "null")
+                    uc.append("null")
                 else:
                     sz = snprintf(buf, sizeof(buf), "%.6g", d_ptr[i])
-                    uc._set_item(i, buf[:sz].decode('ascii'))
+                    uc.append(buf[:sz].decode('ascii'))
             return uc
 
         elif target_type == TYPE_CHAR256:
@@ -4890,10 +4931,14 @@ cdef class AsciiColumn(BaseColumn):
     def replaces(self, *args):
         if len(args) % 2 != 0:
             raise ValueError("Arguments must be in pairs")
-        cdef int i
-        cdef AsciiColumn res = self
-        for i in range(0, len(args), 2):
-            res = res.replace(str(args[i]), str(args[i+1]))
+        cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
+        cdef Py_ssize_t i, n = self.length, k, n_args = len(args)
+        cdef str s
+        for i in range(n):
+            s = self._get_str(i)
+            for k in range(0, n_args, 2):
+                s = s.replace(str(args[k]), str(args[k + 1]))
+            res.append(s)
         return res
 
     @cython.binding(False)
@@ -6004,9 +6049,8 @@ cdef class AsciiColumn(BaseColumn):
             return bc
         elif target_type == TYPE_UCS2:
             uc = UCS2Column(safe_cap)
-            uc.length = n
             for i in range(n):
-                uc._set_item(i, self._get_str(i))
+                uc.append(self._get_str(i))
             return uc
         elif target_type == TYPE_DATE:
             tc = DateColumn(safe_cap)
@@ -6407,11 +6451,27 @@ cdef class UCS2Column(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def replace(self, str old, str new):
-        cdef Py_ssize_t i
+        cdef Py_ssize_t i, n = self.length
+        cdef Py_ssize_t total = 0
+        cdef Py_ssize_t pos = 0
+        cdef Py_ssize_t c
         cdef str s
-        for i in range(self.length):
+        cdef list new_strs = [None] * n
+        for i in range(n):
             s = self._get_str(i).replace(old, new)
-            self._set_item(i, s)
+            new_strs[i] = s
+            total += PyUnicode_GET_LENGTH(s)
+        if self.char_capacity < total:
+            self._reserve_chars(max(self.char_capacity * 2, total + 1024))
+        self.offsets_c[0] = 0
+        for i in range(n):
+            s = new_strs[i]
+            c = PyUnicode_GET_LENGTH(s)
+            if c > 0:
+                _copy_py_str_to_ucs2(s, self.chars_c + pos, c)
+            pos += c
+            self.offsets_c[i + 1] = pos
+        self.char_length = total
         return self
 
     cdef inline void _set_item(self, Py_ssize_t idx, str val):
@@ -7641,10 +7701,24 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def unique(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         cdef set seen = set()
         cdef list result = []
+        cdef list results
         cdef Py_ssize_t i, n = self.length
         cdef int32_t* ptr = <int32_t*>self.data_c
+        if self.is_2d and c > 1:
+            results = [None] * c
+            for j in range(c):
+                seen = set()
+                result = []
+                for i in range(r):
+                    val = self._to_ymd_int(ptr[j * r + i])
+                    if val not in seen:
+                        seen.add(val)
+                        result.append(val)
+                results[j] = result
+            return results
         for i in range(n):
             val = self._to_ymd_int(ptr[i])
             if val not in seen:
@@ -8274,6 +8348,9 @@ cdef class DateColumn(BaseColumn):
             if other.length != n:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", n, other.length)
                 raise ValueError(err_buf.decode('ascii'))
+            if other.num_cols != self.num_cols:
+                raise ValueError(
+                    f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
             with nogil:
                 _n_cmp_col(<int32_t*>self.data_c, <int32_t*>other.data_c,
                            res.data_c, n, op)
@@ -8490,11 +8567,10 @@ cdef class DateColumn(BaseColumn):
             return cc
         elif target_type == TYPE_UCS2:
             uc = UCS2Column(first_col_cap)
-            uc.length = first_col_n
             for i in range(first_col_n):
                 _days_to_ymd(s_ptr[i], &y, &m, &d)
                 snprintf(str_buf, sizeof(str_buf), "%04d-%02d-%02d", y, m, d)
-                uc._set_item(i, str_buf.decode('ascii'))
+                uc.append(str_buf.decode('ascii'))
             return uc
         elif target_type == TYPE_CATEGORY:
             catc = CategoryColumn(first_col_cap)
@@ -8886,10 +8962,9 @@ cdef class BoolColumn(BaseColumn):
             return dc
         elif target_type == TYPE_UCS2:
             uc = UCS2Column(safe_cap)
-            uc.length = n
             for i in range(n):
                 s_val = BOOL_STRS[1 if ptr[i] != 0 else 0]
-                uc._set_item(i, s_val)
+                uc.append(s_val)
             return uc
         elif target_type == TYPE_CHAR256:
             cc = AsciiColumn(safe_cap)
@@ -9377,9 +9452,8 @@ cdef class CategoryColumn(BaseColumn):
         # 字符串/复杂类型转换
         if target_type == TYPE_UCS2:
             uc = UCS2Column(safe_cap)
-            uc.length = n
             for i in range(n):
-                uc._set_item(i, self._resolve(i))
+                uc.append(self._resolve(i))
             return uc
         elif target_type == TYPE_CHAR256:
             cc = AsciiColumn(safe_cap)
@@ -9632,9 +9706,34 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def unique(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         cdef set seen = set()
         cdef list result = []
-        return _n_unique(<int64_t*>self.data_c, self.length, seen, result)
+        cdef list results
+        cdef int64_t* ptr = <int64_t*>self.data_c
+        cdef Py_ssize_t i, j, base
+        cdef int64_t val
+        if self.is_2d and c > 1:
+            results = [None] * c
+            for j in range(c):
+                seen = set()
+                result = []
+                base = j * r
+                for i in range(r):
+                    val = ptr[base + i]
+                    if val not in seen:
+                        seen.add(val)
+                        result.append(val)
+                results[j] = result
+            return results
+        seen = set()
+        result = []
+        for i in range(self.length):
+            val = ptr[i]
+            if val not in seen:
+                seen.add(val)
+                result.append(val)
+        return result
 
     # ------------------------------------------------------------
     # 字段提取 (时分秒直接算术提取，避免冗余的 YMD 历法计算)
@@ -9910,6 +10009,9 @@ cdef class DateTimeColumn(BaseColumn):
             if other.length != n:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", n, other.length)
                 raise ValueError(err_buf.decode('ascii'))
+            if other.num_cols != self.num_cols:
+                raise ValueError(
+                    f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
             with nogil:
                 _n_cmp_col(<int64_t*>self.data_c, <int64_t*>other.data_c,
                            res.data_c, n, op)
@@ -10037,10 +10139,9 @@ cdef class DateTimeColumn(BaseColumn):
 
         elif target_type == TYPE_UCS2:
             uc = UCS2Column(first_col_cap)
-            uc.length = first_col_n
             for i in range(first_col_n):
                 _format_datetime_c(ptr[i], str_buf)
-                uc._set_item(i, str_buf.decode('ascii'))
+                uc.append(str_buf.decode('ascii'))
             return uc
 
         elif target_type == TYPE_CATEGORY:
@@ -10280,9 +10381,34 @@ cdef class TimeColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def unique(self):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
         cdef set seen = set()
         cdef list result = []
-        return _n_unique(self.data_c, self.length, seen, result)
+        cdef list results
+        cdef int32_t* ptr = self.data_c
+        cdef Py_ssize_t i, j, base
+        cdef int32_t val
+        if self.is_2d and c > 1:
+            results = [None] * c
+            for j in range(c):
+                seen = set()
+                result = []
+                base = j * r
+                for i in range(r):
+                    val = ptr[base + i]
+                    if val not in seen:
+                        seen.add(val)
+                        result.append(val)
+                results[j] = result
+            return results
+        seen = set()
+        result = []
+        for i in range(self.length):
+            val = ptr[i]
+            if val not in seen:
+                seen.add(val)
+                result.append(val)
+        return result
 
     # ------------------------------------------------------------
     # 时/分/秒提取 (定点乘法展开，完全自动 SIMD 向量化)
@@ -10501,6 +10627,9 @@ cdef class TimeColumn(BaseColumn):
             if other.length != n:
                 snprintf(err_buf, sizeof(err_buf), "Length mismatch: %zd vs %zd", n, other.length)
                 raise ValueError(err_buf.decode('ascii'))
+            if other.num_cols != self.num_cols:
+                raise ValueError(
+                    f"Shape mismatch: self has {self.num_cols} column(s), other has {other.num_cols}")
             with nogil:
                 _n_cmp_col(self.data_c, other.data_c, res.data_c, n, op)
         else:
@@ -10603,10 +10732,9 @@ cdef class TimeColumn(BaseColumn):
             return cc
         elif target_type == TYPE_UCS2:
             uc = UCS2Column(first_col_cap)
-            uc.length = first_col_n
             for i in range(first_col_n):
                 _format_time_c(ptr[i], str_buf)
-                uc._set_item(i, str_buf.decode('ascii'))
+                uc.append(str_buf.decode('ascii'))
             return uc
         elif target_type == TYPE_CATEGORY:
             catc = CategoryColumn(first_col_cap)
