@@ -317,7 +317,7 @@ def test_series_return_contract():
         ('mask_col',   df.mask_column('a', 'b', 0)),
         ('add',        df.add(('a', 'b'))),
         ('mul',        df.mul(('a', 'b'))),
-        ('roll_mean',  df.rolling(2, 'a').mean()),
+        ('roll_mean',  df['a'].rolling(2).mean()),
         ('eval_col',   df.eval('a * 2')),
     ]:
         check(f'{name} is Series', isinstance(res, Series))

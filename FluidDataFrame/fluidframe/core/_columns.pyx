@@ -17,6 +17,7 @@ from cpython.unicode cimport (
     PyUnicode_READ_CHAR, PyUnicode_KIND, PyUnicode_DATA, Py_UCS1, Py_UCS2,
 )
 import re
+from cpython.number cimport PyNumber_Index
 
 include "_columns_helper.pxi"
 
@@ -2015,151 +2016,115 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_mean(self, Py_ssize_t window):
+    def roll_mean(self, Py_ssize_t window, min_periods=None, bint center=False):
         if window < 0:
             raise ValueError("window must be >= 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if window <= 0 or r < window: return res
+        if window == 0 or r == 0: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r < mp: return res
         cdef int* src = self.data_c
-        _n_roll_mean(src, res.data_c, c, r, window)
+        _n_roll_mean(src, res.data_c, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_sum(self, Py_ssize_t window):
+    def roll_sum(self, Py_ssize_t window, min_periods=None, bint center=False):
         if window < 0:
             raise ValueError("window must be >= 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if window <= 0 or r < window: return res
+        if window == 0 or r == 0: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r < mp: return res
         cdef int* src = self.data_c
-        _n_roll_sum(src, res.data_c, c, r, window)
+        _n_roll_sum(src, res.data_c, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_min(self, Py_ssize_t window):
+    def roll_min(self, Py_ssize_t window, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef IntColumn res = IntColumn(max(r * c, 1), cols=c)
         res.length = r * c
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0: return res
         cdef int* dst = res.data_c
         cdef int* src = self.data_c
-        cdef int sentinel = 2147483647
-        cdef Py_ssize_t col_idx, offset, i, head, tail
-
-        cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
-        if not q: raise MemoryError()
-        try:
-            with nogil:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    head = 0; tail = 0
-                    for i in range(r):
-                        while head < tail and q[head] <= i - window:
-                            head += 1
-                        while head < tail and src[offset + q[tail - 1]] >= src[offset + i]:
-                            tail -= 1
-                        q[tail] = i
-                        tail += 1
-                        if i >= window - 1:
-                            dst[offset + i] = src[offset + q[head]]
-                        else:
-                            dst[offset + i] = sentinel
-        finally:
-            os_aligned_free(q)
+        _n_roll_min(src, dst, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_max(self, Py_ssize_t window):
+    def roll_max(self, Py_ssize_t window, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef IntColumn res = IntColumn(max(r * c, 1), cols=c)
         res.length = r * c
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0: return res
         cdef int* dst = res.data_c
         cdef int* src = self.data_c
-        cdef int sentinel = -2147483647 - 1
-        cdef Py_ssize_t col_idx, offset, i, head, tail
-
-        cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
-        if not q: raise MemoryError()
-        try:
-            with nogil:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    head = 0; tail = 0
-                    for i in range(r):
-                        while head < tail and q[head] <= i - window:
-                            head += 1
-                        while head < tail and src[offset + q[tail - 1]] <= src[offset + i]:
-                            tail -= 1
-                        q[tail] = i
-                        tail += 1
-                        if i >= window - 1:
-                            dst[offset + i] = src[offset + q[head]]
-                        else:
-                            dst[offset + i] = sentinel
-        finally:
-            os_aligned_free(q)
+        _n_roll_max(src, dst, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_var(self, Py_ssize_t window, bint ddof=True):
+    def roll_var(self, Py_ssize_t window, bint ddof=True, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r < window: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r < mp: return res
         cdef int* src = self.data_c
-        _n_roll_var(src, res.data_c, c, r, window, ddof)
+        _n_roll_var(src, res.data_c, c, r, window, mp, center, ddof)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_std(self, Py_ssize_t window, bint ddof=True):
+    def roll_std(self, Py_ssize_t window, bint ddof=True, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
-        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
-        cdef DoubleColumn var_col = self.roll_var(window, ddof)
+        cdef DoubleColumn var_col = self.roll_var(window, ddof, min_periods, center)
         cdef double* v = var_col.data_c
-        cdef Py_ssize_t col_idx, offset, i
+        cdef Py_ssize_t n = var_col.length, i
         with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                for i in range(window - 1, r):
-                    if v[offset + i] == v[offset + i]:  # Not NaN check
-                        v[offset + i] = sqrt(v[offset + i])
+            for i in range(n):
+                if v[i] == v[i]:  # Not NaN check
+                    v[i] = sqrt(v[i])
         return var_col
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_median(self, Py_ssize_t window):
+    def roll_median(self, Py_ssize_t window, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r < window: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef int* src = self.data_c
-        _n_roll_quantile(src, res.data_c, c, r, window, 0.5)
+        _n_roll_quantile(src, res.data_c, c, r, window, mp, center, 0.5)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_quantile(self, Py_ssize_t window, double quantile):
+    def roll_quantile(self, Py_ssize_t window, double quantile, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
         if quantile < 0.0 or quantile > 1.0:
             raise ValueError("quantile must be between 0 and 1")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r < window: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef int* src = self.data_c
-        _n_roll_quantile(src, res.data_c, c, r, window, quantile)
+        _n_roll_quantile(src, res.data_c, c, r, window, mp, center, quantile)
         return res
 
     @cython.binding(False)
@@ -2220,36 +2185,39 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_skew(self, Py_ssize_t window):
+    def roll_skew(self, Py_ssize_t window, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r < window or window < 3: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef int* src = self.data_c
-        _n_roll_skew(src, res.data_c, c, r, window)
+        _n_roll_skew(src, res.data_c, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_kurt(self, Py_ssize_t window):
+    def roll_kurt(self, Py_ssize_t window, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r < window or window < 4: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef int* src = self.data_c
-        _n_roll_kurt(src, res.data_c, c, r, window)
+        _n_roll_kurt(src, res.data_c, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_corr(self, Py_ssize_t window, object other):
+    def roll_corr(self, Py_ssize_t window, object other, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r < window: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
 
         if other.length < self.length:
             raise ValueError("other column must be at least as long as self")
@@ -2259,68 +2227,24 @@ cdef class IntColumn(BaseColumn):
         if not (other_is_double or other_is_int):
             raise TypeError("other must be DoubleColumn or IntColumn")
 
-        cdef double* other_d_ptr = NULL
-        cdef int* other_i_ptr = NULL
+        cdef int* src = self.data_c
+        cdef DoubleColumn x_buf
         if other_is_double:
-            other_d_ptr = (<DoubleColumn>other).data_c
+            x_buf = _int_col_to_double(self)
+            _n_roll_corr(x_buf.data_c, (<DoubleColumn>other).data_c, res.data_c, c, r, window, mp, center)
         else:
-            other_i_ptr = (<IntColumn>other).data_c
-
-        cdef double* dst = res.data_c
-        cdef int* src_x = self.data_c
-        cdef double n_f = <double>window, inv_w = 1.0 / n_f
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double sum_x, sum_y, sum_xx, sum_yy, sum_xy, x, y, old_x, old_y, vx, vy, denom, cov_xy
-
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                sum_x = 0.0; sum_y = 0.0; sum_xx = 0.0; sum_yy = 0.0; sum_xy = 0.0
-                for i in range(window):
-                    x = <double>src_x[offset + i]
-                    if other_is_double:
-                        y = other_d_ptr[offset + i]
-                    else:
-                        y = <double>(other_i_ptr[offset + i])
-
-                    sum_x += x; sum_y += y; sum_xx += x * x; sum_yy += y * y; sum_xy += x * y
-
-                vx = fmax(sum_xx - sum_x * sum_x * inv_w, 0.0)
-                vy = fmax(sum_yy - sum_y * sum_y * inv_w, 0.0)
-                denom = sqrt(vx * vy)
-                cov_xy = sum_xy - sum_x * sum_y * inv_w
-                dst[offset + window - 1] = cov_xy / denom if (denom > 0.0) else 0.0
-
-                for i in range(window, r):
-                    x = <double>src_x[offset + i]
-                    old_x = <double>src_x[offset + i - window]
-
-                    if other_is_double:
-                        y = other_d_ptr[offset + i]
-                        old_y = other_d_ptr[offset + i - window]
-                    else:
-                        y = <double>(other_i_ptr[offset + i])
-                        old_y = <double>(other_i_ptr[offset + i - window])
-
-                    sum_x += x - old_x; sum_y += y - old_y
-                    sum_xx += x * x - old_x * old_x; sum_yy += y * y - old_y * old_y
-                    sum_xy += x * y - old_x * old_y
-
-                    vx = fmax(sum_xx - sum_x * sum_x * inv_w, 0.0)
-                    vy = fmax(sum_yy - sum_y * sum_y * inv_w, 0.0)
-                    denom = sqrt(vx * vy)
-                    cov_xy = sum_xy - sum_x * sum_y * inv_w
-                    dst[offset + i] = cov_xy / denom if (denom > 0.0) else 0.0
+            _n_roll_corr(src, (<IntColumn>other).data_c, res.data_c, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_cov(self, Py_ssize_t window, object other):
+    def roll_cov(self, Py_ssize_t window, object other, min_periods=None, bint center=False):
         if window <= 0:
             raise ValueError("window must be > 0")
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r < window: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
 
         if other.length < self.length:
             raise ValueError("other column must be at least as long as self")
@@ -2330,47 +2254,13 @@ cdef class IntColumn(BaseColumn):
         if not (other_is_double or other_is_int):
             raise TypeError("other must be DoubleColumn or IntColumn")
 
-        cdef double* other_d_ptr = NULL
-        cdef int* other_i_ptr = NULL
+        cdef int* src = self.data_c
+        cdef DoubleColumn x_buf
         if other_is_double:
-            other_d_ptr = (<DoubleColumn>other).data_c
+            x_buf = _int_col_to_double(self)
+            _n_roll_cov(x_buf.data_c, (<DoubleColumn>other).data_c, res.data_c, c, r, window, mp, center)
         else:
-            other_i_ptr = (<IntColumn>other).data_c
-
-        cdef double* dst = res.data_c
-        cdef int* src_x = self.data_c
-        cdef double n_f = <double>window, inv_w = 1.0 / n_f
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double sum_x, sum_y, sum_xy, x, y, old_x, old_y
-
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                sum_x = 0.0; sum_y = 0.0; sum_xy = 0.0
-                for i in range(window):
-                    x = <double>src_x[offset + i]
-                    if other_is_double:
-                        y = other_d_ptr[offset + i]
-                    else:
-                        y = <double>(other_i_ptr[offset + i])
-
-                    sum_x += x; sum_y += y; sum_xy += x * y
-                dst[offset + window - 1] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
-
-                for i in range(window, r):
-                    x = <double>src_x[offset + i]
-                    old_x = <double>src_x[offset + i - window]
-
-                    if other_is_double:
-                        y = other_d_ptr[offset + i]
-                        old_y = other_d_ptr[offset + i - window]
-                    else:
-                        y = <double>(other_i_ptr[offset + i])
-                        old_y = <double>(other_i_ptr[offset + i - window])
-
-                    sum_x += x - old_x; sum_y += y - old_y
-                    sum_xy += x * y - old_x * old_y
-                    dst[offset + i] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
+            _n_roll_cov(src, (<IntColumn>other).data_c, res.data_c, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
@@ -4300,16 +4190,18 @@ cdef class DoubleColumn(BaseColumn):
     # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_mean(self, Py_ssize_t window):
+    def roll_mean(self, Py_ssize_t window, min_periods=None, bint center=False):
         """滚动均值计算。支持一维与二维矩阵。
         时间复杂度: O(rows * cols)，严格常数时间增量滑动。"""
         if window < 0: raise ValueError("window must be >= 0")
         cdef DoubleColumn res = self._make_like_nan()
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
-        if window <= 0 or r < window: return res
+        if window == 0 or r == 0: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r < mp: return res
         cdef double* src = self.data_c
-        _n_roll_mean(src, res.data_c, c, r, window)
+        _n_roll_mean(src, res.data_c, c, r, window, mp, center)
         return res
 
     # ============================================================
@@ -4317,93 +4209,50 @@ cdef class DoubleColumn(BaseColumn):
     # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_sum(self, Py_ssize_t window):
+    def roll_sum(self, Py_ssize_t window, min_periods=None, bint center=False):
         """滚动累加和"""
         if window < 0: raise ValueError("window must be >= 0")
         cdef DoubleColumn res = self._make_like_nan()
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
-        if window <= 0 or r < window: return res
+        if window == 0 or r == 0: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r < mp: return res
         cdef double* src = self.data_c
-        _n_roll_sum(src, res.data_c, c, r, window)
+        _n_roll_sum(src, res.data_c, c, r, window, mp, center)
         return res
 
     # ============================================================
-    # 3. 滚动极值 (roll_min / roll_max) - O(N) 单调队列
+    # 3. 滚动极值 (roll_min / roll_max) - 单调队列（右对齐）/ 逐窗重扫（居中）
     # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_min(self, Py_ssize_t window):
+    def roll_min(self, Py_ssize_t window, min_periods=None, bint center=False):
         """滚动最小值 (采用严格连续内存单调双端队列)"""
         if window < 1: raise ValueError("window must be >= 1")
         cdef DoubleColumn res = self._make_like_nan()
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
-        if r < window: return res
-
-        # 分配单列复用的队列缓冲 (最大长度为 r)
-        cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
-        if not q: raise MemoryError()
-
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef double* src = self.data_c
         cdef double* dst = res.data_c
-        cdef Py_ssize_t col_idx, offset, i, head, tail
-
-        try:
-            with nogil:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    head = 0
-                    tail = 0
-                    for i in range(r):
-                        # 弹出窗口外旧元素
-                        while head < tail and q[head] <= i - window:
-                            head += 1
-                        # 维护单调递增性
-                        while head < tail and src[offset + q[tail - 1]] >= src[offset + i]:
-                            tail -= 1
-                        q[tail] = i
-                        tail += 1
-                        if i >= window - 1:
-                            dst[offset + i] = src[offset + q[head]]
-        finally:
-            os_aligned_free(q)
+        _n_roll_min(src, dst, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_max(self, Py_ssize_t window):
+    def roll_max(self, Py_ssize_t window, min_periods=None, bint center=False):
         """滚动最大值"""
         if window < 1: raise ValueError("window must be >= 1")
         cdef DoubleColumn res = self._make_like_nan()
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
-        if r < window: return res
-
-        cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
-        if not q: raise MemoryError()
-
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef double* src = self.data_c
         cdef double* dst = res.data_c
-        cdef Py_ssize_t col_idx, offset, i, head, tail
-
-        try:
-            with nogil:
-                for col_idx in range(c):
-                    offset = col_idx * r
-                    head = 0
-                    tail = 0
-                    for i in range(r):
-                        while head < tail and q[head] <= i - window:
-                            head += 1
-                        while head < tail and src[offset + q[tail - 1]] <= src[offset + i]:
-                            tail -= 1
-                        q[tail] = i
-                        tail += 1
-                        if i >= window - 1:
-                            dst[offset + i] = src[offset + q[head]]
-        finally:
-            os_aligned_free(q)
+        _n_roll_max(src, dst, c, r, window, mp, center)
         return res
 
     # ============================================================
@@ -4411,22 +4260,23 @@ cdef class DoubleColumn(BaseColumn):
     # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_var(self, Py_ssize_t window, bint ddof=True):
+    def roll_var(self, Py_ssize_t window, bint ddof=True, min_periods=None, bint center=False):
         """滚动方差 (ddof=True 为样本方差 N-1，False 为总体方差 N)"""
         if window < 2: raise ValueError("window must be >= 2 for variance")
         cdef DoubleColumn res = self._make_like_nan()
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
-        if r < window: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef double* src = self.data_c
-        _n_roll_var(src, res.data_c, c, r, window, ddof)
+        _n_roll_var(src, res.data_c, c, r, window, mp, center, ddof)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_std(self, Py_ssize_t window, bint ddof=True):
+    def roll_std(self, Py_ssize_t window, bint ddof=True, min_periods=None, bint center=False):
         """滚动标准差"""
-        cdef DoubleColumn res = self.roll_var(window, ddof=ddof)
+        cdef DoubleColumn res = self.roll_var(window, ddof, min_periods, center)
         cdef Py_ssize_t i, n = res.length
         cdef double* ptr = res.data_c
         with nogil:
@@ -4440,23 +4290,24 @@ cdef class DoubleColumn(BaseColumn):
     # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_quantile(self, Py_ssize_t window, double q):
+    def roll_quantile(self, Py_ssize_t window, double q, min_periods=None, bint center=False):
         """滚动任意分位数 (q 在 0.0 到 1.0 之间)"""
         if window < 1: raise ValueError("window must be >= 1")
         if q < 0.0 or q > 1.0: raise ValueError("q must be between 0.0 and 1.0")
         cdef DoubleColumn res = self._make_like_nan()
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
-        if r < window: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef double* src = self.data_c
-        _n_roll_quantile(src, res.data_c, c, r, window, q)
+        _n_roll_quantile(src, res.data_c, c, r, window, mp, center, q)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_median(self, Py_ssize_t window):
+    def roll_median(self, Py_ssize_t window, min_periods=None, bint center=False):
         """滚动中位数"""
-        return self.roll_quantile(window, 0.5)
+        return self.roll_quantile(window, 0.5, min_periods, center)
 
     # ============================================================
     # 6. 自定义权重滤波 (roll_apply_weights) - 极速 FIR / 卷积滤波
@@ -4542,114 +4393,80 @@ cdef class DoubleColumn(BaseColumn):
     # ============================================================
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_skew(self, Py_ssize_t window):
+    def roll_skew(self, Py_ssize_t window, min_periods=None, bint center=False):
+        if window < 1: raise ValueError("window must be >= 1")
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
         cdef DoubleColumn res = self._make_like_nan()
-        if r < window or window < 3: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef double* src = self.data_c
-        _n_roll_skew(src, res.data_c, c, r, window)
+        _n_roll_skew(src, res.data_c, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_kurt(self, Py_ssize_t window):
+    def roll_kurt(self, Py_ssize_t window, min_periods=None, bint center=False):
+        if window < 1: raise ValueError("window must be >= 1")
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
         cdef DoubleColumn res = self._make_like_nan()
-        if r < window or window < 4: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
         cdef double* src = self.data_c
-        _n_roll_kurt(src, res.data_c, c, r, window)
+        _n_roll_kurt(src, res.data_c, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_corr(self, Py_ssize_t window, object other):
+    def roll_corr(self, Py_ssize_t window, object other, min_periods=None, bint center=False):
+        if window < 1: raise ValueError("window must be >= 1")
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
         cdef DoubleColumn res = self._make_like_nan()
-        if r < window: return res
-        cdef double* src_x = self.data_c
-        cdef double* dst = res.data_c
-        cdef double* src_y
-        cdef double n_f = <double>window, inv_w = 1.0 / n_f
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double sum_x, sum_y, sum_xx, sum_yy, sum_xy, x, y, old_x, old_y, vx, vy, denom, cov_xy
-        cdef bint other_is_double = (<object>other).dtype == TYPE_DOUBLE
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                sum_x = 0.0; sum_y = 0.0; sum_xx = 0.0; sum_yy = 0.0; sum_xy = 0.0
-                for i in range(window):
-                    x = src_x[offset + i]
-                    if other_is_double:
-                        y = (<DoubleColumn>other).data_c[offset + i]
-                    else:
-                        y = <double>((<IntColumn>other).data_c[offset + i])
-                    sum_x += x; sum_y += y; sum_xx += x * x; sum_yy += y * y; sum_xy += x * y
-                vx = sum_xx - sum_x * sum_x * inv_w
-                vy = sum_yy - sum_y * sum_y * inv_w
-                denom = sqrt(vx * vy)
-                cov_xy = sum_xy - sum_x * sum_y * inv_w
-                dst[offset + window - 1] = cov_xy / denom if (denom > 0.0) else 0.0
-                for i in range(window, r):
-                    x = src_x[offset + i]
-                    if other_is_double:
-                        y = (<DoubleColumn>other).data_c[offset + i]
-                        old_x = src_x[offset + i - window]
-                        old_y = (<DoubleColumn>other).data_c[offset + i - window]
-                    else:
-                        y = <double>((<IntColumn>other).data_c[offset + i])
-                        old_x = src_x[offset + i - window]
-                        old_y = <double>((<IntColumn>other).data_c[offset + i - window])
-                    sum_x += x - old_x; sum_y += y - old_y
-                    sum_xx += x * x - old_x * old_x; sum_yy += y * y - old_y * old_y
-                    sum_xy += x * y - old_x * old_y
-                    vx = sum_xx - sum_x * sum_x * inv_w
-                    vy = sum_yy - sum_y * sum_y * inv_w
-                    denom = sqrt(vx * vy)
-                    cov_xy = sum_xy - sum_x * sum_y * inv_w
-                    dst[offset + i] = cov_xy / denom if (denom > 0.0) else 0.0
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
+
+        cdef bint other_is_double = isinstance(other, DoubleColumn)
+        cdef bint other_is_int = isinstance(other, IntColumn)
+        if not (other_is_double or other_is_int):
+            raise TypeError("other must be DoubleColumn or IntColumn")
+        if other.length < self.length:
+            raise ValueError("other column must be at least as long as self")
+
+        cdef double* src = self.data_c
+        cdef DoubleColumn y_buf
+        if other_is_double:
+            _n_roll_corr(src, (<DoubleColumn>other).data_c, res.data_c, c, r, window, mp, center)
+        else:
+            y_buf = _int_col_to_double(<IntColumn>other)
+            _n_roll_corr(src, y_buf.data_c, res.data_c, c, r, window, mp, center)
         return res
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def roll_cov(self, Py_ssize_t window, object other):
+    def roll_cov(self, Py_ssize_t window, object other, min_periods=None, bint center=False):
+        if window < 1: raise ValueError("window must be >= 1")
         cdef Py_ssize_t r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef Py_ssize_t c = self.num_cols
         cdef DoubleColumn res = self._make_like_nan()
-        if r < window: return res
-        cdef double* src_x = self.data_c
-        cdef double* dst = res.data_c
-        cdef double n_f = <double>window, inv_w = 1.0 / n_f
-        cdef Py_ssize_t col_idx, offset, i
-        cdef double sum_x, sum_y, sum_xy, x, y, old_x, old_y
-        cdef bint other_is_double = (<object>other).dtype == TYPE_DOUBLE
-        with nogil:
-            for col_idx in range(c):
-                offset = col_idx * r
-                sum_x = 0.0; sum_y = 0.0; sum_xy = 0.0
-                for i in range(window):
-                    x = src_x[offset + i]
-                    if other_is_double:
-                        y = (<DoubleColumn>other).data_c[offset + i]
-                    else:
-                        y = <double>((<IntColumn>other).data_c[offset + i])
-                    sum_x += x; sum_y += y; sum_xy += x * y
-                dst[offset + window - 1] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
-                for i in range(window, r):
-                    x = src_x[offset + i]
-                    if other_is_double:
-                        y = (<DoubleColumn>other).data_c[offset + i]
-                        old_x = src_x[offset + i - window]
-                        old_y = (<DoubleColumn>other).data_c[offset + i - window]
-                    else:
-                        y = <double>((<IntColumn>other).data_c[offset + i])
-                        old_x = src_x[offset + i - window]
-                        old_y = <double>((<IntColumn>other).data_c[offset + i - window])
-                    sum_x += x - old_x; sum_y += y - old_y
-                    sum_xy += x * y - old_x * old_y
-                    dst[offset + i] = (sum_xy - sum_x * sum_y * inv_w) * inv_w
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if r == 0 or r < mp: return res
+
+        cdef bint other_is_double = isinstance(other, DoubleColumn)
+        cdef bint other_is_int = isinstance(other, IntColumn)
+        if not (other_is_double or other_is_int):
+            raise TypeError("other must be DoubleColumn or IntColumn")
+        if other.length < self.length:
+            raise ValueError("other column must be at least as long as self")
+
+        cdef double* src = self.data_c
+        cdef DoubleColumn y_buf
+        if other_is_double:
+            _n_roll_cov(src, (<DoubleColumn>other).data_c, res.data_c, c, r, window, mp, center)
+        else:
+            y_buf = _int_col_to_double(<IntColumn>other)
+            _n_roll_cov(src, y_buf.data_c, res.data_c, c, r, window, mp, center)
         return res
 
     # ============================================================

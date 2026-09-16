@@ -187,76 +187,160 @@ cdef extern from *:
 
 
 # ============================================================
-#  _RollingWrapper（滚动窗口包装类）
+#  _RollingWindow（滚动窗口访问器：DataFrame/Series 双模式）
 # ============================================================
-class _RollingWrapper:
-    """Lightweight rolling window wrapper, delegates to column roll_xxx methods"""
+cdef class _RollingWindow:
+    """滚动窗口访问器，委托列级 roll_xxx 内核。
+    mode-1（Series）：绑定单列，算子返回同长 Series；
+    mode-2（DataFrame）：逐数值列滚动，算子返回同 schema 的整表 DataFrame。"""
 
     _SUPPORTED_TYPES = {TYPE_INT, TYPE_DOUBLE}
     _TYPE_LABELS = {0: 'int', 2: 'float', 3: 'char256', 4: 'ucs2', 5: 'date', 6: 'bool', 7: 'category', 8: 'datetime', 9: 'time'}
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def __init__(self, col, window, name=None, index=None):
-        if col.dtype not in self._SUPPORTED_TYPES:
-            type_name = self._TYPE_LABELS.get(col.dtype, 'unknown')
-            raise TypeError(f"Rolling window operations are not supported for {type_name} columns")
-        self._col = col
+    def __cinit__(self, object obj, Py_ssize_t window, min_periods=None,
+                  bint center=False, bint is_df=False, str name=None,
+                  IndexBase index=None):
         self._window = window
-        self._name = name if name is not None else '_roll'
-        self._index = index
-        self.length = col.length
+        self._min_periods = min_periods
+        self._center = center
+        self._is_df = is_df
+        if is_df:
+            self._df = <DataFrame>obj
+            self._index = self._df.index
+            self._name = ''
+        else:
+            self._col = <BaseColumn>obj
+            self._index = index
+            self._name = name if name is not None else '_roll'
+            if self._col.dtype not in self._SUPPORTED_TYPES:
+                type_name = self._TYPE_LABELS.get(self._col.dtype, 'unknown')
+                raise TypeError(f"Rolling window operations are not supported for {type_name} columns")
 
-    def _wrap(self, res):
-        return Series(self._name, res, self._index) if self._index is not None else res
+    cdef object _call_col(self, BaseColumn col, str method, list args):
+        """单列滚动算子调用（min_periods/center 固定透传）。"""
+        cdef object fn = getattr(col, method)
+        return fn(self._window, *args, min_periods=self._min_periods, center=self._center)
+
+    cdef object _wrap(self, object res):
+        """Series 模式：BaseColumn 结果包成带索引的 Series。"""
+        return _wrap_series(self._name, res, self._index)
+
+    cdef object _apply(self, str method, list args):
+        """df 模式：逐数值列滚动并回装整表 DataFrame；无数值列则报错。"""
+        if not self._is_df:
+            return self._wrap(self._call_col(self._col, method, args))
+        cdef DataFrame result = DataFrame()
+        result.df_length = self._df.df_length
+        result.index = self._df.index
+        cdef BaseColumn col
+        cdef bint found_numeric = False
+        for col_name, col in self._df._columns.items():
+            if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+                continue
+            found_numeric = True
+            result._columns[col_name] = self._call_col(col, method, args)
+        if not found_numeric:
+            raise TypeError(f"Rolling {method} requires at least one numeric column")
+        return result
+
+    cdef BaseColumn _resolve_other(self, object other):
+        """把 Series / _RollingWindow 统一解析为底层列对象。"""
+        if isinstance(other, _RollingWindow):
+            return (<_RollingWindow>other)._col
+        if isinstance(other, Series):
+            return (<Series>other)._col
+        if isinstance(other, BaseColumn):
+            return <BaseColumn>other
+        raise TypeError("corr/cov 'other' must be a Series, rolling window or column")
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def mean(self): return self._wrap(self._col.roll_mean(self._window))
+    def mean(self): return self._apply('roll_mean', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def sum(self): return self._wrap(self._col.roll_sum(self._window))
+    def sum(self): return self._apply('roll_sum', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def min(self): return self._wrap(self._col.roll_min(self._window))
+    def min(self): return self._apply('roll_min', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def max(self): return self._wrap(self._col.roll_max(self._window))
+    def max(self): return self._apply('roll_max', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def std(self, ddof=False): return self._wrap(self._col.roll_std(self._window, ddof))
+    def std(self, bint ddof=True): return self._apply('roll_std', [ddof])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def var(self, ddof=False): return self._wrap(self._col.roll_var(self._window, ddof))
+    def var(self, bint ddof=True): return self._apply('roll_var', [ddof])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def median(self): return self._wrap(self._col.roll_median(self._window))
+    def median(self): return self._apply('roll_median', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def quantile(self, q=0.5): return self._wrap(self._col.roll_quantile(self._window, q))
+    def quantile(self, double q=0.5): return self._apply('roll_quantile', [q])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def skew(self): return self._wrap(self._col.roll_skew(self._window))
+    def skew(self): return self._apply('roll_skew', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def kurt(self): return self._wrap(self._col.roll_kurt(self._window))
+    def kurt(self): return self._apply('roll_kurt', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def corr(self, other): return self._wrap(self._col.roll_corr(self._window, other._col if isinstance(other, _RollingWrapper) else other))
+    def corr(self, object other):
+        if self._is_df:
+            return self._corr_cov_df('roll_corr', other)
+        return self._wrap(self._call_col(self._col, 'roll_corr', [self._resolve_other(other)]))
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def cov(self, other): return self._wrap(self._col.roll_cov(self._window, other._col if isinstance(other, _RollingWrapper) else other))
+    def cov(self, object other):
+        if self._is_df:
+            return self._corr_cov_df('roll_cov', other)
+        return self._wrap(self._call_col(self._col, 'roll_cov', [self._resolve_other(other)]))
+
+    cdef object _corr_cov_df(self, str method, object other):
+        """df 模式双列滚动：other 为 Series→每列与之配对；DataFrame→按列名对齐。"""
+        cdef DataFrame result = DataFrame()
+        result.df_length = self._df.df_length
+        result.index = self._df.index
+        cdef BaseColumn col, other_col
+        cdef bint found_numeric = False
+        cdef dict other_cols
+        if isinstance(other, DataFrame):
+            other_cols = (<DataFrame>other)._columns
+            for col_name, col in self._df._columns.items():
+                if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+                    continue
+                if col_name not in other_cols:
+                    raise KeyError(f"Column '{col_name}' not found in 'other'")
+                found_numeric = True
+                result._columns[col_name] = self._call_col_single(col, method,
+                                                                  <BaseColumn>other_cols[col_name])
+        else:
+            other_col = self._resolve_other(other)
+            for col_name, col in self._df._columns.items():
+                if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+                    continue
+                found_numeric = True
+                result._columns[col_name] = self._call_col_single(col, method, other_col)
+        if not found_numeric:
+            raise TypeError(f"Rolling {method} requires at least one numeric column")
+        return result
+
+    cdef object _call_col_single(self, BaseColumn col, str method, BaseColumn other):
+        return getattr(col, method)(self._window, other,
+                                    min_periods=self._min_periods, center=self._center)
 
 
 # ============================================================
@@ -2537,11 +2621,11 @@ cdef class Series:
     #  滚动窗口
     # =================================================================
 
-    def rolling(self, Py_ssize_t window):
-        """滚动窗口访问器：返回 _RollingWrapper（.mean()/.sum()/... 窗口算子）"""
+    def rolling(self, Py_ssize_t window, min_periods=None, center=False):
+        """滚动窗口访问器：返回 _RollingWindow（.mean()/.sum()/... 窗口算子）"""
         if window <= 0:
             raise ValueError(f"Window size must be positive, got {window}")
-        return _RollingWrapper(self._col, window, self.name, self._index)
+        return _RollingWindow(self._col, window, min_periods, center, False, self.name, self._index)
 
     # =================================================================
     #  距离度量（与另一列 / Series 逐元素计算）
@@ -4470,8 +4554,13 @@ cdef class DataFrame:
     # Rolling
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def rolling(self, Py_ssize_t window, str col_name):
-        return _rolling_impl(self, window, col_name)
+    def rolling(self, Py_ssize_t window, min_periods=None, center=False, axis=0):
+        """滚动窗口访问器：返回整表 DataFrame 滚动算子（pandas 式签名）。"""
+        if window <= 0:
+            raise ValueError(f"Window size must be positive, got {window}")
+        if axis != 0 and axis != 'index':
+            raise NotImplementedError("rolling supports axis=0 ('index') only")
+        return _RollingWindow(self, window, min_periods, center, True)
 
     # DataFrame-level shift (delegates to cdef _shift_impl)
     @cython.binding(False)

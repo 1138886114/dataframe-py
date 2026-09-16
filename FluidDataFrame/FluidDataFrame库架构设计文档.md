@@ -280,7 +280,7 @@ DataFrame (:2749)
 
 - **对齐分配**：`aligned_malloc/realloc(alignment=64)`、`os_aligned_free`（`:140-161`）。
 - **比较器**：`_cmp_int(76)`、`_cmp_double(174, NaN 全序)`、`_cmp_double_asc(187)`、`_cmp_int64(665)`、`_cmp_int32(1175)`；`_binary_search(83)`。
-- **统计内核**：`_n_quickselect(776)` / `_n_median(806)` / `_n_quantile(825)` / `_n_central_moments(846)` / `_n_roll_sum/mean/var/skew/kurt/quantile(893-1020)` / `_n_cumsum/cumprod/cummax/cummin(1038-1089)` / `_n_diff(1099)` / `_n_clip(1126)` / `_n_add_val/sub_val/mul_val/div_val(1140+)`。
+- **统计内核**：`_n_quickselect(776)` / `_n_median(806)` / `_n_quantile(825)` / `_n_central_moments(846)` / 滚动族 `_resolve_min_periods(893)`·`_roll_win_bounds(907)`·`_n_roll_sum/mean/var/skew/kurt/quantile/min/max/corr/cov(920-1345)`（count-aware，右对齐/居中，`_copy_int_to_double`/`_int_col_to_double` 支持 Int×Double 交叉）/ `_n_cumsum/cumprod/cummax/cummin(1346+)` / `_n_diff(1407)` / `_n_clip(1434)` / `_n_add_val/sub_val/mul_val/div_val(1448+)`。
 - **通用向量化**：`_col_to_double`（任意数值/时间列→double 缓冲，`:201`）、`_n_cmp_scalar/_n_cmp_col`（分支无关比较 → 0/1 掩码）、`_n_where_mask`（广播掩码填充）、`_n_isin`（qsort+bsearch）、`_n_unique`。
 - **日历/时间**：闰年/月天数表（`:507-518`）、`_ymd_to_days/_days_to_ymd`、`_parse_date_str(546)/_parse_datetime_str(579)/_parse_time_str(729)`、零分配 ISO 格式化 `_format_datetime_c(631)/_format_time_c(705)`。
 
@@ -311,7 +311,7 @@ DataFrame (:2749)
 - **布局**：`(str name, BaseColumn _col, IndexBase _index)` 纯视图——"DataFrame._columns 永远存裸 BaseColumn；Series 是按需构建、用完即可丢弃的临时包装"（`_databaseframe_helper.pxi:11-14`）。
 - `__getattr__`（`:1799`）：列方法直通引擎——`getattr(col, name)` 得到方法后闭包转发，结果若为 BaseColumn 则回包 Series（索引兼容时保留原 index，否则新建 RangeIndex）。
 - 算术（`:1962-2030`）：列运算自动 index 对齐——`_index is other._index` 时才直接结合，否则先 `other.reindex(self._index)`。
-- 统计 22 种、变换 15 种、掩码 8 种、`map/factorize/apply/replace/where/mask`、`reindex/reset_index`、`rolling(window)` 返回 `_RollingWrapper`（`:192`，纯 Python 窗口包装器，委托列 `roll_*`）。
+- 统计 22 种、变换 15 种、掩码 8 种、`map/factorize/apply/replace/where/mask`、`reindex/reset_index`、`rolling(window, min_periods=None, center=False)` 返回 `_RollingWindow`（`_databaseframe.pxd` 声明的 cdef class，`pyx:192` 起，Series/DataFrame 双模式，委托列 `roll_*`）。
 - 补齐的 pandas 对齐 API：`shape`、`to_numpy`（别名 `values`）、`shift(periods, fill_value)`（委托 `_shift_column_impl`，Int 空位 0 / 其余 NaN，fill_value 覆盖）、`rank(method/ascending/na_option)`（复用 `_rank_col`/`_rank_row_keys`）、`describe(percentiles)`（数值列 count/mean/std/min/25/50/75/max）。
 - 导出：`to_list/tolist/to_dict/to_pandas/to_frame`。
 - 访问器属性：`.str`（要求 char256/ucs2）、`.dt`（date/datetime/time）、`.cat`（category），类型不符抛 AttributeError。
@@ -330,7 +330,7 @@ DataFrame (:2749)
 - **构造管线**（`__init__:2794` → `reserve_with_capacity:2904`）：按 dtype 分两组（固定宽数值 vs 变长/布尔/类别），为每种数值类型发一块列优先合并块，逐列 `create_view` 窗口，并填充 `_c_cols`；最后封存内存。
 - **add_row 极限推流**（`:3034`）：位置/关键字两用，逐列 `_fast_insert_val` 写裸指针，成功后 `df_length+=1` 并同步全部 `len_ptr`；失败 `_rollback_pending_writes`。
 - **排序**：C 层 quicksort argsort 内核 `_c_argsort_numeric(pxi:149)/_c_argsort_char256(pxi:89)/_c_argsort_ucs2(pxi:218)`，纯 nogil；2D 列退化为 Python key `_col_row_key`。
-- **rolling**：`_n_roll_*` 内核（滑动均值/方差等），NaN 预热（前 window-1 行为 NaN）。
+- **rolling**：`df.rolling(window, min_periods=None, center=False, axis=0)` 返回 `_RollingWindow`（`_databaseframe.pxd` 声明的 cdef 双模式访问器，实现 `pyx` 于 `_RollingWrapper` 旧址 `:192` 起，`DataFrame.rolling` 入口 `~:4556`）——C 核 `_n_roll_*` 滑动聚合并装回整表 DataFrame（非数值列跳过、无数值列 TypeError、`axis!=0/‘index’→NotImplementedError`）；`min_periods/center` 提前在 `_roll_win_bounds` 计算边界，count-aware 核天然支持部分窗口。
 - **GroupBy**：见 4.16。
 - **Linalg/Metric**：见 4.17/4.18。
 - 快速设置器 `_fast_set_cell`（`:310`）、列构造 `_column_from_list_impl`（`:397`）、astype 解析 `_astype_impl`（`:2041`）。

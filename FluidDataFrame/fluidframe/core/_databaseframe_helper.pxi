@@ -4708,20 +4708,8 @@ cdef _ones_impl(Py_ssize_t rows, Py_ssize_t cols):
 
 
 # ============================================================
-#  DataFrame 模块级实现 —— 滚动窗口（rolling / shift / diff）
+#  DataFrame 模块级实现 —— 位移与差分（shift / diff）
 # ============================================================
-
-cdef _rolling_impl(DataFrame self, Py_ssize_t window, str col_name):
-    if window <= 0:
-        raise ValueError(f"Window size must be positive, got {window}")
-    if col_name not in self._columns:
-        raise KeyError(f"Column '{col_name}' not found")
-    cdef BaseColumn col = self._columns[col_name]
-    cdef int col_dtype = col.dtype
-    if col_dtype != TYPE_INT and col_dtype != TYPE_DOUBLE:
-        raise TypeError(f"Rolling window requires numeric column, got '{col_name}'")
-    return _RollingWrapper(col, window, col_name, self.index)
-
 
 cdef _shift_int_column(IntColumn col, Py_ssize_t periods, Py_ssize_t n, Py_ssize_t c, Py_ssize_t r):
     cdef IntColumn new_col = IntColumn(max(n, 1), cols=c)

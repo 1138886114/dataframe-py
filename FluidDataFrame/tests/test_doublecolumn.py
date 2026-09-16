@@ -991,34 +991,34 @@ def test_df_roll_dispatch():
     check('df_roll_dispatch quantile', _approx(r[3], 2.5, 1e-6))
 
 def test_df_rolling_vs_direct_roll():
-    """验证 df.rolling() (RollingWindow) 与 df["A"].roll_xxx() 结果一致"""
+    """验证 df.rolling() (RollingWindow DataFrame 整表) 与 df['A'].roll_xxx() 结果一致"""
     df = DataFrame()
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5, 6, 7, 8])
     df.df_length = 8
-    rw = df.rolling(3, 'A')
+    rw = df.rolling(3).mean()['A']
     direct = df['A']
 
     # mean
     check('df_rolling==direct mean',
-          _approx(rw.mean()[5], direct.roll_mean(3)[5]))
+          _approx(rw[5], direct.roll_mean(3)[5]))
     # sum
     check('df_rolling==direct sum',
-          _approx(rw.sum()[5], direct.roll_sum(3)[5]))
+          _approx(df.rolling(3).sum()['A'][5], direct.roll_sum(3)[5]))
     # min
     check('df_rolling==direct min',
-          _approx(rw.min()[5], direct.roll_min(3)[5]))
+          _approx(df.rolling(3).min()['A'][5], direct.roll_min(3)[5]))
     # max
     check('df_rolling==direct max',
-          _approx(rw.max()[5], direct.roll_max(3)[5]))
-    # std (RollingWindow uses ddof=False)
+          _approx(df.rolling(3).max()['A'][5], direct.roll_max(3)[5]))
+    # std (RollingWindow ddof 默认 True，与列级一致)
     check('df_rolling==direct std',
-          _approx(rw.std()[5], direct.roll_std(3, ddof=False)[5], 1e-6))
-    # var (RollingWindow uses ddof=False)
+          _approx(df.rolling(3).std()['A'][5], direct.roll_std(3, ddof=True)[5], 1e-6))
+    # var (RollingWindow ddof 默认 True，与列级一致)
     check('df_rolling==direct var',
-          _approx(rw.var()[5], direct.roll_var(3, ddof=False)[5], 1e-6))
+          _approx(df.rolling(3).var()['A'][5], direct.roll_var(3, ddof=True)[5], 1e-6))
     # median
     check('df_rolling==direct median',
-          _approx(rw.median()[5], direct.roll_median(3)[5]))
+          _approx(df.rolling(3).median()['A'][5], direct.roll_median(3)[5]))
 
 def test_df_rolling_corr_cov():
     """通过 df.rolling() 测试 corr/cov"""
@@ -1026,11 +1026,9 @@ def test_df_rolling_corr_cov():
     df['A'] = _make_df_col('A', [1, 2, 3, 4, 5, 6])
     df['B'] = _make_df_col('B', [2, 4, 6, 8, 10, 12])
     df.df_length = 6
-    ra = df.rolling(3, 'A')
-    rb = df.rolling(3, 'B')
-    corr = ra.corr(rb)
+    corr = df.rolling(3).corr(df['B'])['A']
     check('df_rolling_corr', _approx(corr[5], 1.0, 1e-6))
-    cov = ra.cov(rb)
+    cov = df.rolling(3).cov(df['B'])['A']
     check('df_rolling_cov', _approx(cov[5], 4.0/3.0, 1e-6))
 
 # ============================================================

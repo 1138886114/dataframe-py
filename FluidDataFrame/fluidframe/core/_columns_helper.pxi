@@ -890,150 +890,458 @@ cdef inline double _n_accum_mad(numeric_t* ptr, Py_ssize_t n, double m) noexcept
         total_dev += fabs(<double>ptr[i] - m)
     return total_dev / <double>n
 
+cdef inline Py_ssize_t _resolve_min_periods(Py_ssize_t window, object min_periods):
+    """解析滚动窗口最小观测数：None→window；<=0→1；>window→ValueError。"""
+    cdef Py_ssize_t mp = window
+    if min_periods is not None:
+        if isinstance(<object>min_periods, int):
+            mp = <Py_ssize_t>min_periods
+        else:
+            mp = <Py_ssize_t>PyNumber_Index(min_periods)
+    if mp < 1:
+        mp = 1
+    if mp > window:
+        raise ValueError("min_periods must be <= window, got %d" % mp)
+    return mp
+
+cdef inline void _roll_win_bounds(Py_ssize_t i, Py_ssize_t r, Py_ssize_t window,
+                                  bint center, Py_ssize_t* lo, Py_ssize_t* hi) noexcept nogil:
+    """窗口边界：右对齐 [max(0,i-w+1), i]；居中 [(i-(w-1)//2) 截断, (i+w//2) 截断]。"""
+    if center:
+        lo[0] = i - (window - 1) // 2
+        if lo[0] < 0: lo[0] = 0
+        hi[0] = i + window // 2
+        if hi[0] >= r: hi[0] = r - 1
+    else:
+        lo[0] = i - window + 1
+        if lo[0] < 0: lo[0] = 0
+        hi[0] = i
+
 cdef inline void _n_roll_sum(numeric_t* src, double* dst, Py_ssize_t c,
-                             Py_ssize_t r, Py_ssize_t window) noexcept nogil:
-    """滚动求和（O(N) 滑窗），输出 double。c/r 为列数/行数（列优先布局）。"""
-    cdef Py_ssize_t col_idx, offset, i
+                             Py_ssize_t r, Py_ssize_t window,
+                             Py_ssize_t min_periods, bint center) noexcept nogil:
+    """滚动求和（O(N) 滑窗），输出 double。c/r 为列数/行数（列优先布局）。
+    min_periods：至少需要多少个观测才输出；center：居中窗口。"""
+    cdef Py_ssize_t col_idx, offset, i, lo, hi, n
     cdef double s
     with nogil:
-        for col_idx in range(c):
-            offset = col_idx * r
-            s = 0.0
-            for i in range(window):
-                s += <double>src[offset + i]
-            dst[offset + window - 1] = s
-            for i in range(window, r):
-                s += <double>src[offset + i] - <double>src[offset + i - window]
-                dst[offset + i] = s
+        if not center:
+            for col_idx in range(c):
+                offset = col_idx * r
+                s = 0.0
+                for i in range(r):
+                    s += <double>src[offset + i]
+                    if i >= window:
+                        s -= <double>src[offset + i - window]
+                    n = window if i >= window - 1 else i + 1
+                    if n >= min_periods:
+                        dst[offset + i] = s
+        else:
+            for col_idx in range(c):
+                offset = col_idx * r
+                lo = 0
+                hi = window // 2
+                if hi >= r: hi = r - 1
+                s = 0.0
+                for i in range(hi + 1):
+                    s += <double>src[offset + i]
+                for i in range(r):
+                    n = hi - lo + 1
+                    if n >= min_periods:
+                        dst[offset + i] = s
+                    if i + window // 2 + 1 <= r - 1:
+                        hi += 1
+                        s += <double>src[offset + hi]
+                    if i + 1 > (window - 1) // 2:
+                        s -= <double>src[offset + lo]
+                        lo += 1
 
 cdef inline void _n_roll_mean(numeric_t* src, double* dst, Py_ssize_t c,
-                              Py_ssize_t r, Py_ssize_t window) noexcept nogil:
-    """滚动均值（O(N) 滑窗），输出 double。"""
-    cdef double inv_w = 1.0 / <double>window
-    cdef Py_ssize_t col_idx, offset, i
+                              Py_ssize_t r, Py_ssize_t window,
+                              Py_ssize_t min_periods, bint center) noexcept nogil:
+    """滚动均值（O(N) 滑窗，部分窗口除以实际观测数），输出 double。"""
+    cdef Py_ssize_t col_idx, offset, i, lo, hi, n
     cdef double s
     with nogil:
-        for col_idx in range(c):
-            offset = col_idx * r
-            s = 0.0
-            for i in range(window):
-                s += <double>src[offset + i]
-            dst[offset + window - 1] = s * inv_w
-            for i in range(window, r):
-                s += <double>src[offset + i] - <double>src[offset + i - window]
-                dst[offset + i] = s * inv_w
+        if not center:
+            for col_idx in range(c):
+                offset = col_idx * r
+                s = 0.0
+                for i in range(r):
+                    s += <double>src[offset + i]
+                    if i >= window:
+                        s -= <double>src[offset + i - window]
+                    n = window if i >= window - 1 else i + 1
+                    if n >= min_periods:
+                        dst[offset + i] = s / <double>n
+        else:
+            for col_idx in range(c):
+                offset = col_idx * r
+                lo = 0
+                hi = window // 2
+                if hi >= r: hi = r - 1
+                s = 0.0
+                for i in range(hi + 1):
+                    s += <double>src[offset + i]
+                for i in range(r):
+                    n = hi - lo + 1
+                    if n >= min_periods:
+                        dst[offset + i] = s / <double>n
+                    if i + window // 2 + 1 <= r - 1:
+                        hi += 1
+                        s += <double>src[offset + hi]
+                    if i + 1 > (window - 1) // 2:
+                        s -= <double>src[offset + lo]
+                        lo += 1
 
 cdef inline void _n_roll_var(numeric_t* src, double* dst, Py_ssize_t c,
                              Py_ssize_t r, Py_ssize_t window,
+                             Py_ssize_t min_periods, bint center,
                              bint ddof) noexcept nogil:
-    """滚动方差（O(N) 稳定滑窗），输出 double。"""
-    cdef double inv_w = 1.0 / <double>window
-    cdef Py_ssize_t col_idx, offset, i
-    cdef double s, s2, val, val_old, var_val
+    """滚动方差（O(N) 稳定滑窗），输出 double。计数不足时输出 NAN。"""
+    cdef Py_ssize_t col_idx, offset, i, lo, hi, n
+    cdef double s, s2, val, var_val, denom
     with nogil:
-        for col_idx in range(c):
-            offset = col_idx * r
-            s = 0.0; s2 = 0.0
-            for i in range(window):
-                val = <double>src[offset + i]
-                s += val; s2 += val * val
-            var_val = s2 - (s * s) * inv_w
-            if var_val < 0.0: var_val = 0.0
-            if ddof:
-                dst[offset + window - 1] = var_val / <double>(window - 1)
-            else:
-                dst[offset + window - 1] = var_val * inv_w
-            for i in range(window, r):
-                val = <double>src[offset + i]
-                val_old = <double>src[offset + i - window]
-                s += val - val_old
-                s2 += val * val - val_old * val_old
-                var_val = s2 - (s * s) * inv_w
-                if var_val < 0.0: var_val = 0.0
-                if ddof:
-                    dst[offset + i] = var_val / <double>(window - 1)
-                else:
-                    dst[offset + i] = var_val * inv_w
+        if not center:
+            for col_idx in range(c):
+                offset = col_idx * r
+                s = 0.0; s2 = 0.0
+                for i in range(r):
+                    val = <double>src[offset + i]
+                    s += val; s2 += val * val
+                    if i >= window:
+                        val = <double>src[offset + i - window]
+                        s -= val; s2 -= val * val
+                    n = window if i >= window - 1 else i + 1
+                    if n >= min_periods:
+                        var_val = s2 - (s * s) / <double>n
+                        if var_val < 0.0: var_val = 0.0
+                        denom = <double>(n - ddof)
+                        dst[offset + i] = var_val / denom if denom > 0.0 else NAN
+        else:
+            for col_idx in range(c):
+                offset = col_idx * r
+                lo = 0
+                hi = window // 2
+                if hi >= r: hi = r - 1
+                s = 0.0; s2 = 0.0
+                for i in range(hi + 1):
+                    val = <double>src[offset + i]
+                    s += val; s2 += val * val
+                for i in range(r):
+                    n = hi - lo + 1
+                    if n >= min_periods:
+                        var_val = s2 - (s * s) / <double>n
+                        if var_val < 0.0: var_val = 0.0
+                        denom = <double>(n - ddof)
+                        dst[offset + i] = var_val / denom if denom > 0.0 else NAN
+                    if i + window // 2 + 1 <= r - 1:
+                        hi += 1
+                        val = <double>src[offset + hi]
+                        s += val; s2 += val * val
+                    if i + 1 > (window - 1) // 2:
+                        val = <double>src[offset + lo]
+                        s -= val; s2 -= val * val
+                        lo += 1
 
 cdef inline void _n_roll_skew(numeric_t* src, double* dst, Py_ssize_t c,
-                              Py_ssize_t r, Py_ssize_t window) noexcept nogil:
-    """滚动偏度（直接窗口重算，O(N*W)），输出 double。"""
-    cdef double n_f = <double>window
-    cdef Py_ssize_t col_idx, offset, i, j
+                              Py_ssize_t r, Py_ssize_t window,
+                              Py_ssize_t min_periods, bint center) noexcept nogil:
+    """滚动偏度（直接窗口重算，O(N*W)），输出 double；观测数 < 3 或不足时 NAN。"""
+    cdef Py_ssize_t col_idx, offset, i, j, lo, hi, n
     cdef double s, mean, m2, m3, val, std_dev
     with nogil:
         for col_idx in range(c):
             offset = col_idx * r
-            for i in range(window - 1, r):
+            for i in range(r):
+                _roll_win_bounds(i, r, window, center, &lo, &hi)
+                n = hi - lo + 1
+                if n < min_periods or n < 3:
+                    continue
                 s = 0.0
-                for j in range(i - window + 1, i + 1):
+                for j in range(lo, hi + 1):
                     s += <double>src[offset + j]
-                mean = s / n_f
+                mean = s / <double>n
                 m2 = 0.0; m3 = 0.0
-                for j in range(i - window + 1, i + 1):
+                for j in range(lo, hi + 1):
                     val = <double>src[offset + j] - mean
                     m2 += val * val
                     m3 += val * val * val
                 if m2 > 1e-14:
-                    std_dev = sqrt(m2 / n_f)
-                    dst[offset + i] = (m3 / n_f) / (std_dev * std_dev * std_dev)
+                    std_dev = sqrt(m2 / <double>n)
+                    dst[offset + i] = (m3 / <double>n) / (std_dev * std_dev * std_dev)
                 else:
                     dst[offset + i] = 0.0
 
 cdef inline void _n_roll_kurt(numeric_t* src, double* dst, Py_ssize_t c,
-                              Py_ssize_t r, Py_ssize_t window) noexcept nogil:
-    """滚动峰度（直接窗口重算，O(N*W)），输出 double。"""
-    cdef double n_f = <double>window
-    cdef Py_ssize_t col_idx, offset, i, j
+                              Py_ssize_t r, Py_ssize_t window,
+                              Py_ssize_t min_periods, bint center) noexcept nogil:
+    """滚动峰度（直接窗口重算，O(N*W)），输出 double；观测数 < 4 或不足时 NAN。"""
+    cdef Py_ssize_t col_idx, offset, i, j, lo, hi, n
     cdef double s, mean, m2, m4, val, variance
     with nogil:
         for col_idx in range(c):
             offset = col_idx * r
-            for i in range(window - 1, r):
+            for i in range(r):
+                _roll_win_bounds(i, r, window, center, &lo, &hi)
+                n = hi - lo + 1
+                if n < min_periods or n < 4:
+                    continue
                 s = 0.0
-                for j in range(i - window + 1, i + 1):
+                for j in range(lo, hi + 1):
                     s += <double>src[offset + j]
-                mean = s / n_f
+                mean = s / <double>n
                 m2 = 0.0; m4 = 0.0
-                for j in range(i - window + 1, i + 1):
+                for j in range(lo, hi + 1):
                     val = <double>src[offset + j] - mean
                     m2 += val * val
                     m4 += val * val * val * val
                 if m2 > 1e-14:
-                    variance = m2 / n_f
-                    dst[offset + i] = (m4 / n_f) / (variance * variance) - 3.0
+                    variance = m2 / <double>n
+                    dst[offset + i] = (m4 / <double>n) / (variance * variance) - 3.0
                 else:
                     dst[offset + i] = 0.0
 
 cdef inline void _n_roll_quantile(numeric_t* src, double* dst, Py_ssize_t c,
                                   Py_ssize_t r, Py_ssize_t window,
+                                  Py_ssize_t min_periods, bint center,
                                   double q) except *:
     """滚动分位数（线性插值，每窗口 qsort），输出 double。"""
     cdef numeric_t* buf = <numeric_t*>aligned_malloc(window * sizeof(numeric_t))
     if buf == NULL:
         raise MemoryError()
-    cdef double pos = q * <double>(window - 1)
-    cdef Py_ssize_t i_low = <Py_ssize_t>pos
-    cdef double frac = pos - <double>i_low
     cdef int (*comp)(const void*, const void*) noexcept nogil
     if numeric_t is int:
         comp = _cmp_int
     else:
         comp = _cmp_double_asc
-    cdef Py_ssize_t col_idx, offset, i
+    cdef Py_ssize_t col_idx, offset, i, j, lo, hi, n, i_low
+    cdef double pos, frac
     try:
         with nogil:
             for col_idx in range(c):
                 offset = col_idx * r
-                for i in range(window - 1, r):
-                    memcpy(buf, src + offset + (i - window + 1), window * sizeof(numeric_t))
-                    qsort(buf, window, sizeof(numeric_t), comp)
-                    if i_low >= window - 1:
-                        dst[offset + i] = <double>buf[window - 1]
+                for i in range(r):
+                    _roll_win_bounds(i, r, window, center, &lo, &hi)
+                    n = hi - lo + 1
+                    if n < min_periods:
+                        continue
+                    memcpy(buf, src + offset + lo, n * sizeof(numeric_t))
+                    qsort(buf, n, sizeof(numeric_t), comp)
+                    pos = q * <double>(n - 1)
+                    i_low = <Py_ssize_t>pos
+                    frac = pos - <double>i_low
+                    if i_low >= n - 1:
+                        dst[offset + i] = <double>buf[n - 1]
                     else:
                         dst[offset + i] = <double>buf[i_low] + frac * (<double>buf[i_low + 1] - <double>buf[i_low])
     finally:
         os_aligned_free(buf)
+
+cdef inline void _n_roll_min(numeric_t* src, numeric_t* dst, Py_ssize_t c,
+                             Py_ssize_t r, Py_ssize_t window,
+                             Py_ssize_t min_periods, bint center) noexcept nogil:
+    """滚动最小值。int 列无效位填 INT_MAX 哨兵，double 列填 NAN（保持列契约）。
+    O(N) 单调队列（右对齐）/ O(N*W) 逐窗重扫（居中，因需预见未来元素）。"""
+    cdef Py_ssize_t col_idx, offset, i, j, lo, hi, n, head, tail
+    cdef numeric_t fill, best
+    if numeric_t is int:
+        fill = 2147483647
+    else:
+        fill = NAN
+    cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
+    if q == NULL: return
+    try:
+        with nogil:
+            if not center:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    head = 0; tail = 0
+                    for i in range(r):
+                        lo = i - window + 1
+                        if lo < 0: lo = 0
+                        while head < tail and q[head] < lo:
+                            head += 1
+                        while head < tail and src[offset + q[tail - 1]] >= src[offset + i]:
+                            tail -= 1
+                        q[tail] = i; tail += 1
+                        n = i - lo + 1
+                        if n >= min_periods:
+                            dst[offset + i] = src[offset + q[head]]
+                        else:
+                            dst[offset + i] = fill
+            else:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    for i in range(r):
+                        _roll_win_bounds(i, r, window, 1, &lo, &hi)
+                        n = hi - lo + 1
+                        if n >= min_periods:
+                            best = src[offset + lo]
+                            for j in range(lo + 1, hi + 1):
+                                if src[offset + j] < best:
+                                    best = src[offset + j]
+                            dst[offset + i] = best
+                        else:
+                            dst[offset + i] = fill
+    finally:
+        os_aligned_free(q)
+
+cdef inline void _n_roll_max(numeric_t* src, numeric_t* dst, Py_ssize_t c,
+                             Py_ssize_t r, Py_ssize_t window,
+                             Py_ssize_t min_periods, bint center) noexcept nogil:
+    """滚动最大值。int 列无效位填 INT_MIN 哨兵，double 列填 NAN。"""
+    cdef Py_ssize_t col_idx, offset, i, j, lo, hi, n, head, tail
+    cdef numeric_t fill, best
+    if numeric_t is int:
+        fill = -2147483647 - 1
+    else:
+        fill = NAN
+    cdef Py_ssize_t* q = <Py_ssize_t*>aligned_malloc(r * sizeof(Py_ssize_t))
+    if q == NULL: return
+    try:
+        with nogil:
+            if not center:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    head = 0; tail = 0
+                    for i in range(r):
+                        lo = i - window + 1
+                        if lo < 0: lo = 0
+                        while head < tail and q[head] < lo:
+                            head += 1
+                        while head < tail and src[offset + q[tail - 1]] <= src[offset + i]:
+                            tail -= 1
+                        q[tail] = i; tail += 1
+                        n = i - lo + 1
+                        if n >= min_periods:
+                            dst[offset + i] = src[offset + q[head]]
+                        else:
+                            dst[offset + i] = fill
+            else:
+                for col_idx in range(c):
+                    offset = col_idx * r
+                    for i in range(r):
+                        _roll_win_bounds(i, r, window, 1, &lo, &hi)
+                        n = hi - lo + 1
+                        if n >= min_periods:
+                            best = src[offset + lo]
+                            for j in range(lo + 1, hi + 1):
+                                if src[offset + j] > best:
+                                    best = src[offset + j]
+                            dst[offset + i] = best
+                        else:
+                            dst[offset + i] = fill
+    finally:
+        os_aligned_free(q)
+
+cdef inline void _copy_int_to_double(int* src, double* dst, Py_ssize_t n) noexcept nogil:
+    """int 列裸数据按元素转 double（含哨兵原样转换，语义同旧内联 <double> 强转）。"""
+    cdef Py_ssize_t i
+    for i in range(n):
+        dst[i] = <double>src[i]
+
+cdef inline DoubleColumn _int_col_to_double(IntColumn src_col):
+    """把整列 int 数据复制成临时 DoubleColumn（供 Int×Double 双列滚动用）。"""
+    cdef Py_ssize_t n = src_col.length
+    cdef DoubleColumn res = DoubleColumn(max(n, 1))
+    res.length = n
+    _copy_int_to_double(src_col.data_c, res.data_c, n)
+    return res
+
+cdef inline void _n_roll_corr(numeric_t* x, numeric_t* y, double* dst, Py_ssize_t c,
+                              Py_ssize_t r, Py_ssize_t window,
+                              Py_ssize_t min_periods, bint center) noexcept nogil:
+    """滚动两列相关（O(N) 稳定滑窗），输出 double；计数不足时 NAN。"""
+    cdef Py_ssize_t col_idx, offset, i, lo, hi, n
+    cdef double sx, sy, sxx, syy, sxy, xv, yv, vx, vy, denom, cov
+    with nogil:
+        if not center:
+            for col_idx in range(c):
+                offset = col_idx * r
+                sx = 0.0; sy = 0.0; sxx = 0.0; syy = 0.0; sxy = 0.0
+                for i in range(r):
+                    xv = <double>x[offset + i]; yv = <double>y[offset + i]
+                    sx += xv; sy += yv; sxx += xv * xv; syy += yv * yv; sxy += xv * yv
+                    if i >= window:
+                        xv = <double>x[offset + i - window]; yv = <double>y[offset + i - window]
+                        sx -= xv; sy -= yv; sxx -= xv * xv; syy -= yv * yv; sxy -= xv * yv
+                    n = window if i >= window - 1 else i + 1
+                    if n >= min_periods:
+                        vx = fmax(sxx - sx * sx / <double>n, 0.0)
+                        vy = fmax(syy - sy * sy / <double>n, 0.0)
+                        denom = sqrt(vx * vy)
+                        cov = sxy - sx * sy / <double>n
+                        dst[offset + i] = cov / denom if denom > 0.0 else 0.0
+        else:
+            for col_idx in range(c):
+                offset = col_idx * r
+                lo = 0
+                hi = window // 2
+                if hi >= r: hi = r - 1
+                sx = 0.0; sy = 0.0; sxx = 0.0; syy = 0.0; sxy = 0.0
+                for i in range(hi + 1):
+                    xv = <double>x[offset + i]; yv = <double>y[offset + i]
+                    sx += xv; sy += yv; sxx += xv * xv; syy += yv * yv; sxy += xv * yv
+                for i in range(r):
+                    n = hi - lo + 1
+                    if n >= min_periods:
+                        vx = fmax(sxx - sx * sx / <double>n, 0.0)
+                        vy = fmax(syy - sy * sy / <double>n, 0.0)
+                        denom = sqrt(vx * vy)
+                        cov = sxy - sx * sy / <double>n
+                        dst[offset + i] = cov / denom if denom > 0.0 else 0.0
+                    if i + window // 2 + 1 <= r - 1:
+                        hi += 1
+                        xv = <double>x[offset + hi]; yv = <double>y[offset + hi]
+                        sx += xv; sy += yv; sxx += xv * xv; syy += yv * yv; sxy += xv * yv
+                    if i + 1 > (window - 1) // 2:
+                        xv = <double>x[offset + lo]; yv = <double>y[offset + lo]
+                        sx -= xv; sy -= yv; sxx -= xv * xv; syy -= yv * yv; sxy -= xv * yv
+                        lo += 1
+
+cdef inline void _n_roll_cov(numeric_t* x, numeric_t* y, double* dst, Py_ssize_t c,
+                             Py_ssize_t r, Py_ssize_t window,
+                             Py_ssize_t min_periods, bint center) noexcept nogil:
+    """滚动两列协方差（总体，除以窗口观测数），输出 double；计数不足时 NAN。"""
+    cdef Py_ssize_t col_idx, offset, i, lo, hi, n
+    cdef double sx, sy, sxy, xv, yv
+    with nogil:
+        if not center:
+            for col_idx in range(c):
+                offset = col_idx * r
+                sx = 0.0; sy = 0.0; sxy = 0.0
+                for i in range(r):
+                    xv = <double>x[offset + i]; yv = <double>y[offset + i]
+                    sx += xv; sy += yv; sxy += xv * yv
+                    if i >= window:
+                        xv = <double>x[offset + i - window]; yv = <double>y[offset + i - window]
+                        sx -= xv; sy -= yv; sxy -= xv * yv
+                    n = window if i >= window - 1 else i + 1
+                    if n >= min_periods:
+                        dst[offset + i] = (sxy - sx * sy / <double>n) / <double>n
+        else:
+            for col_idx in range(c):
+                offset = col_idx * r
+                lo = 0
+                hi = window // 2
+                if hi >= r: hi = r - 1
+                sx = 0.0; sy = 0.0; sxy = 0.0
+                for i in range(hi + 1):
+                    xv = <double>x[offset + i]; yv = <double>y[offset + i]
+                    sx += xv; sy += yv; sxy += xv * yv
+                for i in range(r):
+                    n = hi - lo + 1
+                    if n >= min_periods:
+                        dst[offset + i] = (sxy - sx * sy / <double>n) / <double>n
+                    if i + window // 2 + 1 <= r - 1:
+                        hi += 1
+                        xv = <double>x[offset + hi]; yv = <double>y[offset + hi]
+                        sx += xv; sy += yv; sxy += xv * yv
+                    if i + 1 > (window - 1) // 2:
+                        xv = <double>x[offset + lo]; yv = <double>y[offset + lo]
+                        sx -= xv; sy -= yv; sxy -= xv * yv
+                        lo += 1
 
 cdef inline void _n_cumsum(numeric_t* src, numeric_t* dst, Py_ssize_t c,
                            Py_ssize_t r) noexcept nogil:

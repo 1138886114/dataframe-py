@@ -191,3 +191,21 @@ cdef class DataFrame:
     cdef str _format_value_fast(self, BaseColumn col, Py_ssize_t i)
     cdef tuple _get_header_strings(self)
     cdef list _get_row_strings(self, Py_ssize_t i)
+
+
+cdef class _RollingWindow:
+    """滚动窗口访问器：df 模式回装整表 DataFrame，Series 模式回装 Series。"""
+    cdef public Py_ssize_t _window
+    cdef public object _min_periods
+    cdef public bint _center
+    cdef public bint _is_df
+    cdef public BaseColumn _col          # Series 模式
+    cdef public DataFrame _df            # DataFrame 模式
+    cdef public IndexBase _index
+    cdef public str _name
+    cdef object _call_col(self, BaseColumn col, str method, list args)
+    cdef object _wrap(self, object res)
+    cdef object _apply(self, str method, list args)
+    cdef BaseColumn _resolve_other(self, object other)
+    cdef object _corr_cov_df(self, str method, object other)
+    cdef object _call_col_single(self, BaseColumn col, str method, BaseColumn other)
