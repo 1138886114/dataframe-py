@@ -22,8 +22,8 @@ FluidFrame 是一个 **基于 Cython 实现的高性能 pandas 风格 DataFrame 
 |---|---|---|---|
 | 列存储层 | `core/_columns.pyx` + `.pxd` | 10,635 + 778 | 9 种列类型、底层 C 内核、对齐内存管理 |
 | 列帮助层 | `core/_columns_helper.pxi` | 1,277 | 列层 fused 内核、日历/时间解析格式化、对齐内存分配 |
-| 表结构层 | `core/_databaseframe.pyx` + `.pxd` | 5,548 + 179 | DataFrame、Series、Index 体系、访问器、GroupBy/Linalg/Metric |
-| 表帮助层 | `core/_databaseframe_helper.pxi` | 6,394 | CRUD/聚合/排序/滚动/GroupBy 哈希/线性代数 的实现体 |
+| 表结构层 | `core/_databaseframe.pyx` + `.pxd` | 5,539 + 193 | DataFrame、Series、Index 体系、访问器、GroupBy/Linalg/Metric |
+| 表帮助层 | `core/_databaseframe_helper.pxi` | 6,423 | CRUD/聚合/排序/滚动/GroupBy 哈希/线性代数 的实现体 |
 | Schema 层 | `_schema_types.py` | 87 | 类型常量、占位类型类、schema 解析 |
 | 包入口 | `__init__.py` / `core/__init__.py` | — | 对外 API 面、Cython 模块别名映射 |
 
@@ -342,24 +342,24 @@ DataFrame (:2749)
 - **C 级聚合分派抽象**（`pyx:4480-4527`）：访问器内共享 `_result_shell`（骨架 DataFrame + 分组键列挂载 `_attach_keys`）、`_target_cols`（非键数值列枚举）、`_dispatch_agg`（函数名 → 四类发动机的单点映射）。`agg/_convenience_agg/sum.../count` 全部走 `_dispatch_agg`；`idxmax/idxmin` 收敛为 `_idx_agg(col_name, find_max)` 同一 C 壳，消除了 5 段逐方法重复的分组键挂载与数值列枚举代码。
 - 对外：`agg/apply/transform/filter/size/sum/mean/count/min/max/median/quantile/var/std/idxmax/idxmin`。`@cython.final @cython.freelist(16)`。
 
-### 4.17 Linalg 访问器（`_databaseframe.pyx:4775`）
+### 4.17 Linalg 访问器（`_databaseframe.pyx:4766`）
 
-`dot/matmul/transpose/det/inv/solve/norm(ord_type)` + 两列距离（euclidean/manhattan/cosine/hamming/jaccard/cosine_similarity）。实现核心：`_linalg_to_contiguous_fast`（`pxi:5947`，把数值列专升本成 `double*` 连续阵，2D 感知）、`_linalg_from_contiguous`（`pxi:6043`，由连续缓冲重建 DataFrame）、`_linalg_det/inv/solve/norm`（`pxi:6157-6397`）。
+`dot/matmul/transpose/det/inv/solve/norm(ord_type)` + 两列距离（euclidean/manhattan/cosine/hamming/jaccard/cosine_similarity）。实现核心：`_linalg_to_contiguous_fast`（`pxi:5873`，把数值列专升本成 `double*` 连续阵，2D 感知）、`_linalg_from_contiguous`（`pxi:5969`，由连续缓冲重建 DataFrame）、`_linalg_det/inv/solve/norm`（`pxi:6083/6138/6207/6283`）。
 
-**配对矩阵 C 级分派抽象**（`_linalg_pairwise`，`pxi:6328`）：6 个距离/相似度矩阵（euclidean/manhattan/cosine_dist/cosine_sim/hamming/jaccard）原本是 6 份 ~20 行、仅内核与对角值不同的复制；现由共享枚举 `_PairwiseOp`（`_databaseframe.pxd`）驱动单份脚手架——一次 `aligned_malloc(rows*rows*8)`、一次 `_linalg_to_contiguous_fast`、循环内按 `op` 只切换内核调用。对角线值按 op 归并（sim/jaccard=1.0，其余=0.0），全部在 nogil 下写对称三角。
+**配对矩阵 C 级分派抽象**（`_linalg_pairwise`，`pxi:6328`）：6 个距离/相似度矩阵（euclidean/manhattan/cosine_dist/cosine_sim/hamming/jaccard）原本是 6 份 ~20 行、仅内核与对角值不同的复制；现由共享枚举 `_PairwiseOp`（`_databaseframe.pxd`）驱动单份脚手架——一次 `aligned_malloc(rows*rows*8)`、一次 `_linalg_to_contiguous_fast`。**循环不变式提升**：`op` 分派只执行一次（抬到行循环之外），每个 op 各有一份无分支的内层填充循环，内核保持 `cdef inline` 以便 `-O3` 自动 SIMD 向量化。对角线值按 op 归并（sim/jaccard=1.0，其余=0.0），全部在 nogil 下写对称三角。
 
-### 4.18 Metric 访问器（`_databaseframe.pyx:4850`）
+### 4.18 Metric 访问器（`_databaseframe.pyx:4841`）
 
 `euclidean/manhattan/cosine_dist/cosine_similarity/jaccard/hamming/corr/cov/corrwith/corrcoef/cov_withcols/pearson`——全部薄包装 `_*_impl`。列间距离/相关在 DataFrame 上还提供 `*_withcols` 与 `*_dist_matrix` 整表接口。
 
 **Metric 区 C 级分派抽象**（`pxi:4288-4500`）：
 - 6 个双列距离 `_*_dist_withcols_impl` 合并为 `_metric_dist_withcols_impl(self, col1, col2, op)`——先统一 `_ensure_double_1d` 安全萃取，再按 `_PairwiseOp` 只切换列核调用。
-- `_corr_impl`/`_cov_impl` 合并为 `_corr_cov_impl(self, is_corr)`（`pxi:4304`）：共享一次 malloc 特征矩阵萃取 + `DataFrame()` 视图回装，仅对角线（corr=1.0 / cov=各列自协方差）与核（`_vec_pearson_corr`/`_vec_pearson_cov`）两处分叉；`_pearson_sim_impl` 即 `_corr_cov_impl(True)`。
+- `_corr_impl`/`_cov_impl` 合并为 `_corr_cov_impl(self, is_corr)`（`pxi:4304`）：共享一次 malloc 特征矩阵萃取 + `DataFrame()` 视图回装；**`is_corr` 判定已抬到 nogil 循环之外**，corr/cov 各为独立的无分支 `with nogil` 填充块，仅对角线（corr=1.0 / cov=各列自协方差）与核（`_vec_pearson_corr`/`_vec_pearson_cov`）两处分叉；`_pearson_sim_impl` 即 `_corr_cov_impl(True)`。
 - `_corrcoef_impl`/`_cov_withcols_impl` 合并为 `_corrcoef_cov_withcols_impl(self, col_a, col_b, is_corr)`（`pxi:4403`），仅核不同，其在 DataFrame 的命名 `cov_withcols` 与 Metric 访问器 `cov_withcols` 保持同名薄壳。
 
-### 4.19 模块级公共函数（`_databaseframe.pyx:4927-5553`）
+### 4.19 模块级公共函数（`_databaseframe.pyx:4923-5539`）
 
-- `_SafeUnpickler`（`:4937`）：限制 `find_class` 白名单。
+- `_SafeUnpickler`（`:4923`）：限制 `find_class` 白名单。
 - `read_csv/tsv/json`、`from_pickle`。
 - `concat_outer/concat_inner/concat`（忽略 index 选项）。
 - `to_numeric/to_date/to_datetime/to_time/to_timedelta`（errors 支持 'coerce'）。

@@ -6326,7 +6326,8 @@ cdef double _linalg_norm(DataFrame df, str ord_type="frobenius"):
 # ============================================================
 
 cdef DataFrame _linalg_pairwise(DataFrame df, int op):
-    """共享脚手架的 pairwise 距离/相似度矩阵；仅内核与对角线随 op 变化。"""
+    """共享脚手架的 pairwise 距离/相似度矩阵；仅内核与对角线随 op 变化。
+    """
     cdef Py_ssize_t rows = 0, cols = 0
     if df.df_length == 0: return DataFrame()
 
@@ -6340,23 +6341,48 @@ cdef DataFrame _linalg_pairwise(DataFrame df, int op):
         D = <double*>aligned_malloc(rows * rows * sizeof(double))
         if not D: raise MemoryError()
         with nogil:
-            for i in range(rows):
-                D[i * rows + i] = diag_val
-                for j in range(i + 1, rows):
-                    if op == PW_EUCLIDEAN:
+            if op == PW_EUCLIDEAN:
+                for i in range(rows):
+                    D[i * rows + i] = diag_val
+                    for j in range(i + 1, rows):
                         val = _vec_euclidean_dist(A + i * cols, A + j * cols, cols)
-                    elif op == PW_MANHATTAN:
+                        D[i * rows + j] = val
+                        D[j * rows + i] = val
+            elif op == PW_MANHATTAN:
+                for i in range(rows):
+                    D[i * rows + i] = diag_val
+                    for j in range(i + 1, rows):
                         val = _vec_manhattan_dist(A + i * cols, A + j * cols, cols)
-                    elif op == PW_COSINE_DIST:
+                        D[i * rows + j] = val
+                        D[j * rows + i] = val
+            elif op == PW_COSINE_DIST:
+                for i in range(rows):
+                    D[i * rows + i] = diag_val
+                    for j in range(i + 1, rows):
                         val = 1.0 - _vec_cosine_sim(A + i * cols, A + j * cols, cols)
-                    elif op == PW_COSINE_SIM:
+                        D[i * rows + j] = val
+                        D[j * rows + i] = val
+            elif op == PW_COSINE_SIM:
+                for i in range(rows):
+                    D[i * rows + i] = diag_val
+                    for j in range(i + 1, rows):
                         val = _vec_cosine_sim(A + i * cols, A + j * cols, cols)
-                    elif op == PW_HAMMING:
+                        D[i * rows + j] = val
+                        D[j * rows + i] = val
+            elif op == PW_HAMMING:
+                for i in range(rows):
+                    D[i * rows + i] = diag_val
+                    for j in range(i + 1, rows):
                         val = _vec_hamming_dist(A + i * cols, A + j * cols, cols)
-                    else:
+                        D[i * rows + j] = val
+                        D[j * rows + i] = val
+            else:
+                for i in range(rows):
+                    D[i * rows + i] = diag_val
+                    for j in range(i + 1, rows):
                         val = _vec_jaccard_sim(A + i * cols, A + j * cols, cols)
-                    D[i * rows + j] = val
-                    D[j * rows + i] = val
+                        D[i * rows + j] = val
+                        D[j * rows + i] = val
         return _linalg_from_contiguous(D, rows, rows)
     finally:
         if A != NULL: os_aligned_free(A)
