@@ -19,6 +19,15 @@ cdef enum IndexType:
     INDEX_MULTI = 2
     INDEX_STRING = 3
 
+# 统一的 pairwise 距离/相似度操作编号：linalg 矩阵版与 metric 双列版共用
+cdef enum _PairwiseOp:
+    PW_EUCLIDEAN = 0
+    PW_MANHATTAN = 1
+    PW_COSINE_DIST = 2
+    PW_COSINE_SIM = 3
+    PW_HAMMING = 4
+    PW_JACCARD = 5
+
 cdef class IndexBase:
     cdef public Py_ssize_t length
     cdef public IndexType index_type
@@ -131,6 +140,11 @@ cdef class _DataFrameGroupByAccessor:
     cdef bint _built
     cdef void _ensure_built(self)
     cdef DataFrame _convenience_agg(self, str func_name, object col_name)
+    cdef DataFrame _result_shell(self)
+    cdef void _attach_keys(self, DataFrame res)
+    cdef list _target_cols(self)
+    cdef DataFrame _idx_agg(self, str col_name, bint find_max)
+    cdef object _dispatch_agg(self, str col_name, str func_name)
 
 @cython.final
 @cython.freelist(16)

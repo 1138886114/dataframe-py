@@ -4173,32 +4173,32 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def euclidean_dist_withcols(self, col1, col2):
-        return _euclidean_dist_withcols_impl(self, col1, col2)
+        return _metric_dist_withcols_impl(self, col1, col2, PW_EUCLIDEAN)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def manhattan_dist_withcols(self, col1, col2):
-        return _manhattan_dist_withcols_impl(self, col1, col2)
+        return _metric_dist_withcols_impl(self, col1, col2, PW_MANHATTAN)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cosine_dist_withcols(self, col1, col2):
-        return _cosine_dist_withcols_impl(self, col1, col2)
+        return _metric_dist_withcols_impl(self, col1, col2, PW_COSINE_DIST)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cosine_similarity_withcols(self, col1, col2):
-        return _cosine_similarity_withcols_impl(self, col1, col2)
+        return _metric_dist_withcols_impl(self, col1, col2, PW_COSINE_SIM)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def jaccard_sim_withcols(self, col1, col2):
-        return _jaccard_sim_withcols_impl(self, col1, col2)
+        return _metric_dist_withcols_impl(self, col1, col2, PW_JACCARD)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def hamming_dist_withcols(self, col1, col2):
-        return _hamming_dist_withcols_impl(self, col1, col2)
+        return _metric_dist_withcols_impl(self, col1, col2, PW_HAMMING)
 
     # Linear Algebra
     @property
@@ -4246,42 +4246,42 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def euclidean_dist_matrix(self):
-        return _linalg_euclidean_dist(self)
+        return _linalg_pairwise(self, PW_EUCLIDEAN)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def manhattan_dist_matrix(self):
-        return _linalg_manhattan_dist(self)
+        return _linalg_pairwise(self, PW_MANHATTAN)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cosine_dist_matrix(self):
-        return _linalg_cosine_dist(self)
+        return _linalg_pairwise(self, PW_COSINE_DIST)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def hamming_dist_matrix(self):
-        return _linalg_hamming_dist(self)
+        return _linalg_pairwise(self, PW_HAMMING)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def jaccard_sim_matrix(self):
-        return _linalg_jaccard_sim(self)
+        return _linalg_pairwise(self, PW_JACCARD)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cosine_similarity_matrix(self):
-        return _linalg_cosine_similarity(self)
+        return _linalg_pairwise(self, PW_COSINE_SIM)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def corr(self):
-        return _corr_impl(self)
+        return _corr_cov_impl(self, True)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cov(self):
-        return _cov_impl(self)
+        return _corr_cov_impl(self, False)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -4291,12 +4291,12 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def corrcoef(self, col_a, col_b):
-        return _corrcoef_impl(self, col_a, col_b)
+        return _corrcoef_cov_withcols_impl(self, col_a, col_b, True)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cov_withcols(self, col_a, col_b):
-        return _cov_withcols_impl(self, col_a, col_b)
+        return _corrcoef_cov_withcols_impl(self, col_a, col_b, False)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -4450,7 +4450,7 @@ cdef struct _ByColPtrs:
     void** data
     void** offsets
     int* types
-    int* cols          # 每列子列数：2D 列 = cols，其余 = 1
+    int* cols            # 每列子列数：2D 列 = cols，其余 = 1
     Py_ssize_t* strides  # 每列行步长（2D 列 data_c[sub*stride + row]），1D 列 = length
     int count
 
@@ -4477,29 +4477,66 @@ cdef class _DataFrameGroupByAccessor:
         _gb_build_groups(self._df, self._by_cols, self._ht, self._gr, self._ptrs)
         self._built = True
 
+    cdef DataFrame _result_shell(self):
+        """构造结果 DataFrame 骨架：列数由聚合行决定，并挂载所有分组键列。"""
+        cdef DataFrame res = DataFrame()
+        res.df_length = self._gr.count
+        self._attach_keys(res)
+        return res
+
+    cdef void _attach_keys(self, DataFrame res):
+        """把分组键列挂到结果上（若聚合结果中已存在同名列则跳过）。"""
+        cdef str cn
+        for cn in self._by_cols:
+            if cn not in res._columns:
+                res._columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
+
+    cdef list _target_cols(self):
+        """计算需要聚合的目标列：所有非分组键的数值列名。"""
+        cdef list target = []
+        cdef str cn
+        cdef BaseColumn c
+        for cn in self._df._columns:
+            if cn not in self._by_cols:
+                c = self._df._columns[cn]
+                if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
+                    target.append(cn)
+        return target
+
+    cdef DataFrame _idx_agg(self, str col_name, bint find_max):
+        """idxmax/idxmin 共用的 C 级分派壳。"""
+        self._ensure_built()
+        cdef DataFrame res = self._result_shell()
+        cdef str cn
+        if col_name is not None:
+            res._columns[col_name] = _gb_native_idx(self._df, self._gr, col_name, find_max)
+        else:
+            for cn in self._target_cols():
+                res._columns[cn] = _gb_native_idx(self._df, self._gr, cn, find_max)
+        return res
+
+    cdef object _dispatch_agg(self, str col_name, str func_name):
+        """把聚合函数名映射到 C 级 / Python 级实现（count 特殊为计数字段）。"""
+        if func_name in ('sum', 'mean', 'min', 'max', 'var', 'std'):
+            return _gb_native_agg(self._df, self._gr, col_name, func_name)
+        elif func_name == 'count':
+            return _gb_native_count(self._gr)
+        else:
+            return _gb_python_agg(self._df, self._gr, col_name, func_name)
+
     cdef DataFrame _convenience_agg(self, str func_name, object col_name):
         self._ensure_built()
         cdef DataFrame res
         cdef dict agg
         cdef str cn
-        cdef BaseColumn c
         if col_name is not None:
-            res = DataFrame()
-            res.df_length = self._gr.count
-            if func_name in ('sum', 'mean', 'min', 'max', 'var', 'std'):
-                res._columns[col_name] = _gb_native_agg(self._df, self._gr, col_name, func_name)
-            else:
-                res._columns[col_name] = _gb_python_agg(self._df, self._gr, col_name, func_name)
-            for cn in self._by_cols:
-                res._columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
+            res = self._result_shell()
+            res._columns[col_name] = self._dispatch_agg(col_name, func_name)
             return res
         else:
             agg = {}
-            for cn in self._df._columns:
-                if cn not in self._by_cols:
-                    c = self._df._columns[cn]
-                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        agg[cn] = func_name
+            for cn in self._target_cols():
+                agg[cn] = func_name
             return self.agg(agg)
 
     @cython.binding(False)
@@ -4510,19 +4547,10 @@ cdef class _DataFrameGroupByAccessor:
     @cython.binding(False)
     def agg(self, dict agg_dict):
         self._ensure_built()
-        cdef DataFrame res = DataFrame()
-        res.df_length = self._gr.count
+        cdef DataFrame res = self._result_shell()
         cdef str col_name, func_name
         for col_name, func_name in agg_dict.items():
-            if func_name in ('sum', 'mean', 'min', 'max', 'var', 'std'):
-                res._columns[col_name] = _gb_native_agg(self._df, self._gr, col_name, func_name)
-            elif func_name == 'count':
-                res._columns[col_name] = _gb_native_count(self._gr)
-            else:
-                res._columns[col_name] = _gb_python_agg(self._df, self._gr, col_name, func_name)
-        for col_name in self._by_cols:
-            if col_name not in res._columns:
-                res._columns[col_name] = _gb_extract_key_column(self._df, self._gr, col_name)
+            res._columns[col_name] = self._dispatch_agg(col_name, func_name)
         return res
 
     @cython.binding(False)
@@ -4536,11 +4564,8 @@ cdef class _DataFrameGroupByAccessor:
     @cython.binding(False)
     def count(self):
         self._ensure_built()
-        cdef DataFrame res = DataFrame()
-        res.df_length = self._gr.count
+        cdef DataFrame res = self._result_shell()
         res._columns['__count__'] = _gb_native_count(self._gr)
-        for cn in self._by_cols:
-            res._columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
         return res
 
     @cython.binding(False)
@@ -4600,41 +4625,11 @@ cdef class _DataFrameGroupByAccessor:
 
     @cython.binding(False)
     def idxmax(self, str col_name=None):
-        self._ensure_built()
-        cdef DataFrame res = DataFrame()
-        res.df_length = self._gr.count
-        cdef str cn
-        cdef BaseColumn c
-        if col_name is not None:
-            res._columns[col_name] = _gb_native_idx(self._df, self._gr, col_name, True)
-        else:
-            for cn in self._df._columns:
-                if cn not in self._by_cols:
-                    c = self._df._columns[cn]
-                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        res._columns[cn] = _gb_native_idx(self._df, self._gr, cn, True)
-        for cn in self._by_cols:
-            res._columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
-        return res
+        return self._idx_agg(col_name, True)
 
     @cython.binding(False)
     def idxmin(self, str col_name=None):
-        self._ensure_built()
-        cdef DataFrame res = DataFrame()
-        res.df_length = self._gr.count
-        cdef str cn
-        cdef BaseColumn c
-        if col_name is not None:
-            res._columns[col_name] = _gb_native_idx(self._df, self._gr, col_name, False)
-        else:
-            for cn in self._df._columns:
-                if cn not in self._by_cols:
-                    c = self._df._columns[cn]
-                    if c.dtype == TYPE_INT or c.dtype == TYPE_DOUBLE:
-                        res._columns[cn] = _gb_native_idx(self._df, self._gr, cn, False)
-        for cn in self._by_cols:
-            res._columns[cn] = _gb_extract_key_column(self._df, self._gr, cn)
-        return res
+        return self._idx_agg(col_name, False)
 
     @cython.binding(False)
     def transform(self, object func):
@@ -4763,15 +4758,6 @@ cdef class _DataFrameGroupByAccessor:
         return f"<GroupBy: {self._gr.count} groups, by={self._by_cols}>"
 
 
-# ============================================================
-#  DataFrame 模块级实现 —— 线性代数（linalg）与 _DataFrameLinalgAccessor
-# ============================================================
-
-
-# ============================================================
-#  Helper: Check if columns are contiguous in memory
-# ============================================================
-
 
 # ============================================================
 # _DataFrameLinalgAccessor — lazy-cached accessor
@@ -4816,27 +4802,27 @@ cdef class _DataFrameLinalgAccessor:
 
     @cython.binding(False)
     def euclidean_dist(self):
-        return _linalg_euclidean_dist(self._df)
+        return _linalg_pairwise(self._df, PW_EUCLIDEAN)
 
     @cython.binding(False)
     def manhattan_dist(self):
-        return _linalg_manhattan_dist(self._df)
+        return _linalg_pairwise(self._df, PW_MANHATTAN)
 
     @cython.binding(False)
     def cosine_dist(self):
-        return _linalg_cosine_dist(self._df)
+        return _linalg_pairwise(self._df, PW_COSINE_DIST)
 
     @cython.binding(False)
     def hamming_dist(self):
-        return _linalg_hamming_dist(self._df)
+        return _linalg_pairwise(self._df, PW_HAMMING)
 
     @cython.binding(False)
     def jaccard_sim(self):
-        return _linalg_jaccard_sim(self._df)
+        return _linalg_pairwise(self._df, PW_JACCARD)
 
     @cython.binding(False)
     def cosine_similarity(self):
-        return _linalg_cosine_similarity(self._df)
+        return _linalg_pairwise(self._df, PW_COSINE_SIM)
 
     @cython.binding(False)
     def __repr__(self):
@@ -4864,44 +4850,44 @@ cdef class _DataFrameMetricAccessor:
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def euclidean(self, col1, col2):
-        return _euclidean_dist_withcols_impl(self._df, col1, col2)
+        return _metric_dist_withcols_impl(self._df, col1, col2, PW_EUCLIDEAN)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def manhattan(self, col1, col2):
-        return _manhattan_dist_withcols_impl(self._df, col1, col2)
+        return _metric_dist_withcols_impl(self._df, col1, col2, PW_MANHATTAN)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def cosine_dist(self, col1, col2):
-        return _cosine_dist_withcols_impl(self._df, col1, col2)
+        return _metric_dist_withcols_impl(self._df, col1, col2, PW_COSINE_DIST)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def cosine_similarity(self, col1, col2):
-        return _cosine_similarity_withcols_impl(self._df, col1, col2)
+        return _metric_dist_withcols_impl(self._df, col1, col2, PW_COSINE_SIM)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def jaccard(self, col1, col2):
-        return _jaccard_sim_withcols_impl(self._df, col1, col2)
+        return _metric_dist_withcols_impl(self._df, col1, col2, PW_JACCARD)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def hamming(self, col1, col2):
-        return _hamming_dist_withcols_impl(self._df, col1, col2)
+        return _metric_dist_withcols_impl(self._df, col1, col2, PW_HAMMING)
 
     # ==================== Correlation / Covariance ====================
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def corr(self):
-        return _corr_impl(self._df)
+        return _corr_cov_impl(self._df, True)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def cov(self):
-        return _cov_impl(self._df)
+        return _corr_cov_impl(self._df, False)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -4911,12 +4897,12 @@ cdef class _DataFrameMetricAccessor:
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def corrcoef(self, col_a, col_b):
-        return _corrcoef_impl(self._df, col_a, col_b)
+        return _corrcoef_cov_withcols_impl(self._df, col_a, col_b, True)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def cov_withcols(self, col_a, col_b):
-        return _cov_withcols_impl(self._df, col_a, col_b)
+        return _corrcoef_cov_withcols_impl(self._df, col_a, col_b, False)
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)

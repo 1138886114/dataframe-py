@@ -4285,37 +4285,23 @@ cdef inline DoubleColumn _ensure_double_1d(DataFrame self, object col_ident):
 # Distance Metrics
 # ============================================================
 
-cdef _euclidean_dist_withcols_impl(DataFrame self, col1, col2):
+cdef _metric_dist_withcols_impl(DataFrame self, col1, col2, int op):
     cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
     cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
-    return c1.euclidean_dist(c2)
+    if op == PW_EUCLIDEAN:
+        return c1.euclidean_dist(c2)
+    elif op == PW_MANHATTAN:
+        return c1.manhattan_dist(c2)
+    elif op == PW_COSINE_DIST:
+        return c1.cosine_dist(c2)
+    elif op == PW_COSINE_SIM:
+        return c1.cosine_similarity(c2)
+    elif op == PW_HAMMING:
+        return c1.hamming_dist(c2)
+    else:
+        return c1.jaccard_sim(c2)
 
-cdef _manhattan_dist_withcols_impl(DataFrame self, col1, col2):
-    cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
-    cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
-    return c1.manhattan_dist(c2)
-
-cdef _cosine_dist_withcols_impl(DataFrame self, col1, col2):
-    cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
-    cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
-    return c1.cosine_dist(c2)
-
-cdef _cosine_similarity_withcols_impl(DataFrame self, col1, col2):
-    cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
-    cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
-    return c1.cosine_similarity(c2)
-
-cdef _jaccard_sim_withcols_impl(DataFrame self, col1, col2):
-    cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
-    cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
-    return c1.jaccard_sim(c2)
-
-cdef _hamming_dist_withcols_impl(DataFrame self, col1, col2):
-    cdef DoubleColumn c1 = _ensure_double_1d(self, col1)
-    cdef DoubleColumn c2 = _ensure_double_1d(self, col2)
-    return c1.hamming_dist(c2)
-
-cdef _corr_impl(DataFrame self):
+cdef DataFrame _corr_cov_impl(DataFrame self, bint is_corr):
     cdef list feats = _numeric_logical_features(self)
     cdef Py_ssize_t n_feats = len(feats)
     cdef Py_ssize_t n_rows = self.df_length
@@ -4346,14 +4332,23 @@ cdef _corr_impl(DataFrame self):
         res_block.length = n_feats * n_feats
         res_ptr = res_block.data_c
 
-        # 释放 GIL 并在行优先内存地址上并行填充相关性矩阵
-        with nogil:
-            for i in range(n_feats):
-                res_ptr[i * n_feats + i] = 1.0
-                for j in range(i + 1, n_feats):
-                    val = _vec_pearson_corr(data_matrix + i * n_rows, data_matrix + j * n_rows, n_rows)
-                    res_ptr[j * n_feats + i] = val
-                    res_ptr[i * n_feats + j] = val
+        # 释放 GIL 并在行优先内存地址上并行填充相关性/协方差矩阵
+        if is_corr:
+            with nogil:
+                for i in range(n_feats):
+                    res_ptr[i * n_feats + i] = 1.0
+                    for j in range(i + 1, n_feats):
+                        val = _vec_pearson_corr(data_matrix + i * n_rows, data_matrix + j * n_rows, n_rows)
+                        res_ptr[j * n_feats + i] = val
+                        res_ptr[i * n_feats + j] = val
+        else:
+            with nogil:
+                for i in range(n_feats):
+                    res_ptr[i * n_feats + i] = _vec_pearson_cov(data_matrix + i * n_rows, data_matrix + i * n_rows, n_rows)
+                    for j in range(i + 1, n_feats):
+                        val = _vec_pearson_cov(data_matrix + i * n_rows, data_matrix + j * n_rows, n_rows)
+                        res_ptr[j * n_feats + i] = val
+                        res_ptr[i * n_feats + j] = val
 
         # 极速装载 View (零拷贝)
         result = DataFrame()
@@ -4370,61 +4365,12 @@ cdef _corr_impl(DataFrame self):
     finally:
         os_aligned_free(data_matrix)
 
-cdef _cov_impl(DataFrame self):
-    cdef list feats = _numeric_logical_features(self)
-    cdef Py_ssize_t n_feats = len(feats)
-    cdef Py_ssize_t n_rows = self.df_length
-    if n_feats == 0 or n_rows == 0:
-        return DataFrame()
-
-    cdef double* data_matrix = <double*>aligned_malloc(n_feats * max(n_rows, 1) * sizeof(double))
-    if not data_matrix: raise MemoryError()
-
-    cdef Py_ssize_t i, j
-    cdef double val
-    cdef tuple feat
-    cdef DoubleColumn res_block
-    cdef double* res_ptr = NULL
-    cdef DataFrame result
-
-    try:
-        for i in range(n_feats):
-            feat = feats[i]
-            self._col_to_double_buffer(<BaseColumn>feat[1], data_matrix + i * n_rows, n_rows, <Py_ssize_t>feat[2])
-
-        res_block = DoubleColumn(n_feats * n_feats, cols=n_feats)
-        res_block.length = n_feats * n_feats
-        res_ptr = res_block.data_c
-
-        with nogil:
-            for i in range(n_feats):
-                res_ptr[i * n_feats + i] = _vec_pearson_cov(data_matrix + i * n_rows, data_matrix + i * n_rows, n_rows)
-                for j in range(i + 1, n_feats):
-                    val = _vec_pearson_cov(data_matrix + i * n_rows, data_matrix + j * n_rows, n_rows)
-                    res_ptr[j * n_feats + i] = val
-                    res_ptr[i * n_feats + j] = val
-
-        result = DataFrame()
-        result.df_length = n_feats
-        result.index = RangeIndex(0, n_feats)
-        for i in range(n_feats):
-            result._columns[feats[i][0]] = DoubleColumn.create_view(res_ptr + i * n_feats, n_feats, res_block)
-
-        if not hasattr(result, '_2d_blocks'):
-            result._2d_blocks = []
-        result._2d_blocks.append(res_block)
-
-        return result
-    finally:
-        os_aligned_free(data_matrix)
-
-
 cdef _pearson_sim_impl(DataFrame self):
     """
     数学上，列之间的 Pearson 相似度矩阵 等价于 Pearson 相关系数矩阵。
-    直接复用 _corr_impl 的实现，避免了原先实现中 O(N^2) 的内存拷贝和重复分配灾难。
+    直接复用 _corr_cov_impl 的实现，避免了原先实现中 O(N^2) 的内存拷贝和重复分配灾难。
     """
-    return _corr_impl(self)
+    return _corr_cov_impl(self, True)
 
 
 # ============================================================
@@ -4454,7 +4400,7 @@ cdef _corrwith_impl(DataFrame self, other):
 
     return result
 
-cdef _corrcoef_impl(DataFrame self, col_a, col_b):
+cdef double _corrcoef_cov_withcols_impl(DataFrame self, col_a, col_b, bint is_corr):
     cdef bint is2d
     cdef Py_ssize_t c_a, r_a, c_b, r_b
     if isinstance(col_a, Series):
@@ -4475,28 +4421,8 @@ cdef _corrcoef_impl(DataFrame self, col_a, col_b):
     self._col_to_double_buffer(col_a, buf_a.data_c, n, 0)
     self._col_to_double_buffer(col_b, buf_b.data_c, n, 0)
 
-    return _vec_pearson_corr(buf_a.data_c, buf_b.data_c, n)
-
-cdef _cov_withcols_impl(DataFrame self, col_a, col_b):
-    cdef bint is2d
-    cdef Py_ssize_t c_a, r_a, c_b, r_b
-    if isinstance(col_a, Series):
-        col_a = (<Series>col_a)._col
-    if isinstance(col_b, Series):
-        col_b = (<Series>col_b)._col
-    is2d, c_a, r_a = _col_shape_probe(col_a)
-    is2d, c_b, r_b = _col_shape_probe(col_b)
-
-    cdef Py_ssize_t n = min(r_a, r_b)
-    if n < 2: return NAN
-
-    cdef DoubleColumn buf_a = DoubleColumn(max(n, 1))
-    cdef DoubleColumn buf_b = DoubleColumn(max(n, 1))
-    buf_a.length = n
-    buf_b.length = n
-    self._col_to_double_buffer(col_a, buf_a.data_c, n, 0)
-    self._col_to_double_buffer(col_b, buf_b.data_c, n, 0)
-
+    if is_corr:
+        return _vec_pearson_corr(buf_a.data_c, buf_b.data_c, n)
     return _vec_pearson_cov(buf_a.data_c, buf_b.data_c, n)
 
 
@@ -6399,133 +6325,38 @@ cdef double _linalg_norm(DataFrame df, str ord_type="frobenius"):
 #  Pairwise distance / similarity metrics
 # ============================================================
 
-cdef DataFrame _linalg_euclidean_dist(DataFrame df):
+cdef DataFrame _linalg_pairwise(DataFrame df, int op):
+    """共享脚手架的 pairwise 距离/相似度矩阵；仅内核与对角线随 op 变化。"""
     cdef Py_ssize_t rows = 0, cols = 0
     if df.df_length == 0: return DataFrame()
 
     cdef Py_ssize_t i, j
+    cdef double val
     cdef double* A = NULL
     cdef double* D = NULL
+    cdef double diag_val = 1.0 if (op == PW_COSINE_SIM or op == PW_JACCARD) else 0.0
     try:
         A = _linalg_to_contiguous_fast(df, &rows, &cols)
         D = <double*>aligned_malloc(rows * rows * sizeof(double))
         if not D: raise MemoryError()
         with nogil:
             for i in range(rows):
-                D[i * rows + i] = 0.0
+                D[i * rows + i] = diag_val
                 for j in range(i + 1, rows):
-                    D[i * rows + j] = _vec_euclidean_dist(A + i * cols, A + j * cols, cols)
-                    D[j * rows + i] = D[i * rows + j]
-        return _linalg_from_contiguous(D, rows, rows)
-    finally:
-        if A != NULL: os_aligned_free(A)
-        if D != NULL: os_aligned_free(D)
-
-cdef DataFrame _linalg_manhattan_dist(DataFrame df):
-    cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return DataFrame()
-
-    cdef Py_ssize_t i, j
-    cdef double* A = NULL
-    cdef double* D = NULL
-    try:
-        A = _linalg_to_contiguous_fast(df, &rows, &cols)
-        D = <double*>aligned_malloc(rows * rows * sizeof(double))
-        if not D: raise MemoryError()
-        with nogil:
-            for i in range(rows):
-                D[i * rows + i] = 0.0
-                for j in range(i + 1, rows):
-                    D[i * rows + j] = _vec_manhattan_dist(A + i * cols, A + j * cols, cols)
-                    D[j * rows + i] = D[i * rows + j]
-        return _linalg_from_contiguous(D, rows, rows)
-    finally:
-        if A != NULL: os_aligned_free(A)
-        if D != NULL: os_aligned_free(D)
-
-cdef DataFrame _linalg_cosine_dist(DataFrame df):
-    cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return DataFrame()
-
-    cdef Py_ssize_t i, j
-    cdef double* A = NULL
-    cdef double* D = NULL
-    try:
-        A = _linalg_to_contiguous_fast(df, &rows, &cols)
-        D = <double*>aligned_malloc(rows * rows * sizeof(double))
-        if not D: raise MemoryError()
-        with nogil:
-            for i in range(rows):
-                D[i * rows + i] = 0.0
-                for j in range(i + 1, rows):
-                    D[i * rows + j] = 1.0 - _vec_cosine_sim(A + i * cols, A + j * cols, cols)
-                    D[j * rows + i] = D[i * rows + j]
-        return _linalg_from_contiguous(D, rows, rows)
-    finally:
-        if A != NULL: os_aligned_free(A)
-        if D != NULL: os_aligned_free(D)
-
-cdef DataFrame _linalg_hamming_dist(DataFrame df):
-    cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return DataFrame()
-
-    cdef Py_ssize_t i, j
-    cdef double* A = NULL
-    cdef double* D = NULL
-    try:
-        A = _linalg_to_contiguous_fast(df, &rows, &cols)
-        D = <double*>aligned_malloc(rows * rows * sizeof(double))
-        if not D: raise MemoryError()
-        with nogil:
-            for i in range(rows):
-                D[i * rows + i] = 0.0
-                for j in range(i + 1, rows):
-                    D[i * rows + j] = _vec_hamming_dist(A + i * cols, A + j * cols, cols)
-                    D[j * rows + i] = D[i * rows + j]
-        return _linalg_from_contiguous(D, rows, rows)
-    finally:
-        if A != NULL: os_aligned_free(A)
-        if D != NULL: os_aligned_free(D)
-
-cdef DataFrame _linalg_jaccard_sim(DataFrame df):
-    cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return DataFrame()
-
-    cdef Py_ssize_t i, j
-    cdef double* A = NULL
-    cdef double* D = NULL
-    try:
-        A = _linalg_to_contiguous_fast(df, &rows, &cols)
-        D = <double*>aligned_malloc(rows * rows * sizeof(double))
-        if not D: raise MemoryError()
-        with nogil:
-            for i in range(rows):
-                D[i * rows + i] = 1.0
-                for j in range(i + 1, rows):
-                    D[i * rows + j] = _vec_jaccard_sim(A + i * cols, A + j * cols, cols)
-                    D[j * rows + i] = D[i * rows + j]
-        return _linalg_from_contiguous(D, rows, rows)
-    finally:
-        if A != NULL: os_aligned_free(A)
-        if D != NULL: os_aligned_free(D)
-
-cdef DataFrame _linalg_cosine_similarity(DataFrame df):
-    cdef Py_ssize_t rows = 0, cols = 0
-    if df.df_length == 0: return DataFrame()
-
-    cdef Py_ssize_t i, j
-    cdef double* A = NULL
-    cdef double* D = NULL
-    try:
-        A = _linalg_to_contiguous_fast(df, &rows, &cols)
-        D = <double*>aligned_malloc(rows * rows * sizeof(double))
-        if not D: raise MemoryError()
-        with nogil:
-            for i in range(rows):
-                D[i * rows + i] = 1.0
-                for j in range(i + 1, rows):
-                    D[i * rows + j] = _vec_cosine_sim(A + i * cols, A + j * cols, cols)
-                    D[j * rows + i] = D[i * rows + j]
+                    if op == PW_EUCLIDEAN:
+                        val = _vec_euclidean_dist(A + i * cols, A + j * cols, cols)
+                    elif op == PW_MANHATTAN:
+                        val = _vec_manhattan_dist(A + i * cols, A + j * cols, cols)
+                    elif op == PW_COSINE_DIST:
+                        val = 1.0 - _vec_cosine_sim(A + i * cols, A + j * cols, cols)
+                    elif op == PW_COSINE_SIM:
+                        val = _vec_cosine_sim(A + i * cols, A + j * cols, cols)
+                    elif op == PW_HAMMING:
+                        val = _vec_hamming_dist(A + i * cols, A + j * cols, cols)
+                    else:
+                        val = _vec_jaccard_sim(A + i * cols, A + j * cols, cols)
+                    D[i * rows + j] = val
+                    D[j * rows + i] = val
         return _linalg_from_contiguous(D, rows, rows)
     finally:
         if A != NULL: os_aligned_free(A)
