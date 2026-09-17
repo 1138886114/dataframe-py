@@ -198,7 +198,7 @@ DataFrame (:2749)
 | 排序/排名 | `argsort_by`、`sort_values`、`sort_index`、`rank`、`cut`、`qcut` |
 | 过滤/清洗 | `eval/query`、`where_column/where_row/mask_column`、`isna/notna/isnull`、`fillna`、`dropna`、`replace`、`ffill/bfill`、`clip/clip_column`、`abs/round/pct_change` |
 | 变换/重塑 | `apply/applymap/pipe/assign`、`reshape`、`explode`、`stack/unstack`、`T/transpose`、`pivot`、`melt` |
-| 行/列级函数 | `add/sub/mul/div`、`diff/diff_all`、`shift`、`rolling(+win_type)`、`expanding`、`ewm`（旧 `expanding_sum`/`ewm_mean` 保留兼容） |
+| 行/列级函数 | `add/sub/mul/div`、`diff/diff_all`、`shift`、`rolling(+win_type)`、`expanding`、`ewm`（旧 `expanding_sum`/`ewm_mean` 便捷函数保留，语义已对齐 pandas） |
 | 二元/连接 | `concat`、`merge` |
 | 指标 | `euclidean_dist_withcols / manhattan / cosine_dist / cosine_similarity / jaccard / hamming`、`corr/corrwith/corrcoef/cov/pearson_sim`、`euclidean_dist_matrix...` |
 | 线性代数 | `dot/matmul/det/inv/solve/norm` |
@@ -233,7 +233,7 @@ DataFrame (:2749)
 - **布局**：`double* data_c`（对齐），`_base_obj`，同 2D 双模式。
 - `_make_like_nan`（`:2448`）为滚动运算制造同形 NaN 填充列。
 - **NaN 语义**：`_c_max/_c_min/_c_sum/_c_prod` 跳过 NaN；`_cmp_op` eq 时双 NaN 视为相等；`take_by_indices` 越界填 NaN 走 `_col_gather_nan`。
-- 滚动（`:4262` 起）含 `roll_corr/roll_cov` 增量实现与 `_roll_apply_weights`（FIR/加权平均 nogil 内积）。
+-滚动（`:4262` 起）含 `roll_corr/roll_cov` 增量实现与 `_roll_apply_weights`（私有 FIR 卷积核，右对齐内积、不归一化、需等窗长权重、未满窗 NaN——与 `win_type` 加权窗口语义不同，命名区分无歧义）。
 - 数值内核全部来自 `_columns_helper.pxi` 的 fused 类型函数（`_n_*`）。
 
 ### 4.4 AsciiColumn（`_columns.pyx:4655-6116`，char256）
@@ -318,7 +318,7 @@ DataFrame (:2749)
 
 ### 4.14 访问器
 
-**`_StringAccessor`**（`:1055`，@final）：纯分派器——按住 `_col.dtype` cast 到 AsciiColumn/UCS2Column 转发，结果经 `_wrap` 回包 Series。覆盖搜索 / 类型检查 / 大小写 / strip / replace / split / 切片 / cat 共约 45 个方法。`replace(old, new, count)` 的 `count` 已透传 AsciiColumn/UCS2Column 内核（`str.replace(old,new,count)` 语义，UCS2 为原地修改返回 self）。
+**`_StringAccessor`**（`:1055`，@final）：纯分派器——按住 `_col.dtype` cast 到 AsciiColumn/UCS2Column 转发，结果经 `_wrap` 回包 Series。覆盖搜索 / 类型检查 / 大小写 / strip / replace / split / 切片 / cat 共约 45 个方法。`replace(old, new, count)` 的 `count` 已透传 AsciiColumn/UCS2Column 内核（`str.replace(old,new,count)` 语义）；**两内核均复制返回新列**，绝不原地污染原列/原 DataFrame。
 
 **`_DateTimeAccessor`**（`:1551`，@final）：`__getattr__` 动态引擎——名字必须在 `_DT_ATTRS` 白名单内，`getattr(col,name)` 得到零参方法后 `_wrap_series` 包裹；显式别名 `weekday/dayofweek/dayofyear/weekofyear` + `strftime(fmt)`。
 
@@ -333,7 +333,8 @@ DataFrame (:2749)
 - **rolling**：`df.rolling(window, min_periods=None, center=False, axis=0, win_type=None)` 返回 `_RollingWindow`（`_databaseframe.pxd` 声明的 cdef 双模式访问器，实现 `pyx` 于 `_RollingWrapper` 旧址 `:192` 起，`DataFrame.rolling` 入口 `~:4556`）——C 核 `_n_roll_*` 滑动聚合并装回整表 DataFrame（非数值列跳过、无数值列 TypeError、`axis!=0/‘index’→NotImplementedError`）；`min_periods/center` 提前在 `_roll_win_bounds` 计算边界，count-aware 核天然支持部分窗口。
 - **expanding**：`df/s.expanding(min_periods=1, axis=0)` = `_RollingWindow(obj, max(r, min_periods), min_periods, False, ...)`（核内 `n=min(i+1,window)` → expanding 计数；`mp>r` 全 NaN 不误报）；≡ pandas `expanding ≡ rolling(window=行数)`，全算子等价已验证。
 - **ewm**：`df/s.ewm(com/span/halflife/alpha, min_periods=0, adjust=True, ignore_na=False)` 返回 `_EWMWindow`（`pxd` 声明，`pyx` 实现于 `_RollingWindow` 之后）；参数解析 `_resolve_ewm_alpha`（com/span/halflife→alpha，互斥/缺参错误串与 pandas 一致），委托列级 `ewm_mean/sum/var/std/cov/corr`，C 核 `_n_ewm`/`_n_ewmcov`（`_columns_helper.pxi`，逐列递推、无 times 等间隔假设）；var/std 用 `bias`（对齐 pandas，非 ddof），sum+adjust=False → `NotImplementedError`。
-- **win_type（boxcar/triang）**：挂在 `_RollingWindow`（`_win_type/_weights` 字段），仅放行 `mean/sum/std/var`（其余 `AttributeError('Window' object has no attribute ...')`），`min_periods>window→ValueError`；权重纯公式生成（triang 奇窗 `1-|2i-(M-1)|/(M+1)` / 偶窗 `1-|2i-(M-1)|/M`，= scipy `get_window(...,fftbins=False)`）；内核 `_n_roll_wmean_sum`（窗口右对齐，最新值吃末权重）与 `_n_roll_wvar`（pandas West 循环对齐 quirk：绝对位置 `p%win_n`），center 用尾部补 NaN 右对齐再截断等价写法。
+- **win_type（boxcar/triang）**：挂在 `_RollingWindow`（`_WinKind` 枚举 `_win_kind` + `_is_win`，cinit 一次性生成 `double* _wbuf` 权重缓冲缓存、`__dealloc__` 释放，消除逐算子 alloc/copy/free），仅放行 `mean/sum/std/var`（其余 `AttributeError('Window' object has no attribute ...')`），`min_periods>window→ValueError`；权重纯公式生成（triang 奇窗 `1-|2i-(M-1)|/(M+1)` / 偶窗 `1-|2i-(M-1)|/M`，= scipy `get_window(...,fftbins=False)`）；内核 `_n_roll_wmean_sum`（窗口右对齐，最新值吃末权重）与 `_n_roll_wvar`（pandas West 循环对齐 quirk：绝对位置 `p%win_n`），center 用尾部补 NaN 右对齐再截断等价写法。
+- **ewm/expanding 便捷函数 pandas 对齐**：旧 `df.expanding_sum(col_name)`/`df.ewm_mean(col_name, span)` 保留，语义已改正为与 pandas 完全一致——`expanding_sum` 委托 `_expanding_sum_impl`（NaN 不参与累计但计有效观测，有效观测=0 输出 NaN）；`ewm_mean` 委托列级 `ewm_mean(alpha=2/(span+1), min_periods=0, adjust=True, ignore_na=False)`（首值=原值）；**NaN 判定一律用 libc `isnan`**（`-ffast-math` 下 `x==x`/`x!=x` 自比较会被折叠失效，`_n_ewm`/`_n_ewmcov` 已由自比较改为 `isnan`）。
 - **GroupBy**：见 4.16。
 - **Linalg/Metric**：见 4.17/4.18。
 - 快速设置器 `_fast_set_cell`（`:310`）、列构造 `_column_from_list_impl`（`:397`）、astype 解析 `_astype_impl`（`:2041`）。

@@ -1562,8 +1562,12 @@ def test_series_row_2d():
     check('sr2d exp flat', [ex[i] for i in range(8)] == [1.0, 3.0, 6.0, 10.0, 10.0, 30.0, 60.0, 100.0])
     ew = df.ewm_mean('a2d', span=3)
     check('sr2d ewm shape', ew.cols == 2 and ew.rows == 4)
-    check('sr2d ewm sub0', abs(ew[0] - 0.5) < 1e-9 and abs(ew[1] - 1.25) < 1e-9)
-    check('sr2d ewm sub1', abs(ew[4] - 5.0) < 1e-9 and abs(ew[5] - 12.5) < 1e-9)
+    check('sr2d ewm sub0',
+          abs(ew[0] - 1.0) < 1e-9 and abs(ew[1] - 1.6666666666666667) < 1e-9 and
+          abs(ew[2] - 2.4285714285714284) < 1e-9 and abs(ew[3] - 3.2666666666666666) < 1e-9)
+    check('sr2d ewm sub1',
+          abs(ew[4] - 10.0) < 1e-9 and abs(ew[5] - 16.666666666666668) < 1e-9 and
+          abs(ew[6] - 24.285714285714285) < 1e-9 and abs(ew[7] - 32.666666666666664) < 1e-9)
 
     # apply axis='columns'：func 逐子列标量（n*c 个），输出保形
     o = df.apply(lambda v: v * 2)
@@ -2496,7 +2500,10 @@ def test_expanding_ewm():
     check('expanding_sum [2]', ex[2] == 6.0)
 
     ew = df.ewm_mean('a', span=3)
-    check('ewm_mean first', ew[0] == 0.5)
+    # 与 pandas ewm(span=3).mean() 数值一致：首值=原值，adjust=True
+    check('ewm_mean first', ew[0] == 1.0)
+    check('ewm_mean [1]', abs(ew[1] - 1.6666666666666667) < 1e-12)
+    check('ewm_mean [2]', abs(ew[2] - 2.4285714285714284) < 1e-12)
     check('ewm_mean is float', isinstance(ew[1], float))
 
 
@@ -2648,6 +2655,45 @@ def test_str_replace_count():
     check('replace count=1', f(1) == ['Xaa', 'bbb', 'Xbaba', 'bXba'])
     check('replace count=2', f(2) == ['XXa', 'bbb', 'XbXba', 'bXbX'])
     check('replace count=0', f(0) == ['aaa', 'bbb', 'ababa', 'baba'])
+
+    # 复制返回语义：对 UCS2 列执行 str.replace 不得原地污染原列
+    df = DataFrame({'s': str})
+    df.append_row(s='hello world')
+    s = df['s']
+    z = s.str.replace('o', '0', 1)
+    check('replace copy result', z.tolist() == ['hell0 world'])
+    check('replace no-mutation', s.tolist() == ['hello world'])
+
+
+def test_expanding_ewm_nan_parity():
+    import math
+    # pandas expanding(min_periods=1).sum()：NaN 不参与累计，有效观测=0 时输出 NaN
+    df = DataFrame({'a': float})
+    df.append_row(a=float('nan'))
+    df.append_row(a=2.0)
+    df.append_row(a=float('nan'))
+    df.append_row(a=5.0)
+    ex = df.expanding_sum('a')
+    check('exp sum nan0', math.isnan(ex[0]))
+    check('exp sum nan1', ex[1] == 2.0)
+    check('exp sum nan2', ex[2] == 2.0)
+    check('exp sum nan3', ex[3] == 7.0)
+
+    # pandas ewm(span, ignore_na=False).mean()：NaN 传播旧均值（不参与加权更新）
+    ew = df.ewm_mean('a', span=3)
+    check('ewm nan0', math.isnan(ew[0]))
+    check('ewm nan1', ew[1] == 2.0)
+    check('ewm nan2', ew[2] == 2.0)
+    check('ewm nan3', abs(ew[3] - 4.4) < 1e-12)
+
+    d3 = DataFrame({'a': float})
+    d3.append_row(a=1.0)
+    d3.append_row(a=float('nan'))
+    d3.append_row(a=3.0)
+    ew3 = d3.ewm_mean('a', span=3)
+    check('ewm 1,nan,3 [0]', ew3[0] == 1.0)
+    check('ewm 1,nan,3 [1]', ew3[1] == 1.0)
+    check('ewm 1,nan,3 [2]', abs(ew3[2] - 2.6) < 1e-12)
 
 
 def test_read_json():
@@ -2920,6 +2966,7 @@ def run_all():
     test_pivot()
     test_melt()
     test_expanding_ewm()
+    test_expanding_ewm_nan_parity()
     test_ewm_accessor()
     test_expanding_accessor()
     test_win_type()

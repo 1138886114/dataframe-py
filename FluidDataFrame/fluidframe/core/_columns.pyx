@@ -6696,28 +6696,11 @@ cdef class UCS2Column(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def replace(self, str old, str new, int count=-1):
+        cdef UCS2Column res = UCS2Column(self.capacity)
         cdef Py_ssize_t i, n = self.length
-        cdef Py_ssize_t total = 0
-        cdef Py_ssize_t pos = 0
-        cdef Py_ssize_t c
-        cdef str s
-        cdef list new_strs = [None] * n
         for i in range(n):
-            s = self._get_str(i).replace(old, new, count)
-            new_strs[i] = s
-            total += PyUnicode_GET_LENGTH(s)
-        if self.char_capacity < total:
-            self._reserve_chars(max(self.char_capacity * 2, total + 1024))
-        self.offsets_c[0] = 0
-        for i in range(n):
-            s = new_strs[i]
-            c = PyUnicode_GET_LENGTH(s)
-            if c > 0:
-                _copy_py_str_to_ucs2(s, self.chars_c + pos, c)
-            pos += c
-            self.offsets_c[i + 1] = pos
-        self.char_length = total
-        return self
+            res.append(self._get_str(i).replace(old, new, count))
+        return res
 
     cdef inline void _set_item(self, Py_ssize_t idx, str val):
         """Replace string at given index in-place. O(N) array shift."""

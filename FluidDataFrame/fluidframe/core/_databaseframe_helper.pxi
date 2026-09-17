@@ -2599,10 +2599,13 @@ cdef _melt_impl(DataFrame self, list id_vars=None, list value_vars=None, str var
     result._columns[value_name] = new_val
     return result
 
-cdef _expanding_sum_impl(DataFrame self, str col_name):
+cdef object _expanding_sum_impl(DataFrame self, str col_name):
+    """单列运行和：数值语义与 pandas `expanding(min_periods=1).sum()` 一致。
+    NaN 不参与累计（跳过），但计入 min_periods 的有效观测计数；
+    有效观测为 0 时输出 NaN；int 列也输出 double（仅 dtype 与 pandas 不同，数值一致）。"""
     cdef BaseColumn col = self._columns[col_name]
     cdef bint is2d
-    cdef Py_ssize_t c_out, r_out, total, j, base, i
+    cdef Py_ssize_t c_out, r_out, total, j, base, i, cnt
     _probe_shape(col, &is2d, &c_out, &r_out)
     total = col.length
 
@@ -2624,10 +2627,12 @@ cdef _expanding_sum_impl(DataFrame self, str col_name):
             for j in range(c_out):
                 base = j * r_out
                 acc = 0.0
+                cnt = 0
                 for i in range(r_out):
                     if not isnan(d_in[base + i]):
                         acc += d_in[base + i]
-                    d_out[base + i] = acc
+                        cnt += 1
+                    d_out[base + i] = acc if cnt > 0 else NAN
     elif col.dtype == TYPE_INT:
         i_in = (<IntColumn>col).data_c
         with nogil:
@@ -2638,48 +2643,8 @@ cdef _expanding_sum_impl(DataFrame self, str col_name):
                     acc += <double>i_in[base + i]
                     d_out[base + i] = acc
     else:
-        raise TypeError(f"Expanding sum not supported for {col.dtype}")
-    return res
-
-cdef _ewm_mean_impl(DataFrame self, str col_name, double span):
-    cdef BaseColumn col = self._columns[col_name]
-    cdef bint is2d
-    cdef Py_ssize_t c_out, r_out, total, j, base, i
-    _probe_shape(col, &is2d, &c_out, &r_out)
-    total = col.length
-
-    cdef DoubleColumn res = DoubleColumn(max(total, 1), cols=c_out)
-    res.length = total
-    if is2d:
-        res.num_cols = <int>c_out
-        res.is_2d = True
-        res.owns_data = True
-
-    cdef double alpha = 2.0 / (span + 1.0)
-    cdef double acc
-    cdef double* d_out = res.data_c
-    cdef double* d_in
-    cdef int* i_in
-
-    if col.dtype == TYPE_DOUBLE:
-        d_in = (<DoubleColumn>col).data_c
-        with nogil:
-            for j in range(c_out):
-                base = j * r_out
-                acc = 0.0
-                for i in range(r_out):
-                    if not isnan(d_in[base + i]):
-                        acc = acc * (1.0 - alpha) + d_in[base + i] * alpha
-                    d_out[base + i] = acc
-    elif col.dtype == TYPE_INT:
-        i_in = (<IntColumn>col).data_c
-        with nogil:
-            for j in range(c_out):
-                base = j * r_out
-                acc = 0.0
-                for i in range(r_out):
-                    acc = acc * (1.0 - alpha) + <double>i_in[base + i] * alpha
-                    d_out[base + i] = acc
+        type_name = _TYPE_NAMES.get(col.dtype, 'unknown')
+        raise TypeError(f"Expanding sum is not supported for {type_name} columns")
     return res
 
 

@@ -4920,12 +4920,30 @@ cdef class DataFrame:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def expanding_sum(self, str col_name):
+        """单列运行和：数值语义与 pandas `expanding(min_periods=1).sum()` 一致
+        （NaN 跳过累计，有效观测为 0 时输出 NaN）。"""
+        cdef BaseColumn col = self._columns[col_name]
+        if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+            type_name = _TYPE_NAMES.get(col.dtype, 'unknown')
+            raise TypeError(f"Expanding sum is not supported for {type_name} columns")
         return _wrap_series(col_name, _expanding_sum_impl(self, col_name), self.index)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def ewm_mean(self, str col_name, double span):
-        return _wrap_series(col_name, _ewm_mean_impl(self, col_name, span), self.index)
+        """单列 EWMA 均值：数值语义与 pandas `ewm(span=span).mean()` 一致
+        （adjust=True, min_periods=0，首值等于原值）。"""
+        cdef BaseColumn col = self._columns[col_name]
+        cdef DoubleColumn res
+        cdef double alpha = 2.0 / (span + 1.0)
+        if col.dtype == TYPE_INT:
+            res = (<IntColumn>col).ewm_mean(alpha, 0, True, False)
+        elif col.dtype == TYPE_DOUBLE:
+            res = (<DoubleColumn>col).ewm_mean(alpha, 0, True, False)
+        else:
+            type_name = _TYPE_NAMES.get(col.dtype, 'unknown')
+            raise TypeError(f"EWM mean is not supported for {type_name} columns")
+        return _wrap_series(col_name, res, self.index)
 
 
 # Python-callable wrapper for _column_from_list_impl

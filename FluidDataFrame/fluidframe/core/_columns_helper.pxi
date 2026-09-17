@@ -1365,15 +1365,15 @@ cdef inline void _n_ewm(numeric_t* src, double* dst, Py_ssize_t c, Py_ssize_t r,
         for col_idx in range(c):
             offset = col_idx * r
             weighted = <double>src[offset]
-            is_observation = weighted == weighted
+            is_observation = not isnan(weighted)
             nobs = is_observation
             dst[offset] = weighted if nobs >= minp else NAN
             old_wt = 1.0
             for i in range(1, r):
                 cur = <double>src[offset + i]
-                is_observation = cur == cur
+                is_observation = not isnan(cur)
                 nobs += is_observation
-                if weighted == weighted:
+                if not isnan(weighted):
                     if is_observation or not ignore_na:
                         if normalize:
                             old_wt *= old_wt_factor
@@ -1416,7 +1416,7 @@ cdef inline void _n_ewmcov(numeric_t* x, numeric_t* y, double* dst, Py_ssize_t c
             offset = col_idx * r
             mean_x = <double>x[offset]
             mean_y = <double>y[offset]
-            is_observation = (mean_x == mean_x) and (mean_y == mean_y)
+            is_observation = (not isnan(mean_x)) and (not isnan(mean_y))
             nobs = is_observation
             if not is_observation:
                 mean_x = NAN
@@ -1429,9 +1429,9 @@ cdef inline void _n_ewmcov(numeric_t* x, numeric_t* y, double* dst, Py_ssize_t c
             for i in range(1, r):
                 cur_x = <double>x[offset + i]
                 cur_y = <double>y[offset + i]
-                is_observation = (cur_x == cur_x) and (cur_y == cur_y)
+                is_observation = (not isnan(cur_x)) and (not isnan(cur_y))
                 nobs += is_observation
-                if mean_x == mean_x:
+                if not isnan(mean_x):
                     if is_observation or not ignore_na:
                         sum_wt *= old_wt_factor
                         sum_wt2 *= (old_wt_factor * old_wt_factor)
