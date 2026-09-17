@@ -27,7 +27,7 @@ from fluidframe.core._columns cimport (
     _col_drop_row, _col_gather, _col_gather_zero, _col_gather_nan,
     _col_shift_right_2d_double, _col_shift_right_2d_int, _col_shift_left_2d,
     _col_concat_2d, _col_gather_2d_zero, _col_gather_2d_nan,
-    _col_count_nonzeros, _col_memcpy, _col_abs, _col_round,
+    _col_count_nonzeros, _col_memcpy, _col_abs, _col_round, _cmp_double_asc,
     _col_ffill_double, _col_bfill_double, _c_max, _c_min, _c_sum, _c_prod,
     _c_idxmax, _c_idxmin, _c_var, _c_mad,
     IntColumn, DoubleColumn, AsciiColumn, UCS2Column, DateColumn, BoolColumn,

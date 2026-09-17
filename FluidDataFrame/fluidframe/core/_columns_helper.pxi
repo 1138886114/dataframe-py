@@ -1150,9 +1150,11 @@ cdef inline void _n_roll_min(numeric_t* src, numeric_t* dst, Py_ssize_t c,
                              Py_ssize_t r, Py_ssize_t window,
                              Py_ssize_t min_periods, bint center) noexcept nogil:
     """滚动最小值。int 列无效位填 INT_MAX 哨兵，double 列填 NAN（保持列契约）。
-    O(N) 单调队列（右对齐）/ O(N*W) 逐窗重扫（居中，因需预见未来元素）。"""
-    cdef Py_ssize_t col_idx, offset, i, j, lo, hi, n, head, tail
+    O(N) 单调队列（右对齐）/ O(N*W) 逐窗重扫（居中，因需预见未来元素）。
+    NaN 策略：跳过 NaN 不入队列，窗口内有效值不足 min_periods 时输出 fill。"""
+    cdef Py_ssize_t col_idx, offset, i, j, lo, hi, n, head, tail, valid_cnt
     cdef numeric_t fill, best
+    cdef bint best_valid
     if numeric_t is int:
         fill = 2147483647
     else:
@@ -1170,9 +1172,10 @@ cdef inline void _n_roll_min(numeric_t* src, numeric_t* dst, Py_ssize_t c,
                         if lo < 0: lo = 0
                         while head < tail and q[head] < lo:
                             head += 1
-                        while head < tail and src[offset + q[tail - 1]] >= src[offset + i]:
-                            tail -= 1
-                        q[tail] = i; tail += 1
+                        if not (numeric_t is double and _double_is_nan(src[offset + i])):
+                            while head < tail and src[offset + q[tail - 1]] >= src[offset + i]:
+                                tail -= 1
+                            q[tail] = i; tail += 1
                         n = i - lo + 1
                         if n >= min_periods:
                             dst[offset + i] = src[offset + q[head]]
@@ -1185,11 +1188,26 @@ cdef inline void _n_roll_min(numeric_t* src, numeric_t* dst, Py_ssize_t c,
                         _roll_win_bounds(i, r, window, 1, &lo, &hi)
                         n = hi - lo + 1
                         if n >= min_periods:
-                            best = src[offset + lo]
-                            for j in range(lo + 1, hi + 1):
-                                if src[offset + j] < best:
-                                    best = src[offset + j]
-                            dst[offset + i] = best
+                            best_valid = False
+                            if numeric_t is double:
+                                valid_cnt = 0
+                                best = fill
+                                for j in range(lo, hi + 1):
+                                    if not _double_is_nan(src[offset + j]):
+                                        valid_cnt += 1
+                                        if not best_valid or src[offset + j] < best:
+                                            best = src[offset + j]
+                                            best_valid = True
+                                if valid_cnt >= min_periods:
+                                    dst[offset + i] = best
+                                else:
+                                    dst[offset + i] = fill
+                            else:
+                                best = src[offset + lo]
+                                for j in range(lo + 1, hi + 1):
+                                    if src[offset + j] < best:
+                                        best = src[offset + j]
+                                dst[offset + i] = best
                         else:
                             dst[offset + i] = fill
     finally:
@@ -1198,9 +1216,11 @@ cdef inline void _n_roll_min(numeric_t* src, numeric_t* dst, Py_ssize_t c,
 cdef inline void _n_roll_max(numeric_t* src, numeric_t* dst, Py_ssize_t c,
                              Py_ssize_t r, Py_ssize_t window,
                              Py_ssize_t min_periods, bint center) noexcept nogil:
-    """滚动最大值。int 列无效位填 INT_MIN 哨兵，double 列填 NAN。"""
-    cdef Py_ssize_t col_idx, offset, i, j, lo, hi, n, head, tail
+    """滚动最大值。int 列无效位填 INT_MIN 哨兵，double 列填 NAN。
+    NaN 策略：跳过 NaN 不入队列，窗口内有效值不足 min_periods 时输出 fill。"""
+    cdef Py_ssize_t col_idx, offset, i, j, lo, hi, n, head, tail, valid_cnt
     cdef numeric_t fill, best
+    cdef bint best_valid
     if numeric_t is int:
         fill = -2147483647 - 1
     else:
@@ -1218,9 +1238,10 @@ cdef inline void _n_roll_max(numeric_t* src, numeric_t* dst, Py_ssize_t c,
                         if lo < 0: lo = 0
                         while head < tail and q[head] < lo:
                             head += 1
-                        while head < tail and src[offset + q[tail - 1]] <= src[offset + i]:
-                            tail -= 1
-                        q[tail] = i; tail += 1
+                        if not (numeric_t is double and _double_is_nan(src[offset + i])):
+                            while head < tail and src[offset + q[tail - 1]] <= src[offset + i]:
+                                tail -= 1
+                            q[tail] = i; tail += 1
                         n = i - lo + 1
                         if n >= min_periods:
                             dst[offset + i] = src[offset + q[head]]
@@ -1233,11 +1254,26 @@ cdef inline void _n_roll_max(numeric_t* src, numeric_t* dst, Py_ssize_t c,
                         _roll_win_bounds(i, r, window, 1, &lo, &hi)
                         n = hi - lo + 1
                         if n >= min_periods:
-                            best = src[offset + lo]
-                            for j in range(lo + 1, hi + 1):
-                                if src[offset + j] > best:
-                                    best = src[offset + j]
-                            dst[offset + i] = best
+                            best_valid = False
+                            if numeric_t is double:
+                                valid_cnt = 0
+                                best = fill
+                                for j in range(lo, hi + 1):
+                                    if not _double_is_nan(src[offset + j]):
+                                        valid_cnt += 1
+                                        if not best_valid or src[offset + j] > best:
+                                            best = src[offset + j]
+                                            best_valid = True
+                                if valid_cnt >= min_periods:
+                                    dst[offset + i] = best
+                                else:
+                                    dst[offset + i] = fill
+                            else:
+                                best = src[offset + lo]
+                                for j in range(lo + 1, hi + 1):
+                                    if src[offset + j] > best:
+                                        best = src[offset + j]
+                                dst[offset + i] = best
                         else:
                             dst[offset + i] = fill
     finally:

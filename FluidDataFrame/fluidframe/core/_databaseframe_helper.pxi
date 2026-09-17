@@ -3297,6 +3297,10 @@ cdef _describe_impl(DataFrame self, object percentiles):
                     s_mins.append(s_min)
                     s_maxs.append(s_max)
                     
+                    # Sort s_tmp for percentile calculation (NaN sorts to end via _cmp_double_asc)
+                    if valid_cnt > 1:
+                        qsort(s_tmp, <size_t>valid_cnt, sizeof(double), _cmp_double_asc)
+
                     # Calculate percentiles
                     pcts_dict = {}
                     for p in pcts_sorted:
@@ -5405,9 +5409,9 @@ cdef uint64_t _gb_hash_row(_ByColPtrs ptrs, Py_ssize_t row_idx) nogil:
                 val = (<uint64_t*>(&d_data[sub * stride + row_idx]))[0]
                 h = _gb_mix_hash(h, val)
         elif ptrs.types[col_idx] == TYPE_DATE:
-            t_data = <long long*>ptrs.data[col_idx]
+            i_data = <int*>ptrs.data[col_idx]
             for sub in range(n_sub):
-                h = _gb_mix_hash(h, <uint64_t>t_data[sub * stride + row_idx])
+                h = _gb_mix_hash(h, <uint64_t>i_data[sub * stride + row_idx])
         elif ptrs.types[col_idx] == TYPE_CHAR256:
             c_data = <char*>ptrs.data[col_idx]
             start = (<Py_ssize_t*>ptrs.offsets[col_idx])[row_idx]
@@ -5459,9 +5463,9 @@ cdef bint _gb_rows_equal(_ByColPtrs ptrs, Py_ssize_t row1, Py_ssize_t row2) noex
             for sub in range(n_sub):
                 if d_data[sub * stride + row1] != d_data[sub * stride + row2]: return False
         elif ptrs.types[col_idx] == TYPE_DATE:
-            t_data = <long long*>ptrs.data[col_idx]
+            i_data = <int*>ptrs.data[col_idx]
             for sub in range(n_sub):
-                if t_data[sub * stride + row1] != t_data[sub * stride + row2]: return False
+                if i_data[sub * stride + row1] != i_data[sub * stride + row2]: return False
         elif ptrs.types[col_idx] == TYPE_CHAR256:
             c_data = <char*>ptrs.data[col_idx]
             start1 = (<Py_ssize_t*>ptrs.offsets[col_idx])[row1]
