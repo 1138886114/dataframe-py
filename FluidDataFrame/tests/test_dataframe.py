@@ -2642,6 +2642,25 @@ def test_win_type():
     check('df win_type col b[4]', abs(dfw['b'][4] - 40.0) < 1e-12)
 
 
+def test_win_type_nan_parity():
+    import math
+    from fluidframe import DataFrame as FDF
+    data = [1.0, float('nan'), 3.0, 4.0]
+    s = FDF({'a': data})
+    g = s.rolling(3, win_type='triang', min_periods=1).mean()['a']
+    check('wt nan mean [0]', abs(g[0] - 1.0) < 1e-12)
+    check('wt nan mean [1]', abs(g[1] - 1.0) < 1e-12)
+    check('wt nan mean [2]', abs(g[2] - 2.0) < 1e-12)
+    check('wt nan mean [3]', abs(g[3] - 10.0 / 3.0) < 1e-12)
+    gv = s.rolling(3, win_type='triang', min_periods=1).var()['a']
+    check('wt nan var [2]', abs(gv[2] - 1.5) < 1e-12)
+    check('wt nan var [3]', abs(gv[3] - 0.375) < 1e-12)
+    check('wt nan var [0] nan', gv[0] != gv[0])
+    gs = s.rolling(3, win_type='triang', min_periods=1).sum()['a']
+    check('wt nan sum [3]', abs(gs[3] - 5.0) < 1e-12)
+    check('wt nan sum [0]', abs(gs[0] - 0.5) < 1e-12)
+
+
 def test_str_replace_count():
     def f(count):
         df = DataFrame({'s': str})
@@ -2970,6 +2989,7 @@ def run_all():
     test_ewm_accessor()
     test_expanding_accessor()
     test_win_type()
+    test_win_type_nan_parity()
     test_str_replace_count()
     test_read_json()
     test_merge_multicol()

@@ -171,12 +171,20 @@ cdef void* aligned_realloc(void* ptr, size_t old_size, size_t new_size, size_t a
 #  底层纯 C 数学/度量算子 (零分支与 SIMD 优化)
 # ============================================================
 
+cdef inline bint _double_is_nan(double v) noexcept nogil:
+    """位型 NaN 判定（-ffast-math 安全）：指数全1且尾数非0 才是 NaN；±Inf 不算。
+    性质：v!=v / x==x 等自比较会被 -ffast-math 折叠恒真，绝不能用于判 NaN。"""
+    cdef uint64_t bits
+    memcpy(&bits, &v, sizeof(double))
+    return (bits & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL and \
+           (bits & 0x000FFFFFFFFFFFFFULL) != 0
+
 cdef int _cmp_double(const void* a, const void* b) noexcept nogil:
     """提供给 qsort 和 bsearch 的严格全序比较函数，安全处理 NaN"""
     cdef double va = (<const double*>a)[0]
     cdef double vb = (<const double*>b)[0]
-    cdef bint anan = (va != va)
-    cdef bint bnan = (vb != vb)
+    cdef bint anan = _double_is_nan(va)
+    cdef bint bnan = _double_is_nan(vb)
     if anan and bnan: return 0
     if anan: return -1
     if bnan: return 1
@@ -188,8 +196,8 @@ cdef int _cmp_double_asc(const void* a, const void* b) noexcept nogil:
     """升序比较，用于 qsort (NaN 视为最大值，排最后)"""
     cdef double va = (<const double*>a)[0]
     cdef double vb = (<const double*>b)[0]
-    cdef bint anan = (va != va)
-    cdef bint bnan = (vb != vb)
+    cdef bint anan = _double_is_nan(va)
+    cdef bint bnan = _double_is_nan(vb)
     if anan and bnan: return 0
     if anan: return 1
     if bnan: return -1
@@ -1471,13 +1479,19 @@ cdef inline void _n_ewmcov(numeric_t* x, numeric_t* y, double* dst, Py_ssize_t c
 #  var/std：pandas West 循环对齐（绝对位置 p 权重 wbuf[p % win_n]）。
 #  计数只统计非 NaN 值；minp 默认窗口（调用侧已 clamp max(minp,1)）。
 # ============================================================
+cdef inline double _n_nan_mask(double v) noexcept nogil:
+    """NaN 位型检测的掩码形式（-ffast-math 下安全）：仅把真 NaN 判为缺失，±Inf 保留。
+    返回 1.0（有效）或 0.0（NaN）。"""
+    return 1.0 - <double>_double_is_nan(v)
+
 cdef inline void _n_roll_wmean_sum(numeric_t* src, double* dst, Py_ssize_t c, Py_ssize_t r,
                                    double* wbuf, Py_ssize_t win_n, Py_ssize_t minp,
                                    bint center, bint avg) noexcept nogil:
-    """加权滚动均值/求和（O(N·W) 逐窗直算）。avg=1 均值（除以非 NaN 权重和），avg=0 求和。
-    center：pandas 尾部补 offset 个 NaN 右对齐再截断的等价写法。"""
-    cdef Py_ssize_t col_idx, offset, j, k, left, lo, hi, p, nobs
-    cdef double s, sw, w, v
+    """加权滚动均值/求和（O(N·W) 直算）。avg=1 均值（除以非 NaN 权重和），avg=0 求和。
+    center：pandas 尾部补 offset 个 NaN 右对齐再截断的等价写法。
+    仅用权重和归一化设计数值恒正；NaN 经 _n_nan_mask 分支无关剔除（不拖累向量化）。"""
+    cdef Py_ssize_t col_idx, offset, j, k, left, lo, hi, p, wi
+    cdef double s, sw, w, v, m, nobs
     cdef Py_ssize_t pad = (win_n // 2) if center else 0
     with nogil:
         for col_idx in range(c):
@@ -1488,15 +1502,19 @@ cdef inline void _n_roll_wmean_sum(numeric_t* src, double* dst, Py_ssize_t c, Py
                 lo = left if left > 0 else 0
                 hi = k
                 if hi >= r: hi = r - 1
-                s = 0.0; sw = 0.0; nobs = 0
+                s = 0.0; sw = 0.0; nobs = 0.0
+                # 权重下标 p-left 连续递增：走行强度削减，避免逐元素减法
+                wi = lo - left
                 for p in range(lo, hi + 1):
                     v = <double>src[offset + p]
-                    if v == v:
-                        w = wbuf[p - left]
-                        s += w * v
-                        sw += w
-                        nobs += 1
-                if nobs < minp or sw == 0.0:
+                    m = _n_nan_mask(v)
+                    w = wbuf[wi]
+                    # 注意：NaN×0=NaN，故 v 必须经 select 换 0 而非乘掩码
+                    s += w * (v if m != 0.0 else 0.0)
+                    sw += w * m
+                    nobs += m
+                    wi += 1
+                if nobs < <double>minp or sw == 0.0:
                     dst[offset + j] = NAN
                 else:
                     dst[offset + j] = s if not avg else s / sw
@@ -1506,8 +1524,8 @@ cdef inline void _n_roll_wvar(numeric_t* src, double* dst, Py_ssize_t c, Py_ssiz
                               bint center, Py_ssize_t ddof) noexcept nogil:
     """加权滚动方差（pandas roll_weighted_var：绝对位置循环权重）。
     结果 = t*win_n/((win_n-ddof)*sum_w)；nobs<=ddof 或 nobs<minp → NAN。"""
-    cdef Py_ssize_t col_idx, offset, j, k, lo, hi, p, nobs, pass2
-    cdef double sw, swx, mean_w, t, w, v
+    cdef Py_ssize_t col_idx, offset, j, k, lo, hi, p, widx
+    cdef double sw, swx, mean_w, t, w, v, m, nobs
     cdef Py_ssize_t pad = (win_n // 2) if center else 0
     with nogil:
         for col_idx in range(c):
@@ -1518,24 +1536,32 @@ cdef inline void _n_roll_wvar(numeric_t* src, double* dst, Py_ssize_t c, Py_ssiz
                 if lo < 0: lo = 0
                 hi = k
                 if hi >= r: hi = r - 1
-                sw = 0.0; swx = 0.0; nobs = 0
+                sw = 0.0; swx = 0.0; nobs = 0.0
+                # 循环权重下标：p % win_n 改为走行下标强度削减（避免逐元素取模）
+                widx = lo % win_n
                 for p in range(lo, hi + 1):
                     v = <double>src[offset + p]
-                    if v == v:
-                        w = wbuf[p % win_n]
-                        sw += w
-                        swx += w * v
-                        nobs += 1
-                if nobs < minp or nobs <= ddof:
+                    m = _n_nan_mask(v)
+                    w = wbuf[widx]
+                    sw += w * m
+                    swx += w * (v if m != 0.0 else 0.0)
+                    nobs += m
+                    widx += 1
+                    if widx == win_n: widx = 0
+                if nobs < <double>minp or nobs <= <double>ddof:
                     dst[offset + j] = NAN
                     continue
                 mean_w = swx / sw
                 t = 0.0
+                widx = lo % win_n
                 for p in range(lo, hi + 1):
                     v = <double>src[offset + p]
-                    if v == v:
-                        w = wbuf[p % win_n]
-                        t += w * (v - mean_w) * (v - mean_w)
+                    m = _n_nan_mask(v)
+                    w = wbuf[widx]
+                    # NaN×0=NaN：二次项经 select 换 0
+                    t += w * ((v - mean_w) * (v - mean_w) if m != 0.0 else 0.0)
+                    widx += 1
+                    if widx == win_n: widx = 0
                 dst[offset + j] = t * <double>win_n / (<double>(win_n - ddof) * sw)
 
 cdef inline void _n_cumsum(numeric_t* src, numeric_t* dst, Py_ssize_t c,
