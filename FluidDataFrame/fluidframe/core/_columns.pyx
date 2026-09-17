@@ -1239,6 +1239,8 @@ cdef class IntColumn(BaseColumn):
         if isinstance(other, (IntColumn, DoubleColumn)): return self.add(other)
         return NotImplemented
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __radd__(self, object other): return self.__add__(other)
 
     @cython.always_allow_keywords(False)
@@ -1248,6 +1250,8 @@ cdef class IntColumn(BaseColumn):
         if isinstance(other, (IntColumn, DoubleColumn)): return self.sub(other)
         return NotImplemented
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __rsub__(self, object other):
         cdef Py_ssize_t n = self.length
         cdef IntColumn res
@@ -1274,6 +1278,8 @@ cdef class IntColumn(BaseColumn):
         if isinstance(other, (IntColumn, DoubleColumn)): return self.mul(other)
         return NotImplemented
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __rmul__(self, object other): return self.__mul__(other)
 
     @cython.always_allow_keywords(False)
@@ -1283,6 +1289,8 @@ cdef class IntColumn(BaseColumn):
         if isinstance(other, (IntColumn, DoubleColumn)): return self.div(other)
         return NotImplemented
 
+    @cython.always_allow_keywords(False)
+    @cython.binding(False)
     def __rtruediv__(self, object other):
         cdef Py_ssize_t n = self.length
         cdef DoubleColumn res
@@ -1930,6 +1938,12 @@ cdef class IntColumn(BaseColumn):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
         cdef Py_ssize_t c = self.cols
+        cdef bint is_2d_src = self.is_2d and c > 1
+        cdef bint target_supports_2d = target_type in (TYPE_INT, TYPE_DOUBLE, TYPE_DATE, TYPE_DATETIME, TYPE_TIME)
+        if is_2d_src and not target_supports_2d:
+            raise NotImplementedError(
+                f"Cannot astype 2D column ({c} sub-columns) to non-2D type {target}. "
+                f"Supported 2D targets: int, float, date, datetime, time.")
         cdef Py_ssize_t first_col_n = self.rows if c > 1 else n
         cdef Py_ssize_t safe_cap = max(n, 1)
         cdef Py_ssize_t first_col_cap = max(first_col_n, 1)
@@ -4288,6 +4302,12 @@ cdef class DoubleColumn(BaseColumn):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
         cdef Py_ssize_t c = self.num_cols
+        cdef bint is_2d_src = self.is_2d and c > 1
+        cdef bint target_supports_2d = target_type in (TYPE_INT, TYPE_DOUBLE, TYPE_DATE, TYPE_DATETIME, TYPE_TIME)
+        if is_2d_src and not target_supports_2d:
+            raise NotImplementedError(
+                f"Cannot astype 2D column ({c} sub-columns) to non-2D type {target}. "
+                f"Supported 2D targets: int, float, date, datetime, time.")
         cdef Py_ssize_t first_col_n = self._get_rows_c() if c > 1 else n
         cdef Py_ssize_t safe_cap = max(n, 1)
         cdef Py_ssize_t first_col_cap = max(first_col_n, 1)
@@ -8140,13 +8160,36 @@ cdef class DateColumn(BaseColumn):
     @cython.binding(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t ccols = self.num_cols
+        cdef DateColumn col
+        cdef Py_ssize_t i, j, base
+        cdef int32_t fill_val
+        cdef int32_t* col_ptr
+        cdef int32_t* self_ptr = <int32_t*>self.data_c
+        cdef int* mask_ptr = mask.data_c
+
+        if self.is_2d and ccols > 1:
+            if mask.length != r:
+                raise ValueError(f"Mask length {mask.length} must match column rows {r}")
+            col = DateColumn(max(n, 1), cols=ccols)
+            col.length = n
+            col_ptr = <int32_t*>col.data_c
+            fill_val = self._resolve_date(fill)
+            with nogil:
+                for j in range(ccols):
+                    base = j * r
+                    for i in range(r):
+                        col_ptr[base + i] = self_ptr[base + i] if mask_ptr[i] != 0 else fill_val
+            return col
+
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
-        cdef DateColumn col = DateColumn(max(n, 1), cols=self.cols)
+        col = DateColumn(max(n, 1), cols=self.cols)
         col.length = n
         if n == 0: return col
 
-        cdef int32_t fill_val = self._resolve_date(fill)
+        fill_val = self._resolve_date(fill)
         with nogil:
             _n_where_mask(<int32_t*>col.data_c, <int32_t*>self.data_c,
                           mask.data_c, fill_val, n)
@@ -8744,6 +8787,12 @@ cdef class DateColumn(BaseColumn):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
         cdef Py_ssize_t c = self.cols
+        cdef bint is_2d_src = self.is_2d and c > 1
+        cdef bint target_supports_2d = target_type in (TYPE_INT, TYPE_DOUBLE, TYPE_DATE, TYPE_DATETIME, TYPE_TIME)
+        if is_2d_src and not target_supports_2d:
+            raise NotImplementedError(
+                f"Cannot astype 2D column ({c} sub-columns) to non-2D type {target}. "
+                f"Supported 2D targets: int, float, date, datetime, time.")
         cdef Py_ssize_t first_col_n = self.rows if c > 1 else n
         cdef Py_ssize_t safe_cap = max(n, 1)
         cdef Py_ssize_t first_col_cap = max(first_col_n, 1)
@@ -10075,14 +10124,37 @@ cdef class DateTimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t ccols = self.num_cols
+        cdef DateTimeColumn col
+        cdef Py_ssize_t i, j, base
+        cdef int64_t fill_val
+        cdef int64_t* col_ptr
+        cdef int64_t* self_ptr = <int64_t*>self.data_c
+        cdef int* mask_ptr = mask.data_c
+
+        if self.is_2d and ccols > 1:
+            if mask.length != r:
+                raise ValueError(f"Mask length {mask.length} must match column rows {r}")
+            col = DateTimeColumn(max(n, 1), cols=ccols)
+            col.length = n
+            col_ptr = <int64_t*>col.data_c
+            fill_val = self._resolve_dt(fill) if fill is not None else 0
+            with nogil:
+                for j in range(ccols):
+                    base = j * r
+                    for i in range(r):
+                        col_ptr[base + i] = self_ptr[base + i] if mask_ptr[i] != 0 else fill_val
+            return col
+
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
 
-        cdef DateTimeColumn col = DateTimeColumn(max(n, 1), cols=self.cols)
+        col = DateTimeColumn(max(n, 1), cols=self.cols)
         col.length = n
         if n == 0: return col
 
-        cdef int64_t fill_val = self._resolve_dt(fill) if fill is not None else 0
+        fill_val = self._resolve_dt(fill) if fill is not None else 0
         with nogil:
             _n_where_mask(<int64_t*>col.data_c, <int64_t*>self.data_c,
                           mask.data_c, fill_val, n)
@@ -10093,8 +10165,6 @@ cdef class DateTimeColumn(BaseColumn):
     def isin(self, set values):
         cdef Py_ssize_t n = self.length
         cdef BoolColumn res = BoolColumn(max(n, 1))
-        res.num_cols = self.num_cols
-        res.is_2d = self.is_2d
         res.length = n
         if n == 0: return res
 
@@ -10297,6 +10367,12 @@ cdef class DateTimeColumn(BaseColumn):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
         cdef Py_ssize_t c = self.cols
+        cdef bint is_2d_src = self.is_2d and c > 1
+        cdef bint target_supports_2d = target_type in (TYPE_INT, TYPE_DOUBLE, TYPE_DATE, TYPE_DATETIME, TYPE_TIME)
+        if is_2d_src and not target_supports_2d:
+            raise NotImplementedError(
+                f"Cannot astype 2D column ({c} sub-columns) to non-2D type {target}. "
+                f"Supported 2D targets: int, float, date, datetime, time.")
         cdef Py_ssize_t first_col_n = self.rows if c > 1 else n
         cdef Py_ssize_t safe_cap = max(n, 1)
         cdef Py_ssize_t first_col_cap = max(first_col_n, 1)
@@ -10687,13 +10763,36 @@ cdef class TimeColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def where_mask(self, IntColumn mask, object fill):
         cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t r = self._get_rows_c()
+        cdef Py_ssize_t ccols = self.num_cols
+        cdef TimeColumn col
+        cdef Py_ssize_t i, j, base
+        cdef int32_t fill_val
+        cdef int32_t* col_ptr
+        cdef int32_t* self_ptr = self.data_c
+        cdef int* mask_ptr = mask.data_c
+
+        if self.is_2d and ccols > 1:
+            if mask.length != r:
+                raise ValueError(f"Mask length {mask.length} must match column rows {r}")
+            col = TimeColumn(max(n, 1), cols=ccols)
+            col.length = n
+            col_ptr = col.data_c
+            fill_val = self._resolve_time(fill) if fill is not None else 0
+            with nogil:
+                for j in range(ccols):
+                    base = j * r
+                    for i in range(r):
+                        col_ptr[base + i] = self_ptr[base + i] if mask_ptr[i] != 0 else fill_val
+            return col
+
         if mask.length != n:
             raise ValueError(f"Mask length {mask.length} != column length {n}")
-        cdef TimeColumn col = TimeColumn(max(n, 1), cols=self.cols)
+        col = TimeColumn(max(n, 1), cols=self.cols)
         col.length = n
         if n == 0: return col
 
-        cdef int32_t fill_val = self._resolve_time(fill) if fill is not None else 0
+        fill_val = self._resolve_time(fill) if fill is not None else 0
         with nogil:
             _n_where_mask(col.data_c, self.data_c, mask.data_c, fill_val, n)
         return col
@@ -10714,8 +10813,6 @@ cdef class TimeColumn(BaseColumn):
         cdef Py_ssize_t num_keys = len(parsed_vals)
         cdef Py_ssize_t n = self.length
         cdef BoolColumn res = BoolColumn(max(n, 1))
-        res.num_cols = self.num_cols
-        res.is_2d = self.is_2d
         res.length = n
         if n == 0:
             return res
@@ -10915,6 +11012,12 @@ cdef class TimeColumn(BaseColumn):
         cdef int target_type = _resolve_astype_target(target)
         cdef Py_ssize_t i, n = self.length
         cdef Py_ssize_t c = self.cols
+        cdef bint is_2d_src = self.is_2d and c > 1
+        cdef bint target_supports_2d = target_type in (TYPE_INT, TYPE_DOUBLE, TYPE_DATE, TYPE_DATETIME, TYPE_TIME)
+        if is_2d_src and not target_supports_2d:
+            raise NotImplementedError(
+                f"Cannot astype 2D column ({c} sub-columns) to non-2D type {target}. "
+                f"Supported 2D targets: int, float, date, datetime, time.")
         cdef Py_ssize_t first_col_n = self.rows if c > 1 else n
         cdef Py_ssize_t safe_cap = max(n, 1)
         cdef Py_ssize_t first_col_cap = max(first_col_n, 1)

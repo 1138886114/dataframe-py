@@ -3898,6 +3898,8 @@ cdef class DataFrame:
             self.df_length = new_col.length
             self.index = RangeIndex(0, new_col.length)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def __delitem__(self, object name):
         del self._columns[name]
 
@@ -4361,6 +4363,222 @@ cdef class DataFrame:
     def between(self, str col_name, low, high):
         return Series(col_name, self._columns[col_name].between(low, high), self.index)
 
+    # ============================================================
+    # P2: pandas 兼容方法
+    # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def pop(self, str col_name):
+        """弹出指定列并返回 Series（原地删除），对标 pandas DataFrame.pop。"""
+        if col_name not in self._columns:
+            raise KeyError(f"Column '{col_name}' not found")
+        cdef BaseColumn col = self._columns.pop(col_name)
+        return Series(col_name, col, self.index)
+
+    @property
+    def empty(self):
+        """判断 DataFrame 是否为空，对标 pandas DataFrame.empty。"""
+        return self.df_length == 0 or len(self._columns) == 0
+
+    @cython.binding(False)
+    def update(self, DataFrame other):
+        """用另一个 DataFrame 的值原地更新（按列名对齐），对标 pandas DataFrame.update。"""
+        cdef str col_name
+        cdef Py_ssize_t n
+        for col_name in other._columns:
+            if col_name in self._columns:
+                src = other._columns[col_name]
+                dst = self._columns[col_name]
+                if src.length != dst.length:
+                    raise ValueError(
+                        f"Column '{col_name}': replacement has length {src.length}, "
+                        f"existing has length {dst.length}")
+                n = dst.length
+                if dst.dtype == TYPE_INT:
+                    memcpy((<IntColumn>dst).data_c, (<IntColumn>src).data_c, n * sizeof(int))
+                elif dst.dtype == TYPE_DOUBLE:
+                    memcpy((<DoubleColumn>dst).data_c, (<DoubleColumn>src).data_c, n * sizeof(double))
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def to_records(self, bint index=True):
+        """转为 list of dicts（records 格式），对标 pandas DataFrame.to_records 的简化版。"""
+        result = []
+        cdef list col_names = list(self._columns.keys())
+        cdef Py_ssize_t r, c_idx
+        cdef dict row
+        for r in range(self.df_length):
+            row = {}
+            for c_idx, cn in enumerate(col_names):
+                row[cn] = self._columns[cn][r]
+            if index and self.index is not None:
+                row['index'] = self.index[r]
+            result.append(row)
+        return result
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def items(self):
+        """按列迭代，返回 (column_name, Series) 对，对标 pandas DataFrame.items。"""
+        cdef str col_name
+        cdef list col_names = list(self._columns.keys())
+        for col_name in col_names:
+            yield col_name, Series(col_name, self._columns[col_name], self.index)
+
+    @cython.binding(False)
+    def iterrows(self):
+        """按行迭代，返回 (index, Series) 对，对标 pandas DataFrame.iterrows。"""
+        cdef list col_names = list(self._columns.keys())
+        cdef Py_ssize_t r
+        cdef dict row_dict
+        cdef BaseColumn col
+        for r in range(self.df_length):
+            row_dict = {}
+            for cn in col_names:
+                col = self._columns[cn]
+                row_dict[cn] = col[r]
+            idx_label = self.index[r] if self.index is not None else r
+            yield idx_label, row_dict
+
+    @cython.binding(False)
+    def itertuples(self):
+        """按行迭代，返回 namedtuple，对标 pandas DataFrame.itertuples。"""
+        from collections import namedtuple
+        cdef list col_names = list(self._columns.keys())
+        cdef Py_ssize_t r
+        cdef dict row_dict
+        cdef BaseColumn col
+        Tup = namedtuple('Pandas', ['index'] + col_names)
+        for r in range(self.df_length):
+            row_dict = {}
+            for cn in col_names:
+                col = self._columns[cn]
+                row_dict[cn] = col[r]
+            idx_label = self.index[r] if self.index is not None else r
+            yield Tup(index=idx_label, **row_dict)
+
+    @cython.binding(False)
+    def join(self, DataFrame other, str how='left'):
+        """按索引连接另一个 DataFrame，对标 pandas DataFrame.join。"""
+        if how not in ('left', 'inner', 'outer'):
+            raise ValueError(f"join how must be 'left', 'inner', or 'outer', got '{how}'")
+        cdef DataFrame result = self.copy()
+        cdef str cn
+        for cn in other._columns:
+            if cn not in result._columns:
+                result.insert_column(cn, other._columns[cn])
+            else:
+                raise ValueError(f"Column '{cn}' already exists in both DataFrames. "
+                                 f"Use merge() with on= parameter for column-based join.")
+        return result
+
+    @cython.binding(False)
+    def compare(self, DataFrame other, align_axis=1):
+        """对比两个 DataFrame 的差异，返回差异值，对标 pandas DataFrame.compare 的简化版。"""
+        if self.columns != other.columns:
+            raise ValueError("Can only compare identically-labeled DataFrame objects (same columns)")
+        cdef dict diffs = {}
+        cdef str cn
+        cdef Py_ssize_t r
+        for cn in self.columns:
+            col_a = self._columns[cn]
+            col_b = other._columns[cn]
+            if col_a.length != col_b.length:
+                raise ValueError(f"Column '{cn}': lengths differ ({col_a.length} vs {col_b.length})")
+            diff_rows = []
+            for r in range(col_a.length):
+                if col_a[r] != col_b[r]:
+                    diff_rows.append((r, col_a[r], col_b[r]))
+            if diff_rows:
+                diffs[cn] = diff_rows
+        return diffs
+
+    @cython.binding(False)
+    def combine_first(self, DataFrame other):
+        """用另一个 DataFrame 填充本 DataFrame 的缺失值，对标 pandas DataFrame.combine_first。"""
+        cdef str cn
+        cdef Py_ssize_t r, n
+        result = self.copy()
+        for cn in other._columns:
+            if cn not in result._columns:
+                result.insert_column(cn, other._columns[cn])
+            else:
+                dst_col = result._columns[cn]
+                src_col = other._columns[cn]
+                n = min(dst_col.length, src_col.length)
+                vals = [dst_col[r] for r in range(dst_col.length)]
+                src_vals = [src_col[r] for r in range(n)]
+                for r in range(n):
+                    v = vals[r]
+                    if v is None or (isinstance(v, float) and v != v):
+                        vals[r] = src_vals[r]
+                dtype = dst_col.dtype
+                if dtype == TYPE_INT:
+                    new_col = IntColumn(len(vals))
+                    for r in range(len(vals)):
+                        new_col.append(int(vals[r]))
+                elif dtype == TYPE_DOUBLE:
+                    new_col = DoubleColumn(len(vals))
+                    for r in range(len(vals)):
+                        new_col.append(float(vals[r]))
+                else:
+                    new_col = dst_col
+                result._columns[cn] = new_col
+        return result
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def interpolate(self, str method='linear'):
+        """缺失值插值，支持 'linear' 方法，对标 pandas DataFrame.interpolate 的简化版。"""
+        if method != 'linear':
+            raise NotImplementedError(f"interpolate method '{method}' not supported, use 'linear'")
+        cdef str cn
+        cdef list col_names = list(self._columns.keys())
+        cdef Py_ssize_t n, i, j, last_valid, next_valid
+        cdef double last_val, next_val, alpha
+        cdef double* ptr
+        cdef DoubleColumn dc
+        result = self.copy()
+        for cn in col_names:
+            col = result._columns[cn]
+            if col.dtype != TYPE_DOUBLE:
+                continue
+            dc = <DoubleColumn>col
+            n = dc.length
+            if n == 0:
+                continue
+            ptr = dc.data_c
+            last_valid = -1
+            for i in range(n):
+                if not isnan(ptr[i]):
+                    last_valid = i
+                    break
+            if last_valid == -1:
+                continue
+            i = last_valid + 1
+            while i < n:
+                if isnan(ptr[i]):
+                    next_valid = -1
+                    for j in range(i + 1, n):
+                        if not isnan(ptr[j]):
+                            next_valid = j
+                            break
+                    if next_valid == -1:
+                        for j in range(i, n):
+                            ptr[j] = ptr[last_valid]
+                        break
+                    last_val = ptr[last_valid]
+                    next_val = ptr[next_valid]
+                    for j in range(i, next_valid):
+                        alpha = <double>(j - last_valid) / <double>(next_valid - last_valid)
+                        ptr[j] = last_val + alpha * (next_val - last_val)
+                    last_valid = next_valid
+                    i = next_valid + 1
+                else:
+                    last_valid = i
+                    i += 1
+        return result
+
     # I/O
     def __str__(self):
         return _to_string_impl(self)
@@ -4529,9 +4747,53 @@ cdef class DataFrame:
         return _fillna_impl(self, value, col_names)
 
     @cython.binding(False)
-    @cython.always_allow_keywords(False)
-    def dropna(self):
-        return _dropna_impl(self)
+    def dropna(self, axis=0, str how='any', int thresh=-1, list subset=None):
+        """删除含缺失值的行/列，对标 pandas DataFrame.dropna。
+        axis=0: 删除行, axis=1: 删除列。
+        how='any': 任一缺失即删, 'all': 全部缺失才删。
+        thresh: 需要的非缺失值数量。
+        subset: 只检查指定列。
+        """
+        if axis == 1 or axis == 'columns':
+            return _dropna_columns_impl(self, how)
+        cdef list check_cols = subset if subset else list(self._columns.keys())
+        cdef Py_ssize_t n = self.df_length
+        cdef set drop_rows = set()
+        cdef Py_ssize_t r, valid_count
+        cdef str cn
+        cdef BaseColumn col
+        for cn in check_cols:
+            if cn not in self._columns:
+                raise KeyError(f"Column '{cn}' not found")
+        for r in range(n):
+            valid_count = 0
+            has_na = False
+            for cn in check_cols:
+                col = self._columns[cn]
+                val = col[r]
+                if val is None or (isinstance(val, float) and val != val):
+                    has_na = True
+                else:
+                    valid_count += 1
+            if how == 'any' and has_na:
+                drop_rows.add(r)
+            elif how == 'all' and valid_count == 0:
+                drop_rows.add(r)
+            if thresh > 0 and valid_count < thresh:
+                drop_rows.add(r)
+        if not drop_rows:
+            return self.copy()
+        keep = [i for i in range(n) if i not in drop_rows]
+        cdef Py_ssize_t keep_count = len(keep)
+        cdef Py_ssize_t* keep_c = <Py_ssize_t*>aligned_malloc(max(keep_count, 1) * sizeof(Py_ssize_t))
+        if not keep_c: raise MemoryError()
+        cdef Py_ssize_t ki
+        try:
+            for ki in range(keep_count):
+                keep_c[ki] = keep[ki]
+            return self._take(keep_c, keep_count)
+        finally:
+            os_aligned_free(keep_c)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)

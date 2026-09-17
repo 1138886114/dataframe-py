@@ -1921,6 +1921,50 @@ cdef _dropna_impl(DataFrame self):
         if keep_mask: os_aligned_free(keep_mask)
         if keep_idx: os_aligned_free(keep_idx)
 
+
+cdef DataFrame _reindex_rows(DataFrame self, list keep_rows):
+    """按行索引列表重排行，返回新的 DataFrame。"""
+    cdef Py_ssize_t n = len(keep_rows)
+    if n == 0:
+        return DataFrame()
+    cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
+    if not idx_c: raise MemoryError()
+    cdef Py_ssize_t i
+    try:
+        for i in range(n):
+            idx_c[i] = <Py_ssize_t>keep_rows[i]
+        return self._take(idx_c, n)
+    finally:
+        os_aligned_free(idx_c)
+
+
+cdef DataFrame _dropna_columns_impl(DataFrame self, str how):
+    """删除包含缺失值的列。"""
+    cdef list drop_cols = []
+    cdef str cn
+    cdef BaseColumn col
+    cdef Py_ssize_t r, n = self.df_length
+    cdef bint has_na, all_na
+    cdef double* d_data
+    for cn, col in self._columns.items():
+        if col.dtype == TYPE_DOUBLE:
+            d_data = (<DoubleColumn>col).data_c
+            has_na = False
+            all_na = True
+            for r in range(n):
+                if isnan(d_data[r]):
+                    has_na = True
+                else:
+                    all_na = False
+            if how == 'any' and has_na:
+                drop_cols.append(cn)
+            elif how == 'all' and all_na:
+                drop_cols.append(cn)
+    result = self.copy()
+    for cn in drop_cols:
+        del result._columns[cn]
+    return result
+
 cdef _head_impl(DataFrame self, Py_ssize_t n):
     if n < 0: raise ValueError("n must be non-negative")
     n = min(n, self.df_length)
