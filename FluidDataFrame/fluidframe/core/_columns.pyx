@@ -8,7 +8,7 @@
 cimport cython
 from libc.stdint cimport int8_t, int32_t, int64_t, uint32_t, uint64_t
 from libc.string cimport memcpy, memmove, memset, strstr, strlen, strncmp, strcmp, memcmp
-from libc.math cimport sqrt, fabs, NAN, fmax
+from libc.math cimport sqrt, fabs, NAN, fmax, isnan
 from libc.stdio cimport snprintf
 from libc.stdlib cimport malloc, free, qsort, bsearch
 from cpython.unicode cimport (
@@ -940,9 +940,13 @@ cdef class IntColumn(BaseColumn):
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def count(self):
-        if not self.is_2d or self.num_cols <= 1:
-            return self.length
-        return self._get_rows_c()
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c()
+        if self.is_2d and c > 1:
+            result = []
+            for j in range(c):
+                result.append(r)
+            return result
+        return self.length
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -980,30 +984,35 @@ cdef class IntColumn(BaseColumn):
             }
 
         cdef object means = self.mean()
-        cdef object stds = self.std()
         cdef object mins = self.min()
         cdef object maxs = self.max()
         cdef object q25 = self.quantile(0.25)
         cdef object q50 = self.quantile(0.50)
         cdef object q75 = self.quantile(0.75)
 
-        cdef double total_mean = 0.0, total_std = 0.0
-        cdef double global_min = <double>mins[0], global_max = <double>maxs[0]
+        cdef double total_mean = 0.0, global_min = <double>mins[0], global_max = <double>maxs[0]
         cdef double global_q25 = q25[0], global_q50 = q50[0], global_q75 = q75[0]
-        cdef Py_ssize_t total_count = 0
+        cdef double combined_sum = 0.0, combined_sq_sum = 0.0, combined_mean, combined_var
+        cdef Py_ssize_t total_count = 0, j, k
+        cdef int* ptr = self.data_c
         for j in range(c):
             total_count += r
             total_mean += means[j]
-            total_std += stds[j]
+            combined_sum += means[j] * <double>r
+            for k in range(r):
+                combined_sq_sum += <double>ptr[j * r + k] * <double>ptr[j * r + k]
             if <double>mins[j] < global_min: global_min = <double>mins[j]
             if <double>maxs[j] > global_max: global_max = <double>maxs[j]
             if q25[j] < global_q25: global_q25 = q25[j]
             if q50[j] < global_q50: global_q50 = q50[j]
             if q75[j] < global_q75: global_q75 = q75[j]
+        combined_mean = combined_sum / <double>total_count
+        combined_var = combined_sq_sum / <double>total_count - combined_mean * combined_mean
+        if combined_var < 0.0: combined_var = 0.0
         return {
             "count": total_count,
             "mean": total_mean / <double>c,
-            "std": total_std / <double>c,
+            "std": sqrt(combined_var),
             "min": global_min,
             "25%": global_q25,
             "50%": global_q50,
@@ -2126,7 +2135,7 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t n = var_col.length, i
         with nogil:
             for i in range(n):
-                if v[i] == v[i]:  # Not NaN check
+                if not isnan(v[i]):
                     v[i] = sqrt(v[i])
         return var_col
 
@@ -2382,7 +2391,7 @@ cdef class IntColumn(BaseColumn):
         cdef Py_ssize_t n = var_col.length, i
         with nogil:
             for i in range(n):
-                if v[i] == v[i]:
+                if not isnan(v[i]):
                     v[i] = sqrt(v[i])
         return var_col
 
@@ -2453,7 +2462,7 @@ cdef class IntColumn(BaseColumn):
         with nogil:
             for i in range(total):
                 denom = sqrt(vx[i] * vy[i])
-                if cov_ptr[i] == cov_ptr[i] and denom == denom and denom != 0.0:
+                if not isnan(cov_ptr[i]) and not isnan(denom) and denom != 0.0:
                     cov_ptr[i] = cov_ptr[i] / denom
                 else:
                     cov_ptr[i] = NAN
@@ -2519,7 +2528,7 @@ cdef class IntColumn(BaseColumn):
             os_aligned_free(wbuf)
 
     cdef object _roll_win_var_buf(self, Py_ssize_t window, double* wbuf,
-                                  Py_ssize_t mp, bint center, bint ddof):
+                                   Py_ssize_t mp, bint center, bint ddof):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r == 0: return res
@@ -2527,13 +2536,13 @@ cdef class IntColumn(BaseColumn):
         return res
 
     cdef object _roll_win_std_buf(self, Py_ssize_t window, double* wbuf,
-                                  Py_ssize_t mp, bint center, bint ddof):
+                                   Py_ssize_t mp, bint center, bint ddof):
         cdef DoubleColumn var_col = self._roll_win_var_buf(window, wbuf, mp, center, ddof)
         cdef double* v = var_col.data_c
         cdef Py_ssize_t n = var_col.length, i
         with nogil:
             for i in range(n):
-                if v[i] == v[i]:
+                if not isnan(v[i]):
                     v[i] = sqrt(v[i])
         return var_col
 
@@ -3739,13 +3748,13 @@ cdef class DoubleColumn(BaseColumn):
                     for i in range(n): r_ptr[i] = (s_ptr[i] != o_ptr[i])
         else:
             v = <double>val
-            is_nan_val = (v != v)
+            is_nan_val = isnan(v)
             with nogil:
                 if is_nan_val:
                     if op == 4:
-                        for i in range(n): r_ptr[i] = (s_ptr[i] != s_ptr[i])
+                        for i in range(n): r_ptr[i] = isnan(s_ptr[i])
                     elif op == 5:
-                        for i in range(n): r_ptr[i] = (s_ptr[i] == s_ptr[i])
+                        for i in range(n): r_ptr[i] = not isnan(s_ptr[i])
                     else:
                         for i in range(n): r_ptr[i] = 0
                 else:
@@ -4343,13 +4352,13 @@ cdef class DoubleColumn(BaseColumn):
             bc.length = first_col_n
             with nogil:
                 for i in range(first_col_n):
-                    bc.data_c[i] = (d_ptr[i] != 0.0 and d_ptr[i] == d_ptr[i])
+                    bc.data_c[i] = (not isnan(d_ptr[i]) and d_ptr[i] != 0.0)
             return bc
 
         elif target_type == TYPE_UCS2:
             uc = UCS2Column(first_col_cap)
             for i in range(first_col_n):
-                if d_ptr[i] != d_ptr[i]:
+                if isnan(d_ptr[i]):
                     uc.append("null")
                 else:
                     sz = snprintf(buf, sizeof(buf), "%.6g", d_ptr[i])
@@ -4361,7 +4370,7 @@ cdef class DoubleColumn(BaseColumn):
             cc.length = first_col_n
             with nogil:
                 for i in range(first_col_n):
-                    if d_ptr[i] != d_ptr[i]:
+                    if isnan(d_ptr[i]):
                         sz = snprintf(cc.data_c + (i * 256), 256, "null")
                     else:
                         sz = snprintf(cc.data_c + (i * 256), 256, "%.6g", d_ptr[i])
@@ -4386,7 +4395,7 @@ cdef class DoubleColumn(BaseColumn):
         elif target_type == TYPE_CATEGORY:
             catc = CategoryColumn(first_col_cap)
             for i in range(first_col_n):
-                if d_ptr[i] != d_ptr[i]:
+                if isnan(d_ptr[i]):
                     catc.append("null")
                 else:
                     sz = snprintf(buf, sizeof(buf), "%.6g", d_ptr[i])
@@ -4525,7 +4534,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef double* ptr = res.data_c
         with nogil:
             for i in range(n):
-                if ptr[i] == ptr[i]: # 非 NaN
+                if not isnan(ptr[i]):
                     ptr[i] = sqrt(ptr[i])
         return res
 
@@ -4796,7 +4805,7 @@ cdef class DoubleColumn(BaseColumn):
         cdef Py_ssize_t n = var_col.length, i
         with nogil:
             for i in range(n):
-                if v[i] == v[i]:
+                if not isnan(v[i]):
                     v[i] = sqrt(v[i])
         return var_col
 
@@ -4862,7 +4871,7 @@ cdef class DoubleColumn(BaseColumn):
         with nogil:
             for i in range(total):
                 denom = sqrt(vx[i] * vy[i])
-                if cov_ptr[i] == cov_ptr[i] and denom == denom and denom != 0.0:
+                if not isnan(cov_ptr[i]) and not isnan(denom) and denom != 0.0:
                     cov_ptr[i] = cov_ptr[i] / denom
                 else:
                     cov_ptr[i] = NAN
@@ -4931,7 +4940,7 @@ cdef class DoubleColumn(BaseColumn):
             os_aligned_free(wbuf)
 
     cdef object _roll_win_var_buf(self, Py_ssize_t window, double* wbuf,
-                                  Py_ssize_t mp, bint center, bint ddof):
+                                   Py_ssize_t mp, bint center, bint ddof):
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan()
         if r == 0: return res
@@ -4939,13 +4948,13 @@ cdef class DoubleColumn(BaseColumn):
         return res
 
     cdef object _roll_win_std_buf(self, Py_ssize_t window, double* wbuf,
-                                  Py_ssize_t mp, bint center, bint ddof):
+                                   Py_ssize_t mp, bint center, bint ddof):
         cdef DoubleColumn var_col = self._roll_win_var_buf(window, wbuf, mp, center, ddof)
         cdef double* v = var_col.data_c
         cdef Py_ssize_t n = var_col.length, i
         with nogil:
             for i in range(n):
-                if v[i] == v[i]:
+                if not isnan(v[i]):
                     v[i] = sqrt(v[i])
         return var_col
 

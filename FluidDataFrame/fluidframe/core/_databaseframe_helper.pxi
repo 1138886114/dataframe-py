@@ -658,7 +658,8 @@ cdef _eval_impl(DataFrame self, str expr, bint inplace):
 
     if "=" in expr:
         parts = expr.split("=", 1)
-        if not parts[0].strip().endswith(('>', '<', '!', '=')):
+        if (not parts[0].strip().endswith(('>', '<', '!', '=')) and
+                not parts[1].lstrip().startswith('=')):
             target_col = parts[0].strip()
             calc_expr = parts[1].strip()
             is_assignment = True
@@ -3325,7 +3326,9 @@ cdef _describe_impl(DataFrame self, object percentiles):
             if is2d and c_probe > 1:
                 stats[name] = {'count': r_probe, 'mean': s_means, 'std': s_stds,
                                'min': s_mins, 'max': s_maxs}
-                stats[name].update(s_meds[0])
+                pct_keys = list(s_meds[0].keys())
+                for pk in pct_keys:
+                    stats[name][pk] = [m[pk] for m in s_meds]
             else:
                 stats[name] = {'count': r_probe, 'mean': s_means[0], 'std': s_stds[0],
                                'min': s_mins[0], 'max': s_maxs[0]}

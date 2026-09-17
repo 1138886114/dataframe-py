@@ -4393,11 +4393,18 @@ cdef class DataFrame:
                     raise ValueError(
                         f"Column '{col_name}': replacement has length {src.length}, "
                         f"existing has length {dst.length}")
+                if src.dtype != dst.dtype:
+                    raise TypeError(
+                        f"Column '{col_name}': source dtype {src.dtype} != dest dtype {dst.dtype}")
                 n = dst.length
                 if dst.dtype == TYPE_INT:
                     memcpy((<IntColumn>dst).data_c, (<IntColumn>src).data_c, n * sizeof(int))
                 elif dst.dtype == TYPE_DOUBLE:
                     memcpy((<DoubleColumn>dst).data_c, (<DoubleColumn>src).data_c, n * sizeof(double))
+                else:
+                    raise NotImplementedError(
+                        f"update() not supported for column type {dst.dtype}. "
+                        f"Only INT and DOUBLE columns are supported.")
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -4521,6 +4528,34 @@ cdef class DataFrame:
                     new_col = DoubleColumn(len(vals))
                     for r in range(len(vals)):
                         new_col.append(float(vals[r]))
+                elif dtype == TYPE_CHAR256:
+                    new_col = AsciiColumn()
+                    for v in vals:
+                        new_col.append(str(v) if v is not None else '')
+                elif dtype == TYPE_UCS2:
+                    new_col = UCS2Column()
+                    for v in vals:
+                        new_col.append(str(v) if v is not None else '')
+                elif dtype == TYPE_DATE:
+                    new_col = DateColumn()
+                    for v in vals:
+                        new_col.append(v)
+                elif dtype == TYPE_BOOL:
+                    new_col = BoolColumn()
+                    for v in vals:
+                        new_col.append(v)
+                elif dtype == TYPE_CATEGORY:
+                    new_col = CategoryColumn()
+                    for v in vals:
+                        new_col.append(str(v) if v is not None else '')
+                elif dtype == TYPE_DATETIME:
+                    new_col = DateTimeColumn()
+                    for v in vals:
+                        new_col.append(v)
+                elif dtype == TYPE_TIME:
+                    new_col = TimeColumn()
+                    for v in vals:
+                        new_col.append(v)
                 else:
                     new_col = dst_col
                 result._columns[cn] = new_col
