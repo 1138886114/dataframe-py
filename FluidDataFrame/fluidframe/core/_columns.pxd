@@ -627,8 +627,12 @@ cdef class IntColumn(BaseColumn):
 
     cdef inline DoubleColumn _make_like_nan_dbl(self)
     cdef IntColumn _cmp_op(self, object val, int op)
-    cdef object _roll_win_sum_mean(self, Py_ssize_t window, object weights,
-                                   object min_periods, bint center, bint avg)
+    cdef object _roll_win_sum_mean(self, Py_ssize_t window, double* wbuf,
+                                   Py_ssize_t mp, bint center, bint avg)
+    cdef object _roll_win_var_buf(self, Py_ssize_t window, double* wbuf,
+                                  Py_ssize_t mp, bint center, bint ddof)
+    cdef object _roll_win_std_buf(self, Py_ssize_t window, double* wbuf,
+                                  Py_ssize_t mp, bint center, bint ddof)
 
 cdef int _cmp_double_asc(const void* a, const void* b) noexcept nogil
 
@@ -653,8 +657,12 @@ cdef class DoubleColumn(BaseColumn):
     cdef DoubleColumn create_view(double* ptr, Py_ssize_t length, object base_obj)
     cdef inline DoubleColumn _make_like_nan(self)
     cdef IntColumn _cmp_op(self, object val, int op)
-    cdef object _roll_win_sum_mean(self, Py_ssize_t window, object weights,
-                                   object min_periods, bint center, bint avg)
+    cdef object _roll_win_sum_mean(self, Py_ssize_t window, double* wbuf,
+                                   Py_ssize_t mp, bint center, bint avg)
+    cdef object _roll_win_var_buf(self, Py_ssize_t window, double* wbuf,
+                                  Py_ssize_t mp, bint center, bint ddof)
+    cdef object _roll_win_std_buf(self, Py_ssize_t window, double* wbuf,
+                                  Py_ssize_t mp, bint center, bint ddof)
 
 
 cdef bint _c_str_contains(const char* source, const char* target) noexcept nogil

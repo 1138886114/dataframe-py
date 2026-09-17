@@ -28,6 +28,12 @@ cdef enum _PairwiseOp:
     PW_HAMMING = 4
     PW_JACCARD = 5
 
+# win_type 加权滚动模式编号（当前仅 boxcar/triang；用枚举替代字符串比较）
+cdef enum _WinKind:
+    WIN_NONE = 0
+    WIN_BOXCAR = 1
+    WIN_TRIANG = 2
+
 cdef class IndexBase:
     cdef public Py_ssize_t length
     cdef public IndexType index_type
@@ -195,40 +201,41 @@ cdef class DataFrame:
 
 cdef class _RollingWindow:
     """滚动窗口访问器：df 模式回装整表 DataFrame，Series 模式回装 Series。"""
-    cdef public Py_ssize_t _window
-    cdef public object _min_periods
-    cdef public bint _center
-    cdef public bint _is_df
-    cdef public object _win_type       # None/boxcar/triang（加权模式）
-    cdef public object _weights        # win_type 对应权重列表（长度=window）
-    cdef public BaseColumn _col          # Series 模式
-    cdef public DataFrame _df            # DataFrame 模式
-    cdef public IndexBase _index
-    cdef public str _name
+    cdef Py_ssize_t _window
+    cdef object _min_periods
+    cdef bint _center
+    cdef bint _is_df
+    cdef int _win_kind           # _WinKind 枚举（WIN_NONE/WIN_BOXCAR/WIN_TRIANG）
+    cdef bint _is_win            # 加权模式标志（_win_kind != WIN_NONE）
+    cdef Py_ssize_t _mp          # win_type 模式缓存的解析后 min_periods
+    cdef double* _wbuf           # win_type 对应权重 C 缓冲（cinit 分配，__dealloc__ 释放）
+    cdef BaseColumn _col          # Series 模式
+    cdef DataFrame _df            # DataFrame 模式
+    cdef IndexBase _index
+    cdef str _name
     cdef object _call_col(self, BaseColumn col, str method, list args)
     cdef object _wrap(self, object res)
-    cdef object _apply(self, str method, list args)
+    cdef object _apply(self, str method, list args, bint weighted)
     cdef BaseColumn _resolve_other(self, object other)
     cdef object _corr_cov_df(self, str method, object other)
     cdef object _call_col_single(self, BaseColumn col, str method, BaseColumn other)
-    cdef object _apply_w(self, str method, list args)
     cdef object _call_col_w(self, BaseColumn col, str method, list args)
-    cdef bint _check_win_type(self, str method)
+    cdef void _check_win_type(self, str method)
 
 
 cdef class _EWMWindow:
     """指数加权窗口访问器：df 模式回装整表 DataFrame，Series 模式回装 Series。"""
-    cdef public double _alpha
-    cdef public Py_ssize_t _min_periods
-    cdef public bint _adjust
-    cdef public bint _ignore_na
-    cdef public bint _is_df
-    cdef public BaseColumn _col          # Series 模式
-    cdef public DataFrame _df            # DataFrame 模式
-    cdef public IndexBase _index
-    cdef public str _name
+    cdef double _alpha
+    cdef Py_ssize_t _min_periods
+    cdef bint _adjust
+    cdef bint _ignore_na
+    cdef bint _is_df
+    cdef BaseColumn _col          # Series 模式
+    cdef DataFrame _df            # DataFrame 模式
+    cdef IndexBase _index
+    cdef str _name
     cdef object _wrap(self, object res)
     cdef object _apply(self, str method, list args)
     cdef BaseColumn _resolve_other(self, object other)
     cdef object _corr_cov_df(self, str method, object other)
-    cdef object _call_col_other(self, BaseColumn col, str method, BaseColumn other)
+    cdef object _call_col_other(self, BaseColumn col, str method, BaseColumn other, bint is_corr)

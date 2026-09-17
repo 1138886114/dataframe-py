@@ -106,8 +106,12 @@ cdef double* _weights_to_buf(object weights, Py_ssize_t win_n) except NULL:
     if buf == NULL:
         raise MemoryError()
     cdef Py_ssize_t i
-    for i in range(win_n):
-        buf[i] = <double>weights[i]
+    try:
+        for i in range(win_n):
+            buf[i] = <double>weights[i]
+    except Exception:
+        os_aligned_free(buf)
+        raise
     return buf
 
 
@@ -2448,25 +2452,32 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def roll_win_mean(self, Py_ssize_t window, object weights, min_periods=None,
                       bint center=False):
-        return self._roll_win_sum_mean(window, weights, min_periods, center, True)
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        try:
+            return self._roll_win_sum_mean(window, wbuf, mp, center, True)
+        finally:
+            os_aligned_free(wbuf)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def roll_win_sum(self, Py_ssize_t window, object weights, min_periods=None,
                      bint center=False):
-        return self._roll_win_sum_mean(window, weights, min_periods, center, False)
-
-    cdef object _roll_win_sum_mean(self, Py_ssize_t window, object weights,
-                                   object min_periods, bint center, bint avg):
         if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        try:
+            return self._roll_win_sum_mean(window, wbuf, mp, center, False)
+        finally:
+            os_aligned_free(wbuf)
+
+    cdef object _roll_win_sum_mean(self, Py_ssize_t window, double* wbuf,
+                                   Py_ssize_t mp, bint center, bint avg):
         cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan_dbl()
         if r == 0: return res
-        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
-        if mp < 1: mp = 1
-        cdef double* wbuf = _weights_to_buf(weights, window)
         _n_roll_wmean_sum(self.data_c, res.data_c, c, r, wbuf, window, mp, center, avg)
-        os_aligned_free(wbuf)
         return res
 
     @cython.binding(False)
@@ -2474,20 +2485,36 @@ cdef class IntColumn(BaseColumn):
     def roll_win_var(self, Py_ssize_t window, object weights, bint ddof=True,
                      min_periods=None, bint center=False):
         if window < 1: raise ValueError("window must be >= 1")
-        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
-        cdef DoubleColumn res = self._make_like_nan_dbl()
-        if r == 0: return res
         cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
         cdef double* wbuf = _weights_to_buf(weights, window)
-        _n_roll_wvar(self.data_c, res.data_c, c, r, wbuf, window, mp, center, 1 if ddof else 0)
-        os_aligned_free(wbuf)
-        return res
+        try:
+            return self._roll_win_var_buf(window, wbuf, mp, center, ddof)
+        finally:
+            os_aligned_free(wbuf)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def roll_win_std(self, Py_ssize_t window, object weights, bint ddof=True,
                      min_periods=None, bint center=False):
-        cdef DoubleColumn var_col = self.roll_win_var(window, weights, ddof, min_periods, center)
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        try:
+            return self._roll_win_std_buf(window, wbuf, mp, center, ddof)
+        finally:
+            os_aligned_free(wbuf)
+
+    cdef object _roll_win_var_buf(self, Py_ssize_t window, double* wbuf,
+                                  Py_ssize_t mp, bint center, bint ddof):
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r == 0: return res
+        _n_roll_wvar(self.data_c, res.data_c, c, r, wbuf, window, mp, center, 1 if ddof else 0)
+        return res
+
+    cdef object _roll_win_std_buf(self, Py_ssize_t window, double* wbuf,
+                                  Py_ssize_t mp, bint center, bint ddof):
+        cdef DoubleColumn var_col = self._roll_win_var_buf(window, wbuf, mp, center, ddof)
         cdef double* v = var_col.data_c
         cdef Py_ssize_t n = var_col.length, i
         with nogil:
@@ -4831,25 +4858,32 @@ cdef class DoubleColumn(BaseColumn):
     @cython.always_allow_keywords(False)
     def roll_win_mean(self, Py_ssize_t window, object weights, min_periods=None,
                       bint center=False):
-        return self._roll_win_sum_mean(window, weights, min_periods, center, True)
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        try:
+            return self._roll_win_sum_mean(window, wbuf, mp, center, True)
+        finally:
+            os_aligned_free(wbuf)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def roll_win_sum(self, Py_ssize_t window, object weights, min_periods=None,
                      bint center=False):
-        return self._roll_win_sum_mean(window, weights, min_periods, center, False)
-
-    cdef object _roll_win_sum_mean(self, Py_ssize_t window, object weights,
-                                   object min_periods, bint center, bint avg):
         if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        try:
+            return self._roll_win_sum_mean(window, wbuf, mp, center, False)
+        finally:
+            os_aligned_free(wbuf)
+
+    cdef object _roll_win_sum_mean(self, Py_ssize_t window, double* wbuf,
+                                   Py_ssize_t mp, bint center, bint avg):
         cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
         cdef DoubleColumn res = self._make_like_nan()
         if r == 0: return res
-        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
-        if mp < 1: mp = 1
-        cdef double* wbuf = _weights_to_buf(weights, window)
         _n_roll_wmean_sum(self.data_c, res.data_c, c, r, wbuf, window, mp, center, avg)
-        os_aligned_free(wbuf)
         return res
 
     @cython.binding(False)
@@ -4857,20 +4891,36 @@ cdef class DoubleColumn(BaseColumn):
     def roll_win_var(self, Py_ssize_t window, object weights, bint ddof=True,
                      min_periods=None, bint center=False):
         if window < 1: raise ValueError("window must be >= 1")
-        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
-        cdef DoubleColumn res = self._make_like_nan()
-        if r == 0: return res
         cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
         cdef double* wbuf = _weights_to_buf(weights, window)
-        _n_roll_wvar(self.data_c, res.data_c, c, r, wbuf, window, mp, center, 1 if ddof else 0)
-        os_aligned_free(wbuf)
-        return res
+        try:
+            return self._roll_win_var_buf(window, wbuf, mp, center, ddof)
+        finally:
+            os_aligned_free(wbuf)
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def roll_win_std(self, Py_ssize_t window, object weights, bint ddof=True,
                      min_periods=None, bint center=False):
-        cdef DoubleColumn var_col = self.roll_win_var(window, weights, ddof, min_periods, center)
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        try:
+            return self._roll_win_std_buf(window, wbuf, mp, center, ddof)
+        finally:
+            os_aligned_free(wbuf)
+
+    cdef object _roll_win_var_buf(self, Py_ssize_t window, double* wbuf,
+                                  Py_ssize_t mp, bint center, bint ddof):
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan()
+        if r == 0: return res
+        _n_roll_wvar(self.data_c, res.data_c, c, r, wbuf, window, mp, center, 1 if ddof else 0)
+        return res
+
+    cdef object _roll_win_std_buf(self, Py_ssize_t window, double* wbuf,
+                                  Py_ssize_t mp, bint center, bint ddof):
+        cdef DoubleColumn var_col = self._roll_win_var_buf(window, wbuf, mp, center, ddof)
         cdef double* v = var_col.data_c
         cdef Py_ssize_t n = var_col.length, i
         with nogil:

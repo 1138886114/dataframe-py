@@ -1353,6 +1353,8 @@ cdef inline void _n_ewm(numeric_t* src, double* dst, Py_ssize_t c, Py_ssize_t r,
                         bint adjust, bint ignore_na, bint normalize) noexcept nogil:
     """指数加权移动均值/求和（pandas ewm 递推）。输出 double，计数不足 NAN。
     normalize=True 为 mean；normalize=False 为 sum（需 adjust=True，调用侧校验）。"""
+    if r == 0:
+        return
     cdef Py_ssize_t col_idx, offset, i
     cdef double old_wt_factor = 1.0 - alpha
     cdef double new_wt = 1.0 if adjust else alpha
@@ -1362,8 +1364,6 @@ cdef inline void _n_ewm(numeric_t* src, double* dst, Py_ssize_t c, Py_ssize_t r,
     with nogil:
         for col_idx in range(c):
             offset = col_idx * r
-            if r == 0:
-                continue
             weighted = <double>src[offset]
             is_observation = weighted == weighted
             nobs = is_observation
@@ -1401,6 +1401,8 @@ cdef inline void _n_ewmcov(numeric_t* x, numeric_t* y, double* dst, Py_ssize_t c
                            bint adjust, bint ignore_na, bint bias) noexcept nogil:
     """指数加权协方差/方差（pandas ewmcov 递推，Welford + 权重归一因子）。
     var=ewmcov(x,x)；corr=ewmcov(x,y)/sqrt(ewmcov(x,x)*ewmcov(y,y))（bias=True）。"""
+    if r == 0:
+        return
     cdef Py_ssize_t col_idx, offset, i
     cdef double old_wt_factor = 1.0 - alpha
     cdef double new_wt = 1.0 if adjust else alpha
@@ -1412,8 +1414,6 @@ cdef inline void _n_ewmcov(numeric_t* x, numeric_t* y, double* dst, Py_ssize_t c
     with nogil:
         for col_idx in range(c):
             offset = col_idx * r
-            if r == 0:
-                continue
             mean_x = <double>x[offset]
             mean_y = <double>y[offset]
             is_observation = (mean_x == mean_x) and (mean_y == mean_y)
