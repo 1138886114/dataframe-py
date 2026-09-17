@@ -1343,6 +1343,201 @@ cdef inline void _n_roll_cov(numeric_t* x, numeric_t* y, double* dst, Py_ssize_t
                         sx -= xv; sy -= yv; sxy -= xv * yv
                         lo += 1
 
+# ============================================================
+#  ewm（指数加权移动）内核：逐列独立，pandas ewm/ewmcov 算法移植
+#  alpha 参数由调用侧解析（com/span/halflife/alpha → alpha）。
+#  min_periods 默认 0：第一条即输出。无 times 支持（等间隔假设）。
+# ============================================================
+cdef inline void _n_ewm(numeric_t* src, double* dst, Py_ssize_t c, Py_ssize_t r,
+                        double alpha, double com, Py_ssize_t minp,
+                        bint adjust, bint ignore_na, bint normalize) noexcept nogil:
+    """指数加权移动均值/求和（pandas ewm 递推）。输出 double，计数不足 NAN。
+    normalize=True 为 mean；normalize=False 为 sum（需 adjust=True，调用侧校验）。"""
+    cdef Py_ssize_t col_idx, offset, i
+    cdef double old_wt_factor = 1.0 - alpha
+    cdef double new_wt = 1.0 if adjust else alpha
+    cdef double weighted, old_wt, cur
+    cdef Py_ssize_t nobs
+    cdef bint is_observation
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            if r == 0:
+                continue
+            weighted = <double>src[offset]
+            is_observation = weighted == weighted
+            nobs = is_observation
+            dst[offset] = weighted if nobs >= minp else NAN
+            old_wt = 1.0
+            for i in range(1, r):
+                cur = <double>src[offset + i]
+                is_observation = cur == cur
+                nobs += is_observation
+                if weighted == weighted:
+                    if is_observation or not ignore_na:
+                        if normalize:
+                            old_wt *= old_wt_factor
+                        else:
+                            weighted = old_wt_factor * weighted
+                        if is_observation:
+                            if normalize:
+                                if weighted != cur:
+                                    if not adjust and com == 1:
+                                        new_wt = 1.0 - old_wt
+                                    weighted = old_wt * weighted + new_wt * cur
+                                    weighted /= (old_wt + new_wt)
+                                if adjust:
+                                    old_wt += new_wt
+                                else:
+                                    old_wt = 1.0
+                            else:
+                                weighted += cur
+                elif is_observation:
+                    weighted = cur
+                dst[offset + i] = weighted if nobs >= minp else NAN
+
+cdef inline void _n_ewmcov(numeric_t* x, numeric_t* y, double* dst, Py_ssize_t c,
+                           Py_ssize_t r, double alpha, Py_ssize_t minp,
+                           bint adjust, bint ignore_na, bint bias) noexcept nogil:
+    """指数加权协方差/方差（pandas ewmcov 递推，Welford + 权重归一因子）。
+    var=ewmcov(x,x)；corr=ewmcov(x,y)/sqrt(ewmcov(x,x)*ewmcov(y,y))（bias=True）。"""
+    cdef Py_ssize_t col_idx, offset, i
+    cdef double old_wt_factor = 1.0 - alpha
+    cdef double new_wt = 1.0 if adjust else alpha
+    cdef double mean_x, mean_y, cov, sum_wt, sum_wt2, old_wt
+    cdef double cur_x, cur_y, old_mean_x, old_mean_y
+    cdef double numerator, denominator
+    cdef Py_ssize_t nobs
+    cdef bint is_observation
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            if r == 0:
+                continue
+            mean_x = <double>x[offset]
+            mean_y = <double>y[offset]
+            is_observation = (mean_x == mean_x) and (mean_y == mean_y)
+            nobs = is_observation
+            if not is_observation:
+                mean_x = NAN
+                mean_y = NAN
+            dst[offset] = (0.0 if bias else NAN) if nobs >= minp else NAN
+            cov = 0.0
+            sum_wt = 1.0
+            sum_wt2 = 1.0
+            old_wt = 1.0
+            for i in range(1, r):
+                cur_x = <double>x[offset + i]
+                cur_y = <double>y[offset + i]
+                is_observation = (cur_x == cur_x) and (cur_y == cur_y)
+                nobs += is_observation
+                if mean_x == mean_x:
+                    if is_observation or not ignore_na:
+                        sum_wt *= old_wt_factor
+                        sum_wt2 *= (old_wt_factor * old_wt_factor)
+                        old_wt *= old_wt_factor
+                        if is_observation:
+                            old_mean_x = mean_x
+                            old_mean_y = mean_y
+                            if mean_x != cur_x:
+                                mean_x = (old_wt * old_mean_x + new_wt * cur_x) / (old_wt + new_wt)
+                            if mean_y != cur_y:
+                                mean_y = (old_wt * old_mean_y + new_wt * cur_y) / (old_wt + new_wt)
+                            cov = (old_wt * (cov + (old_mean_x - mean_x) * (old_mean_y - mean_y)) +
+                                   new_wt * (cur_x - mean_x) * (cur_y - mean_y)) / (old_wt + new_wt)
+                            sum_wt += new_wt
+                            sum_wt2 += (new_wt * new_wt)
+                            old_wt += new_wt
+                            if not adjust:
+                                sum_wt /= old_wt
+                                sum_wt2 /= (old_wt * old_wt)
+                                old_wt = 1.0
+                elif is_observation:
+                    mean_x = cur_x
+                    mean_y = cur_y
+                if nobs >= minp:
+                    if not bias:
+                        numerator = sum_wt * sum_wt
+                        denominator = numerator - sum_wt2
+                        dst[offset + i] = (numerator / denominator) * cov if denominator > 0.0 else NAN
+                    else:
+                        dst[offset + i] = cov
+                else:
+                    dst[offset + i] = NAN
+
+# ============================================================
+#  win_type（boxcar/triang）加权滚动内核：仅 mean/sum/var/std
+#  mean/sum：窗口右对齐，最新值吃最后一个权重（pandas roll_weighted_sum_mean）；
+#  var/std：pandas West 循环对齐（绝对位置 p 权重 wbuf[p % win_n]）。
+#  计数只统计非 NaN 值；minp 默认窗口（调用侧已 clamp max(minp,1)）。
+# ============================================================
+cdef inline void _n_roll_wmean_sum(numeric_t* src, double* dst, Py_ssize_t c, Py_ssize_t r,
+                                   double* wbuf, Py_ssize_t win_n, Py_ssize_t minp,
+                                   bint center, bint avg) noexcept nogil:
+    """加权滚动均值/求和（O(N·W) 逐窗直算）。avg=1 均值（除以非 NaN 权重和），avg=0 求和。
+    center：pandas 尾部补 offset 个 NaN 右对齐再截断的等价写法。"""
+    cdef Py_ssize_t col_idx, offset, j, k, left, lo, hi, p, nobs
+    cdef double s, sw, w, v
+    cdef Py_ssize_t pad = (win_n // 2) if center else 0
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            for j in range(r):
+                k = j + pad
+                left = k - win_n + 1
+                lo = left if left > 0 else 0
+                hi = k
+                if hi >= r: hi = r - 1
+                s = 0.0; sw = 0.0; nobs = 0
+                for p in range(lo, hi + 1):
+                    v = <double>src[offset + p]
+                    if v == v:
+                        w = wbuf[p - left]
+                        s += w * v
+                        sw += w
+                        nobs += 1
+                if nobs < minp or sw == 0.0:
+                    dst[offset + j] = NAN
+                else:
+                    dst[offset + j] = s if not avg else s / sw
+
+cdef inline void _n_roll_wvar(numeric_t* src, double* dst, Py_ssize_t c, Py_ssize_t r,
+                              double* wbuf, Py_ssize_t win_n, Py_ssize_t minp,
+                              bint center, Py_ssize_t ddof) noexcept nogil:
+    """加权滚动方差（pandas roll_weighted_var：绝对位置循环权重）。
+    结果 = t*win_n/((win_n-ddof)*sum_w)；nobs<=ddof 或 nobs<minp → NAN。"""
+    cdef Py_ssize_t col_idx, offset, j, k, lo, hi, p, nobs, pass2
+    cdef double sw, swx, mean_w, t, w, v
+    cdef Py_ssize_t pad = (win_n // 2) if center else 0
+    with nogil:
+        for col_idx in range(c):
+            offset = col_idx * r
+            for j in range(r):
+                k = j + pad
+                lo = k - win_n + 1
+                if lo < 0: lo = 0
+                hi = k
+                if hi >= r: hi = r - 1
+                sw = 0.0; swx = 0.0; nobs = 0
+                for p in range(lo, hi + 1):
+                    v = <double>src[offset + p]
+                    if v == v:
+                        w = wbuf[p % win_n]
+                        sw += w
+                        swx += w * v
+                        nobs += 1
+                if nobs < minp or nobs <= ddof:
+                    dst[offset + j] = NAN
+                    continue
+                mean_w = swx / sw
+                t = 0.0
+                for p in range(lo, hi + 1):
+                    v = <double>src[offset + p]
+                    if v == v:
+                        w = wbuf[p % win_n]
+                        t += w * (v - mean_w) * (v - mean_w)
+                dst[offset + j] = t * <double>win_n / (<double>(win_n - ddof) * sw)
+
 cdef inline void _n_cumsum(numeric_t* src, numeric_t* dst, Py_ssize_t c,
                            Py_ssize_t r) noexcept nogil:
     """逐列独立累计求和（列优先布局）。"""

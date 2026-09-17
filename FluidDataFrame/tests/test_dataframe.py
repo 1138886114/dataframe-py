@@ -2500,6 +2500,156 @@ def test_expanding_ewm():
     check('ewm_mean is float', isinstance(ew[1], float))
 
 
+def test_ewm_accessor():
+    df = DataFrame.from_list([[1, 2], [2, 3], [3, 4]], schema={'a': int, 'b': int})
+    s = df['a']
+
+    # 与 pandas 3 参考一致：span=3 → alpha=0.5
+    m = s.ewm(span=3).mean()
+    check('ewm mean [0]', m[0] == 1.0)
+    check('ewm mean [1]', abs(m[1] - 1.6666666666666667) < 1e-12)
+    check('ewm mean [2]', abs(m[2] - 2.4285714285714284) < 1e-12)
+
+    su = s.ewm(span=3).sum()
+    check('ewm sum [1]', abs(su[1] - 2.5) < 1e-12)
+    check('ewm sum [2]', abs(su[2] - 4.25) < 1e-12)
+
+    v = s.ewm(span=3).var()
+    check('ewm var [1]', abs(v[1] - 0.5) < 1e-12)
+    check('ewm var [2]', abs(v[2] - 0.9285714285714284) < 1e-12)
+    check('ewm var bias [2]', abs(s.ewm(span=3).var(bias=False)[2] - 0.9285714285714284) < 1e-12)
+
+    st = s.ewm(span=3).std()
+    check('ewm std [1]', abs(st[1] - 0.7071067811865476) < 1e-12)
+
+    # com/alpha 等价性
+    c1 = s.ewm(com=1).mean()
+    c2 = s.ewm(alpha=0.5).mean()
+    check('ewm com==alpha', abs(c1[2] - c2[2]) < 1e-12)
+
+    # halflife
+    h = s.ewm(halflife=2).mean()
+    check('ewm halflife [1]', abs(h[1] - 1.585786437626905) < 1e-12)
+
+    # min_periods
+    mp = s.ewm(span=3, min_periods=2).mean()
+    check('ewm minp[0] nan', mp[0] != mp[0])
+    check('ewm minp[1]', abs(mp[1] - 1.6666666666666667) < 1e-12)
+
+    # cov/corr（bias 内部路径）
+    s2 = df['b']
+    cv = s.ewm(span=3).cov(s2)
+    check('ewm cov [1]', abs(cv[1] - 0.5) < 1e-12)
+    check('ewm cov [0] nan', cv[0] != cv[0])
+    cr = s.ewm(span=3).corr(s2)
+    check('ewm corr [1]', abs(cr[1] - 1.0) < 1e-12)
+
+    # 参数互斥 / 缺参 / sum+adjust=False
+    check('ewm mutual exclusive', expect_exception(ValueError, lambda: s.ewm(span=3, com=1)))
+    check('ewm no param', expect_exception(ValueError, lambda: s.ewm()))
+    check('ewm sum adjust=False', expect_exception(NotImplementedError,
+                                                   lambda: s.ewm(span=3, adjust=False).sum()))
+
+    # DataFrame 模式：逐列
+    dfm = df.ewm(span=3).mean()
+    check('df ewm col a', abs(dfm['a'][2] - 2.4285714285714284) < 1e-12)
+    dfc = df.ewm(span=3).corr(df)
+    check('df ewm corr [1]', abs(dfc['a'][1] - 1.0) < 1e-12)
+
+
+def test_expanding_accessor():
+    vals = [1, 2, 3, 4]
+    df = DataFrame.from_list([[v, v * v] for v in vals], schema={'a': int, 'b': int})
+    s = df['a']
+    ex = s.expanding(min_periods=1)
+    rm = s.rolling(len(vals), min_periods=1)
+
+    def naneq(a, b):
+        def f(x, y):
+            return (x != x and y != y) or x == y
+        return len(a) == len(b) and all(f(x, y) for x, y in zip(a, b))
+
+    check('expanding==rolling mean', ex.mean().tolist() == rm.mean().tolist())
+    check('expanding==rolling sum', ex.sum().tolist() == rm.sum().tolist())
+    check('expanding==rolling min', ex.min().tolist() == rm.min().tolist())
+    check('expanding==rolling max', ex.max().tolist() == rm.max().tolist())
+    check('expanding==rolling var', naneq(ex.var().tolist(), rm.var().tolist()))
+    check('expanding==rolling std', naneq(ex.std().tolist(), rm.std().tolist()))
+    check('expanding==rolling median', ex.median().tolist() == rm.median().tolist())
+    check('expanding==rolling quantile', ex.quantile(0.3).tolist() == rm.quantile(0.3).tolist())
+    # expanding 数值
+    check('expanding mean[1]', abs(ex.mean()[1] - 1.5) < 1e-12)
+    check('expanding sum[3]', ex.sum()[3] == 10.0)
+    # mp>r 全 NaN
+    em = s.expanding(min_periods=10).mean()
+    check('expanding mp>r all nan', all(v != v for v in em.tolist()))
+    # DataFrame 模式
+    dfex = df.expanding(min_periods=1).sum()
+    check('df expanding col b[3]', dfex['b'][3] == 30.0)
+
+
+def test_win_type():
+    import math
+    rec = lambda x: round(x, 9)
+    s = DataFrame.from_list([[1], [2], [3], [4], [5]], schema={'a': int})['a']
+
+    tw = s.rolling(3, win_type='triang')
+    check('triang mean w3 [2]', abs(tw.mean()[2] - 2.0) < 1e-12)      # [nan,nan,2,3,4]
+    check('triang mean w3 [4]', abs(tw.mean()[4] - 4.0) < 1e-12)
+    check('triang sum w3 [2]', abs(tw.sum()[2] - 4.0) < 1e-12)       # [nan,nan,4,6,8]
+    check('triang sum w3 [4]', abs(tw.sum()[4] - 8.0) < 1e-12)
+    check('triang var ddof1 [2]', abs(tw.var()[2] - 0.75) < 1e-12)   # [nan,nan,0.75,1.03125,...]
+    check('triang var ddof1 [3]', abs(tw.var()[3] - 1.03125) < 1e-12)
+    check('triang var ddof0 [2]', abs(tw.var(ddof=False)[2] - 0.5) < 1e-12)
+    check('triang std ddof1 [3]', abs(tw.std()[3] - 1.015504800579495) < 1e-12)
+
+    # 窗 4 参考（[nan,nan,nan,2.5,3.5]）
+    w4 = s.rolling(4, win_type='triang').mean()
+    check('triang mean w4 [3]', abs(w4[3] - 2.5) < 1e-12)
+    check('triang mean w4 [4]', abs(w4[4] - 3.5) < 1e-12)
+
+    # boxcar
+    bw = s.rolling(3, win_type='boxcar').mean()
+    check('boxcar mean [4]', abs(bw[4] - 4.0) < 1e-12)
+
+    # center 等价（pandas 参考 [nan,2,3,4,nan]）
+    tc = s.rolling(3, win_type='triang', center=True).mean()
+    check('triang center [1]', abs(tc[1] - 2.0) < 1e-12)
+    check('triang center [3]', abs(tc[3] - 4.0) < 1e-12)
+    check('triang center [0] nan', tc[0] != tc[0])
+    check('triang center [4] nan', tc[4] != tc[4])
+    tcv = s.rolling(3, win_type='triang', center=True).var()
+    check('triang center var [1]', abs(tcv[1] - 0.75) < 1e-12)
+
+    # min_periods
+    t1 = s.rolling(3, win_type='triang', min_periods=1).mean()
+    check('triang minp1 [1]', abs(t1[1] - 1.3333333333333333) < 1e-12)
+
+    # 仅 mean/sum/var/std；其余 AttributeError；minp>window ValueError
+    check('win_type min fails', expect_exception(AttributeError, lambda: s.rolling(3, win_type='triang').min()))
+    check('win_type minp>window', expect_exception(ValueError, lambda: s.rolling(2, win_type='triang', min_periods=3)))
+
+    # DataFrame 模式逐列
+    dfd = DataFrame.from_list([[1, 10], [2, 20], [3, 30], [4, 40], [5, 50]], schema={'a': int, 'b': int})
+    dfw = dfd.rolling(3, win_type='triang').mean()
+    check('df win_type col b[4]', abs(dfw['b'][4] - 40.0) < 1e-12)
+
+
+def test_str_replace_count():
+    def f(count):
+        df = DataFrame({'s': str})
+        df.append_row(s='aaa')
+        df.append_row(s='bbb')
+        df.append_row(s='ababa')
+        df.append_row(s='baba')
+        return df['s'].str.replace('a', 'X', count).tolist()
+
+    check('replace no count', f(-1) == ['XXX', 'bbb', 'XbXbX', 'bXbX'])
+    check('replace count=1', f(1) == ['Xaa', 'bbb', 'Xbaba', 'bXba'])
+    check('replace count=2', f(2) == ['XXa', 'bbb', 'XbXba', 'bXbX'])
+    check('replace count=0', f(0) == ['aaa', 'bbb', 'ababa', 'baba'])
+
+
 def test_read_json():
     import json, os, tempfile
     from fluidframe.core.dataframe import read_json
@@ -2770,6 +2920,10 @@ def run_all():
     test_pivot()
     test_melt()
     test_expanding_ewm()
+    test_ewm_accessor()
+    test_expanding_accessor()
+    test_win_type()
+    test_str_replace_count()
     test_read_json()
     test_merge_multicol()
     test_merge_col_conflict()

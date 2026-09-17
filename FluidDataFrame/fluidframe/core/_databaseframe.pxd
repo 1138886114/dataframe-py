@@ -199,6 +199,8 @@ cdef class _RollingWindow:
     cdef public object _min_periods
     cdef public bint _center
     cdef public bint _is_df
+    cdef public object _win_type       # None/boxcar/triang（加权模式）
+    cdef public object _weights        # win_type 对应权重列表（长度=window）
     cdef public BaseColumn _col          # Series 模式
     cdef public DataFrame _df            # DataFrame 模式
     cdef public IndexBase _index
@@ -209,3 +211,24 @@ cdef class _RollingWindow:
     cdef BaseColumn _resolve_other(self, object other)
     cdef object _corr_cov_df(self, str method, object other)
     cdef object _call_col_single(self, BaseColumn col, str method, BaseColumn other)
+    cdef object _apply_w(self, str method, list args)
+    cdef object _call_col_w(self, BaseColumn col, str method, list args)
+    cdef bint _check_win_type(self, str method)
+
+
+cdef class _EWMWindow:
+    """指数加权窗口访问器：df 模式回装整表 DataFrame，Series 模式回装 Series。"""
+    cdef public double _alpha
+    cdef public Py_ssize_t _min_periods
+    cdef public bint _adjust
+    cdef public bint _ignore_na
+    cdef public bint _is_df
+    cdef public BaseColumn _col          # Series 模式
+    cdef public DataFrame _df            # DataFrame 模式
+    cdef public IndexBase _index
+    cdef public str _name
+    cdef object _wrap(self, object res)
+    cdef object _apply(self, str method, list args)
+    cdef BaseColumn _resolve_other(self, object other)
+    cdef object _corr_cov_df(self, str method, object other)
+    cdef object _call_col_other(self, BaseColumn col, str method, BaseColumn other)

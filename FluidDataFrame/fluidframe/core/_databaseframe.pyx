@@ -9,7 +9,7 @@ from libc.string cimport memcpy, memmove, strncmp, strncpy, memset
 from libc.stdio cimport snprintf
 from libc.stdint cimport int32_t, int64_t, uint32_t, uint64_t
 from libc.time cimport time_t, time
-from libc.math cimport NAN, sqrt, log, cos, isnan, INFINITY, fabs
+from libc.math cimport NAN, sqrt, log, cos, isnan, INFINITY, fabs, exp
 from libc.stdlib cimport abs as c_abs, qsort
 from cpython.unicode cimport Py_UCS2, PyUnicode_KIND, PyUnicode_READ_CHAR, PyUnicode_2BYTE_KIND, PyUnicode_DATA
 
@@ -189,6 +189,26 @@ cdef extern from *:
 # ============================================================
 #  _RollingWindow（滚动窗口访问器：DataFrame/Series 双模式）
 # ============================================================
+cdef object _win_weights(str wtype, Py_ssize_t win_n):
+    """按 win_type 生成窗口权重（仅 boxcar/triang，纯公式，无需 scipy）。
+    triang：奇窗 1-|2i-(M-1)|/(M+1)；偶窗 1-|2i-(M-1)|/M。"""
+    cdef Py_ssize_t i
+    cdef list out = []
+    if wtype == 'boxcar':
+        for i in range(win_n):
+            out.append(1.0)
+        return out
+    if wtype == 'triang':
+        if win_n % 2 == 1:
+            for i in range(win_n):
+                out.append(1.0 - abs(2 * i - (win_n - 1)) / <double>(win_n + 1))
+        else:
+            for i in range(win_n):
+                out.append(1.0 - abs(2 * i - (win_n - 1)) / <double>win_n)
+        return out
+    raise ValueError(f"Unsupported win_type: {wtype}")
+
+
 cdef class _RollingWindow:
     """滚动窗口访问器，委托列级 roll_xxx 内核。
     mode-1（Series）：绑定单列，算子返回同长 Series；
@@ -201,11 +221,19 @@ cdef class _RollingWindow:
     @cython.always_allow_keywords(False)
     def __cinit__(self, object obj, Py_ssize_t window, min_periods=None,
                   bint center=False, bint is_df=False, str name=None,
-                  IndexBase index=None):
+                  IndexBase index=None, object win_type=None):
         self._window = window
         self._min_periods = min_periods
         self._center = center
         self._is_df = is_df
+        self._win_type = win_type
+        self._weights = None
+        if win_type is not None:
+            if win_type != 'boxcar' and win_type != 'triang':
+                raise ValueError(f"Invalid win_type '{win_type}'; supported: 'boxcar', 'triang'")
+            if min_periods is not None and min_periods > window:
+                raise ValueError(f"min_periods {min_periods} must be <= window {window}")
+            self._weights = _win_weights(win_type, window)
         if is_df:
             self._df = <DataFrame>obj
             self._index = self._df.index
@@ -222,6 +250,35 @@ cdef class _RollingWindow:
         """单列滚动算子调用（min_periods/center 固定透传）。"""
         cdef object fn = getattr(col, method)
         return fn(self._window, *args, min_periods=self._min_periods, center=self._center)
+
+    cdef object _apply_w(self, str method, list args):
+        """win_type 加权模式：逐列调用加权算子（weights + min_periods/center 透传）。"""
+        if not self._is_df:
+            return self._wrap(self._call_col_w(self._col, method, args))
+        cdef DataFrame result = DataFrame()
+        result.df_length = self._df.df_length
+        result.index = self._df.index
+        cdef BaseColumn col
+        cdef bint found_numeric = False
+        for col_name, col in self._df._columns.items():
+            if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+                continue
+            found_numeric = True
+            result._columns[col_name] = self._call_col_w(col, method, args)
+        if not found_numeric:
+            raise TypeError(f"Rolling weighted {method} requires at least one numeric column")
+        return result
+
+    cdef object _call_col_w(self, BaseColumn col, str method, list args):
+        cdef object fn = getattr(col, method)
+        return fn(self._window, self._weights, *args,
+                  min_periods=self._min_periods, center=self._center)
+
+    cdef bint _check_win_type(self, str method):
+        """加权模式下仅放行 mean/sum/var/std；其余算子按 pandas Window 语义抛 AttributeError。"""
+        if self._win_type is not None:
+            raise AttributeError(f"'Window' object has no attribute '{method}'")
+        return False
 
     cdef object _wrap(self, object res):
         """Series 模式：BaseColumn 结果包成带索引的 Series。"""
@@ -257,47 +314,72 @@ cdef class _RollingWindow:
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def mean(self): return self._apply('roll_mean', [])
+    def mean(self):
+        if self._win_type is not None:
+            return self._apply_w('roll_win_mean', [])
+        return self._apply('roll_mean', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def sum(self): return self._apply('roll_sum', [])
+    def sum(self):
+        if self._win_type is not None:
+            return self._apply_w('roll_win_sum', [])
+        return self._apply('roll_sum', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def min(self): return self._apply('roll_min', [])
+    def min(self):
+        self._check_win_type('min')
+        return self._apply('roll_min', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def max(self): return self._apply('roll_max', [])
+    def max(self):
+        self._check_win_type('max')
+        return self._apply('roll_max', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def std(self, bint ddof=True): return self._apply('roll_std', [ddof])
+    def std(self, bint ddof=True):
+        if self._win_type is not None:
+            return self._apply_w('roll_win_std', [ddof])
+        return self._apply('roll_std', [ddof])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def var(self, bint ddof=True): return self._apply('roll_var', [ddof])
+    def var(self, bint ddof=True):
+        if self._win_type is not None:
+            return self._apply_w('roll_win_var', [ddof])
+        return self._apply('roll_var', [ddof])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def median(self): return self._apply('roll_median', [])
+    def median(self):
+        self._check_win_type('median')
+        return self._apply('roll_median', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def quantile(self, double q=0.5): return self._apply('roll_quantile', [q])
+    def quantile(self, double q=0.5):
+        self._check_win_type('quantile')
+        return self._apply('roll_quantile', [q])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def skew(self): return self._apply('roll_skew', [])
+    def skew(self):
+        self._check_win_type('skew')
+        return self._apply('roll_skew', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def kurt(self): return self._apply('roll_kurt', [])
+    def kurt(self):
+        self._check_win_type('kurt')
+        return self._apply('roll_kurt', [])
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def corr(self, object other):
+        self._check_win_type('corr')
         if self._is_df:
             return self._corr_cov_df('roll_corr', other)
         return self._wrap(self._call_col(self._col, 'roll_corr', [self._resolve_other(other)]))
@@ -305,6 +387,7 @@ cdef class _RollingWindow:
     @cython.binding(False)
     @cython.always_allow_keywords(False)
     def cov(self, object other):
+        self._check_win_type('cov')
         if self._is_df:
             return self._corr_cov_df('roll_cov', other)
         return self._wrap(self._call_col(self._col, 'roll_cov', [self._resolve_other(other)]))
@@ -341,6 +424,188 @@ cdef class _RollingWindow:
     cdef object _call_col_single(self, BaseColumn col, str method, BaseColumn other):
         return getattr(col, method)(self._window, other,
                                     min_periods=self._min_periods, center=self._center)
+
+
+cdef inline double _resolve_ewm_alpha(com=None, span=None, halflife=None, alpha=None):
+    """pandas 式指数加权参数解析：com/span/halflife/alpha 四选一，返回 alpha。
+    com → 1/(1+com)；span → 2/(span+1)；halflife → 1-exp(-ln2/halflife)；alpha 直传。
+    仅支持 method='single'（times 参数本框架暂不支持）。"""
+    cdef object param_map = {'com': com, 'span': span,
+                             'halflife': halflife, 'alpha': alpha}
+    cdef object param = None
+    for key in ('com', 'span', 'halflife', 'alpha'):
+        if param_map[key] is not None:
+            if param is not None:
+                raise ValueError("comass, span, halflife, and alpha are mutually exclusive")
+            param = param_map[key]
+    if param is None:
+        raise ValueError("Must pass one of comass, span, halflife, or alpha")
+    if isinstance(param, str):
+        raise ValueError(f"Invalid {type(param).__name__} argument: {param}")
+    cdef double value = <double>param
+    if com is not None:
+        if value <= 0.0:
+            raise ValueError("com must satisfy: com > 0")
+        return 1.0 / (1.0 + value)
+    if span is not None:
+        if value <= 1.0:
+            raise ValueError("span must satisfy: span > 1")
+        return 2.0 / (value + 1.0)
+    if halflife is not None:
+        if value <= 0.0:
+            raise ValueError("halflife must satisfy: halflife > 0")
+        return 1.0 - exp(-0.6931471805599453 / value)
+    if value < 0.0:
+        raise ValueError("alpha must satisfy: 0 < alpha <= 1")
+    if value > 1.0:
+        raise ValueError("alpha must satisfy: 0 < alpha <= 1")
+    return value
+
+
+cdef class _EWMWindow:
+    """指数加权窗口访问器（pandas 式签名），委托列级 ewm_xxx 算子。
+    mode-1（Series）：绑定单列，算子返回同长 Series；
+    mode-2（DataFrame）：逐数值列 ewm，算子返回同 schema 的整表 DataFrame。"""
+
+    _SUPPORTED_TYPES = {TYPE_INT, TYPE_DOUBLE}
+    _TYPE_LABELS = _RollingWindow._TYPE_LABELS
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def __cinit__(self, object obj, com=None, span=None, halflife=None, alpha=None,
+                  Py_ssize_t min_periods=0, bint adjust=True, bint ignore_na=False,
+                  bint is_df=False, str name=None, IndexBase index=None):
+        cdef object param_map
+        cdef object param
+        self._min_periods = min_periods
+        self._adjust = adjust
+        self._ignore_na = ignore_na
+        if is_df:
+            self._df = <DataFrame>obj
+            self._index = self._df.index
+            self._name = ''
+            self._is_df = True
+        else:
+            self._col = <BaseColumn>obj
+            self._index = index
+            self._name = name if name is not None else '_ewm'
+            self._is_df = False
+            if self._col.dtype not in self._SUPPORTED_TYPES:
+                type_name = self._TYPE_LABELS.get(self._col.dtype, 'unknown')
+                raise TypeError(f"EWM operations are not supported for {type_name} columns")
+        self._alpha = _resolve_ewm_alpha(com, span, halflife, alpha)
+
+    cdef object _wrap(self, object res):
+        return _wrap_series(self._name, res, self._index)
+
+    cdef object _apply(self, str method, list args):
+        if not self._is_df:
+            return self._wrap(getattr(self._col, method)(self._alpha, *args,
+                                                         min_periods=self._min_periods,
+                                                         adjust=self._adjust,
+                                                         ignore_na=self._ignore_na))
+        cdef DataFrame result = DataFrame()
+        result.df_length = self._df.df_length
+        result.index = self._df.index
+        cdef BaseColumn col
+        cdef bint found_numeric = False
+        for col_name, col in self._df._columns.items():
+            if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+                continue
+            found_numeric = True
+            result._columns[col_name] = getattr(col, method)(self._alpha, *args,
+                                                             min_periods=self._min_periods,
+                                                             adjust=self._adjust,
+                                                             ignore_na=self._ignore_na)
+        if not found_numeric:
+            raise TypeError(f"EWM {method} requires at least one numeric column")
+        return result
+
+    cdef BaseColumn _resolve_other(self, object other):
+        if isinstance(other, _EWMWindow):
+            return (<_EWMWindow>other)._col
+        if isinstance(other, Series):
+            return (<Series>other)._col
+        if isinstance(other, BaseColumn):
+            return <BaseColumn>other
+        raise TypeError("corr/cov 'other' must be a Series, EWM window or column")
+
+    cdef object _corr_cov_df(self, str method, object other):
+        cdef DataFrame result = DataFrame()
+        result.df_length = self._df.df_length
+        result.index = self._df.index
+        cdef BaseColumn col, other_col
+        cdef bint found_numeric = False
+        cdef dict other_cols
+        if isinstance(other, DataFrame):
+            other_cols = (<DataFrame>other)._columns
+            for col_name, col in self._df._columns.items():
+                if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+                    continue
+                if col_name not in other_cols:
+                    raise KeyError(f"Column '{col_name}' not found in 'other'")
+                found_numeric = True
+                result._columns[col_name] = self._call_col_other(col, method, <BaseColumn>other_cols[col_name])
+        else:
+            other_col = self._resolve_other(other)
+            for col_name, col in self._df._columns.items():
+                if col.dtype != TYPE_INT and col.dtype != TYPE_DOUBLE:
+                    continue
+                found_numeric = True
+                result._columns[col_name] = self._call_col_other(col, method, other_col)
+        if not found_numeric:
+            raise TypeError(f"EWM {method} requires at least one numeric column")
+        return result
+
+    cdef object _call_col_other(self, BaseColumn col, str method, BaseColumn other):
+        if method == 'ewm_corr':
+            return getattr(col, method)(other, self._alpha,
+                                        min_periods=self._min_periods,
+                                        adjust=self._adjust,
+                                        ignore_na=self._ignore_na)
+        return getattr(col, method)(other, self._alpha, False,
+                                    min_periods=self._min_periods,
+                                    adjust=self._adjust,
+                                    ignore_na=self._ignore_na)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def mean(self):
+        return self._apply('ewm_mean', [])
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def sum(self):
+        return self._apply('ewm_sum', [])
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def var(self, bint bias=False): return self._apply('ewm_var', [bias])
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def std(self, bint bias=False): return self._apply('ewm_std', [bias])
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def cov(self, object other):
+        if self._is_df:
+            return self._corr_cov_df('ewm_cov', other)
+        return self._wrap(getattr(self._col, 'ewm_cov')(self._resolve_other(other), self._alpha,
+                                                        bias=False,
+                                                        min_periods=self._min_periods,
+                                                        adjust=self._adjust,
+                                                        ignore_na=self._ignore_na))
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def corr(self, object other):
+        if self._is_df:
+            return self._corr_cov_df('ewm_corr', other)
+        return self._wrap(getattr(self._col, 'ewm_corr')(self._resolve_other(other), self._alpha,
+                                                         min_periods=self._min_periods,
+                                                         adjust=self._adjust,
+                                                         ignore_na=self._ignore_na))
 
 
 # ============================================================
@@ -1507,9 +1772,9 @@ cdef class _StringAccessor:
     def replace(self, str old, str new, int count=-1):
         cdef BaseColumn col = self._series._col
         if col.dtype == TYPE_CHAR256:
-            return self._wrap((<AsciiColumn>col).replace(old, new))
+            return self._wrap((<AsciiColumn>col).replace(old, new, count))
         elif col.dtype == TYPE_UCS2:
-            return self._wrap((<UCS2Column>col).replace(old, new))
+            return self._wrap((<UCS2Column>col).replace(old, new, count))
         raise TypeError("String accessor requires string column")
 
     # ==================== Split ====================
@@ -2621,11 +2886,27 @@ cdef class Series:
     #  滚动窗口
     # =================================================================
 
-    def rolling(self, Py_ssize_t window, min_periods=None, center=False):
-        """滚动窗口访问器：返回 _RollingWindow（.mean()/.sum()/... 窗口算子）"""
+    def rolling(self, Py_ssize_t window, min_periods=None, center=False, win_type=None):
+        """滚动窗口访问器：返回 _RollingWindow（.mean()/.sum()/... 窗口算子）。
+        win_type='boxcar'/'triang' 时仅支持 .mean()/.sum()/.var()/.std()（pandas Window 语义）。"""
         if window <= 0:
             raise ValueError(f"Window size must be positive, got {window}")
-        return _RollingWindow(self._col, window, min_periods, center, False, self.name, self._index)
+        return _RollingWindow(self._col, window, min_periods, center, False, self.name, self._index, win_type)
+
+    def expanding(self, Py_ssize_t min_periods=1, axis=0):
+        """扩展窗口访问器：等价于 rolling(window=行数, min_periods=min_periods)。
+        复用 _RollingWindow（window=max(r, mp) 以支持 mp>r 时全 NaN 的 pandas 语义）。"""
+        if axis != 0 and axis != 'index':
+            raise NotImplementedError("expanding supports axis=0 ('index') only")
+        cdef Py_ssize_t r = <Py_ssize_t>self.length
+        return _RollingWindow(self._col, max(r, min_periods), min_periods, False, False, self.name, self._index)
+
+    def ewm(self, com=None, span=None, halflife=None, alpha=None,
+            Py_ssize_t min_periods=0, bint adjust=True, bint ignore_na=False):
+        """指数加权窗口访问器（pandas 式）：参数四选一（com/span/halflife/alpha），
+        支持 .mean()/.sum()/.var(bias)/.std(bias)/.cov(other)/.corr(other)。"""
+        return _EWMWindow(self._col, com, span, halflife, alpha, min_periods,
+                          adjust, ignore_na, False, self.name, self._index)
 
     # =================================================================
     #  距离度量（与另一列 / Series 逐元素计算）
@@ -4554,13 +4835,28 @@ cdef class DataFrame:
     # Rolling
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def rolling(self, Py_ssize_t window, min_periods=None, center=False, axis=0):
-        """滚动窗口访问器：返回整表 DataFrame 滚动算子（pandas 式签名）。"""
+    def rolling(self, Py_ssize_t window, min_periods=None, center=False, axis=0, win_type=None):
+        """滚动窗口访问器：返回整表 DataFrame 滚动算子（pandas 式签名）。
+        win_type='boxcar'/'triang' 时仅支持 .mean()/.sum()/.var()/.std()（pandas Window 语义）。"""
         if window <= 0:
             raise ValueError(f"Window size must be positive, got {window}")
         if axis != 0 and axis != 'index':
             raise NotImplementedError("rolling supports axis=0 ('index') only")
-        return _RollingWindow(self, window, min_periods, center, True)
+        return _RollingWindow(self, window, min_periods, center, True, None, None, win_type)
+
+    def expanding(self, Py_ssize_t min_periods=1, axis=0):
+        """扩展窗口访问器：等价于 rolling(window=行数, min_periods=min_periods)，
+        复用 _RollingWindow 逐列滚动（window=max(r, mp) 以支持 mp>r 时全 NaN）。"""
+        if axis != 0 and axis != 'index':
+            raise NotImplementedError("expanding supports axis=0 ('index') only")
+        return _RollingWindow(self, max(self.df_length, min_periods), min_periods, False, True)
+
+    def ewm(self, com=None, span=None, halflife=None, alpha=None,
+            Py_ssize_t min_periods=0, bint adjust=True, bint ignore_na=False):
+        """指数加权窗口访问器（pandas 式）：参数四选一（com/span/halflife/alpha），
+        逐数值列应用 .mean()/.sum()/.var(bias)/.std(bias)/.cov(other)/.corr(other)。"""
+        return _EWMWindow(self, com, span, halflife, alpha, min_periods,
+                          adjust, ignore_na, True)
 
     # DataFrame-level shift (delegates to cdef _shift_impl)
     @cython.binding(False)

@@ -198,7 +198,7 @@ DataFrame (:2749)
 | 排序/排名 | `argsort_by`、`sort_values`、`sort_index`、`rank`、`cut`、`qcut` |
 | 过滤/清洗 | `eval/query`、`where_column/where_row/mask_column`、`isna/notna/isnull`、`fillna`、`dropna`、`replace`、`ffill/bfill`、`clip/clip_column`、`abs/round/pct_change` |
 | 变换/重塑 | `apply/applymap/pipe/assign`、`reshape`、`explode`、`stack/unstack`、`T/transpose`、`pivot`、`melt` |
-| 行/列级函数 | `add/sub/mul/div`、`diff/diff_all`、`shift`、`rolling`、`expanding_sum`、`ewm_mean` |
+| 行/列级函数 | `add/sub/mul/div`、`diff/diff_all`、`shift`、`rolling(+win_type)`、`expanding`、`ewm`（旧 `expanding_sum`/`ewm_mean` 保留兼容） |
 | 二元/连接 | `concat`、`merge` |
 | 指标 | `euclidean_dist_withcols / manhattan / cosine_dist / cosine_similarity / jaccard / hamming`、`corr/corrwith/corrcoef/cov/pearson_sim`、`euclidean_dist_matrix...` |
 | 线性代数 | `dot/matmul/det/inv/solve/norm` |
@@ -311,14 +311,14 @@ DataFrame (:2749)
 - **布局**：`(str name, BaseColumn _col, IndexBase _index)` 纯视图——"DataFrame._columns 永远存裸 BaseColumn；Series 是按需构建、用完即可丢弃的临时包装"（`_databaseframe_helper.pxi:11-14`）。
 - `__getattr__`（`:1799`）：列方法直通引擎——`getattr(col, name)` 得到方法后闭包转发，结果若为 BaseColumn 则回包 Series（索引兼容时保留原 index，否则新建 RangeIndex）。
 - 算术（`:1962-2030`）：列运算自动 index 对齐——`_index is other._index` 时才直接结合，否则先 `other.reindex(self._index)`。
-- 统计 22 种、变换 15 种、掩码 8 种、`map/factorize/apply/replace/where/mask`、`reindex/reset_index`、`rolling(window, min_periods=None, center=False)` 返回 `_RollingWindow`（`_databaseframe.pxd` 声明的 cdef class，`pyx:192` 起，Series/DataFrame 双模式，委托列 `roll_*`）。
+- 统计 22 种、变换 15 种、掩码 8 种、`map/factorize/apply/replace/where/mask`、`reindex/reset_index`、`rolling(window, min_periods=None, center=False, win_type=None)`/`expanding(min_periods=1)`/`ewm(com/span/halflife/alpha, ...)` 返回对应 cdef 访问器（`_databaseframe.pxd` 声明，`pyx` 实现，Series/DataFrame 双模式，委托列 `roll_*`/`ewm_*`）。
 - 补齐的 pandas 对齐 API：`shape`、`to_numpy`（别名 `values`）、`shift(periods, fill_value)`（委托 `_shift_column_impl`，Int 空位 0 / 其余 NaN，fill_value 覆盖）、`rank(method/ascending/na_option)`（复用 `_rank_col`/`_rank_row_keys`）、`describe(percentiles)`（数值列 count/mean/std/min/25/50/75/max）。
 - 导出：`to_list/tolist/to_dict/to_pandas/to_frame`。
 - 访问器属性：`.str`（要求 char256/ucs2）、`.dt`（date/datetime/time）、`.cat`（category），类型不符抛 AttributeError。
 
 ### 4.14 访问器
 
-**`_StringAccessor`**（`:1055`，@final）：纯分派器——按住 `_col.dtype` cast 到 AsciiColumn/UCS2Column 转发，结果经 `_wrap` 回包 Series。覆盖搜索 / 类型检查 / 大小写 / strip / replace / split / 切片 / cat 共约 45 个方法。注意 `replace` 的 `count` 参数被接受但不透传。
+**`_StringAccessor`**（`:1055`，@final）：纯分派器——按住 `_col.dtype` cast 到 AsciiColumn/UCS2Column 转发，结果经 `_wrap` 回包 Series。覆盖搜索 / 类型检查 / 大小写 / strip / replace / split / 切片 / cat 共约 45 个方法。`replace(old, new, count)` 的 `count` 已透传 AsciiColumn/UCS2Column 内核（`str.replace(old,new,count)` 语义，UCS2 为原地修改返回 self）。
 
 **`_DateTimeAccessor`**（`:1551`，@final）：`__getattr__` 动态引擎——名字必须在 `_DT_ATTRS` 白名单内，`getattr(col,name)` 得到零参方法后 `_wrap_series` 包裹；显式别名 `weekday/dayofweek/dayofyear/weekofyear` + `strftime(fmt)`。
 
@@ -330,7 +330,10 @@ DataFrame (:2749)
 - **构造管线**（`__init__:2794` → `reserve_with_capacity:2904`）：按 dtype 分两组（固定宽数值 vs 变长/布尔/类别），为每种数值类型发一块列优先合并块，逐列 `create_view` 窗口，并填充 `_c_cols`；最后封存内存。
 - **add_row 极限推流**（`:3034`）：位置/关键字两用，逐列 `_fast_insert_val` 写裸指针，成功后 `df_length+=1` 并同步全部 `len_ptr`；失败 `_rollback_pending_writes`。
 - **排序**：C 层 quicksort argsort 内核 `_c_argsort_numeric(pxi:149)/_c_argsort_char256(pxi:89)/_c_argsort_ucs2(pxi:218)`，纯 nogil；2D 列退化为 Python key `_col_row_key`。
-- **rolling**：`df.rolling(window, min_periods=None, center=False, axis=0)` 返回 `_RollingWindow`（`_databaseframe.pxd` 声明的 cdef 双模式访问器，实现 `pyx` 于 `_RollingWrapper` 旧址 `:192` 起，`DataFrame.rolling` 入口 `~:4556`）——C 核 `_n_roll_*` 滑动聚合并装回整表 DataFrame（非数值列跳过、无数值列 TypeError、`axis!=0/‘index’→NotImplementedError`）；`min_periods/center` 提前在 `_roll_win_bounds` 计算边界，count-aware 核天然支持部分窗口。
+- **rolling**：`df.rolling(window, min_periods=None, center=False, axis=0, win_type=None)` 返回 `_RollingWindow`（`_databaseframe.pxd` 声明的 cdef 双模式访问器，实现 `pyx` 于 `_RollingWrapper` 旧址 `:192` 起，`DataFrame.rolling` 入口 `~:4556`）——C 核 `_n_roll_*` 滑动聚合并装回整表 DataFrame（非数值列跳过、无数值列 TypeError、`axis!=0/‘index’→NotImplementedError`）；`min_periods/center` 提前在 `_roll_win_bounds` 计算边界，count-aware 核天然支持部分窗口。
+- **expanding**：`df/s.expanding(min_periods=1, axis=0)` = `_RollingWindow(obj, max(r, min_periods), min_periods, False, ...)`（核内 `n=min(i+1,window)` → expanding 计数；`mp>r` 全 NaN 不误报）；≡ pandas `expanding ≡ rolling(window=行数)`，全算子等价已验证。
+- **ewm**：`df/s.ewm(com/span/halflife/alpha, min_periods=0, adjust=True, ignore_na=False)` 返回 `_EWMWindow`（`pxd` 声明，`pyx` 实现于 `_RollingWindow` 之后）；参数解析 `_resolve_ewm_alpha`（com/span/halflife→alpha，互斥/缺参错误串与 pandas 一致），委托列级 `ewm_mean/sum/var/std/cov/corr`，C 核 `_n_ewm`/`_n_ewmcov`（`_columns_helper.pxi`，逐列递推、无 times 等间隔假设）；var/std 用 `bias`（对齐 pandas，非 ddof），sum+adjust=False → `NotImplementedError`。
+- **win_type（boxcar/triang）**：挂在 `_RollingWindow`（`_win_type/_weights` 字段），仅放行 `mean/sum/std/var`（其余 `AttributeError('Window' object has no attribute ...')`），`min_periods>window→ValueError`；权重纯公式生成（triang 奇窗 `1-|2i-(M-1)|/(M+1)` / 偶窗 `1-|2i-(M-1)|/M`，= scipy `get_window(...,fftbins=False)`）；内核 `_n_roll_wmean_sum`（窗口右对齐，最新值吃末权重）与 `_n_roll_wvar`（pandas West 循环对齐 quirk：绝对位置 `p%win_n`），center 用尾部补 NaN 右对齐再截断等价写法。
 - **GroupBy**：见 4.16。
 - **Linalg/Metric**：见 4.17/4.18。
 - 快速设置器 `_fast_set_cell`（`:310`）、列构造 `_column_from_list_impl`（`:397`）、astype 解析 `_astype_impl`（`:2041`）。

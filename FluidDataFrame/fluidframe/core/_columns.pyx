@@ -98,6 +98,19 @@ cdef class BaseColumn:
         raise NotImplementedError("Subclasses must implement bfill()")
 
 
+cdef double* _weights_to_buf(object weights, Py_ssize_t win_n) except NULL:
+    """把 Python 权重列表拷入 C double 缓冲（调用方负责 os_aligned_free）。"""
+    if len(weights) != win_n:
+        raise ValueError(f"weights length {len(weights)} != window {win_n}")
+    cdef double* buf = <double*>aligned_malloc(win_n * sizeof(double))
+    if buf == NULL:
+        raise MemoryError()
+    cdef Py_ssize_t i
+    for i in range(win_n):
+        buf[i] = <double>weights[i]
+    return buf
+
+
 @cython.final
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -2297,7 +2310,191 @@ cdef class IntColumn(BaseColumn):
         else:
             raise ValueError(f"Unknown roll method: {method}")
 
+    # ============================================================
+    #  ewm（指数加权移动）列级算子：mean/sum/var/std/cov/corr
+    #  仅单参数窗口参数（com/span/halflife/alpha→alpha）在调用侧解析。
+    # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_mean(self, double alpha, Py_ssize_t min_periods=0, bint adjust=True,
+                 bint ignore_na=False):
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r == 0: return res
+        cdef double com = (1.0 - alpha) / alpha
+        _n_ewm(self.data_c, res.data_c, c, r, alpha, com, min_periods, adjust, ignore_na, True)
+        return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_sum(self, double alpha, Py_ssize_t min_periods=0, bint adjust=True,
+                bint ignore_na=False):
+        if not adjust:
+            raise NotImplementedError("sum is not implemented with adjust=False")
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r == 0: return res
+        cdef double com = (1.0 - alpha) / alpha
+        _n_ewm(self.data_c, res.data_c, c, r, alpha, com, min_periods, adjust, ignore_na, False)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_var(self, double alpha, bint bias=False, Py_ssize_t min_periods=0,
+                bint adjust=True, bint ignore_na=False):
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r == 0: return res
+        _n_ewmcov(self.data_c, self.data_c, res.data_c,
+                  c, r, alpha, min_periods, adjust, ignore_na, bias)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_std(self, double alpha, bint bias=False, Py_ssize_t min_periods=0,
+                bint adjust=True, bint ignore_na=False):
+        cdef DoubleColumn var_col = self.ewm_var(alpha, bias, min_periods, adjust, ignore_na)
+        cdef double* v = var_col.data_c
+        cdef Py_ssize_t n = var_col.length, i
+        with nogil:
+            for i in range(n):
+                if v[i] == v[i]:
+                    v[i] = sqrt(v[i])
+        return var_col
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_cov(self, object other, double alpha, bint bias=False,
+                Py_ssize_t min_periods=0, bint adjust=True, bint ignore_na=False):
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r == 0: return res
+        if other.length < self.length:
+            raise ValueError("other column must be at least as long as self")
+        cdef bint other_is_double = isinstance(other, DoubleColumn)
+        cdef bint other_is_int = isinstance(other, IntColumn)
+        if not (other_is_double or other_is_int):
+            raise TypeError("other must be DoubleColumn or IntColumn")
+        cdef int* src = self.data_c
+        cdef DoubleColumn x_buf
+        if other_is_double:
+            x_buf = _int_col_to_double(self)
+            _n_ewmcov(x_buf.data_c, (<DoubleColumn>other).data_c, res.data_c,
+                      c, r, alpha, min_periods, adjust, ignore_na, bias)
+        else:
+            _n_ewmcov(src, (<IntColumn>other).data_c, res.data_c,
+                      c, r, alpha, min_periods, adjust, ignore_na, bias)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_corr(self, object other, double alpha, Py_ssize_t min_periods=0,
+                 bint adjust=True, bint ignore_na=False):
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r == 0: return res
+        if other.length < self.length:
+            raise ValueError("other column must be at least as long as self")
+        cdef bint other_is_double = isinstance(other, DoubleColumn)
+        cdef bint other_is_int = isinstance(other, IntColumn)
+        if not (other_is_double or other_is_int):
+            raise TypeError("other must be DoubleColumn or IntColumn")
+        cdef int* src = self.data_c
+        cdef DoubleColumn x_buf, y_buf, var_x, var_y
+        if other_is_double:
+            x_buf = _int_col_to_double(self)
+            y_buf = <DoubleColumn>other
+        else:
+            x_buf = _int_col_to_double(self)
+            y_buf = _int_col_to_double(<IntColumn>other)
+        var_x = DoubleColumn(max(r * c, 1), cols=c)
+        var_x.length = r * c
+        var_y = DoubleColumn(max(r * c, 1), cols=c)
+        var_y.length = r * c
+        _n_ewmcov(x_buf.data_c, x_buf.data_c, var_x.data_c,
+                  c, r, alpha, min_periods, adjust, ignore_na, True)
+        _n_ewmcov(y_buf.data_c, y_buf.data_c, var_y.data_c,
+                  c, r, alpha, min_periods, adjust, ignore_na, True)
+        _n_ewmcov(x_buf.data_c, y_buf.data_c, res.data_c,
+                  c, r, alpha, min_periods, adjust, ignore_na, True)
+        cdef double* cov_ptr = res.data_c
+        cdef double* vx = var_x.data_c
+        cdef double* vy = var_y.data_c
+        cdef double denom
+        cdef Py_ssize_t total = r * c, i
+        with nogil:
+            for i in range(total):
+                denom = sqrt(vx[i] * vy[i])
+                if cov_ptr[i] == cov_ptr[i] and denom == denom and denom != 0.0:
+                    cov_ptr[i] = cov_ptr[i] / denom
+                else:
+                    cov_ptr[i] = NAN
+        return res
+
+
+
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_win_mean(self, Py_ssize_t window, object weights, min_periods=None,
+                      bint center=False):
+        return self._roll_win_sum_mean(window, weights, min_periods, center, True)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_win_sum(self, Py_ssize_t window, object weights, min_periods=None,
+                     bint center=False):
+        return self._roll_win_sum_mean(window, weights, min_periods, center, False)
+
+    cdef object _roll_win_sum_mean(self, Py_ssize_t window, object weights,
+                                   object min_periods, bint center, bint avg):
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r == 0: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if mp < 1: mp = 1
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        _n_roll_wmean_sum(self.data_c, res.data_c, c, r, wbuf, window, mp, center, avg)
+        os_aligned_free(wbuf)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_win_var(self, Py_ssize_t window, object weights, bint ddof=True,
+                     min_periods=None, bint center=False):
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t c = self.cols, r = self.rows if self.rows > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan_dbl()
+        if r == 0: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        _n_roll_wvar(self.data_c, res.data_c, c, r, wbuf, window, mp, center, 1 if ddof else 0)
+        os_aligned_free(wbuf)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_win_std(self, Py_ssize_t window, object weights, bint ddof=True,
+                     min_periods=None, bint center=False):
+        cdef DoubleColumn var_col = self.roll_win_var(window, weights, ddof, min_periods, center)
+        cdef double* v = var_col.data_c
+        cdef Py_ssize_t n = var_col.length, i
+        with nogil:
+            for i in range(n):
+                if v[i] == v[i]:
+                    v[i] = sqrt(v[i])
+        return var_col
 
 
 @cython.final
@@ -4499,7 +4696,188 @@ cdef class DoubleColumn(BaseColumn):
         else:
             raise ValueError(f"Unsupported rolling method: '{method}'")
 
+    # ============================================================
+    #  ewm（指数加权移动）列级算子：mean/sum/var/std/cov/corr
+    # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_mean(self, double alpha, Py_ssize_t min_periods=0, bint adjust=True,
+                 bint ignore_na=False):
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan()
+        if r == 0: return res
+        cdef double com = (1.0 - alpha) / alpha
+        _n_ewm(self.data_c, res.data_c, c, r, alpha, com, min_periods, adjust, ignore_na, True)
+        return res
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_sum(self, double alpha, Py_ssize_t min_periods=0, bint adjust=True,
+                bint ignore_na=False):
+        if not adjust:
+            raise NotImplementedError("sum is not implemented with adjust=False")
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan()
+        if r == 0: return res
+        cdef double com = (1.0 - alpha) / alpha
+        _n_ewm(self.data_c, res.data_c, c, r, alpha, com, min_periods, adjust, ignore_na, False)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_var(self, double alpha, bint bias=False, Py_ssize_t min_periods=0,
+                bint adjust=True, bint ignore_na=False):
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan()
+        if r == 0: return res
+        _n_ewmcov(self.data_c, self.data_c, res.data_c,
+                  c, r, alpha, min_periods, adjust, ignore_na, bias)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_std(self, double alpha, bint bias=False, Py_ssize_t min_periods=0,
+                bint adjust=True, bint ignore_na=False):
+        cdef DoubleColumn var_col = self.ewm_var(alpha, bias, min_periods, adjust, ignore_na)
+        cdef double* v = var_col.data_c
+        cdef Py_ssize_t n = var_col.length, i
+        with nogil:
+            for i in range(n):
+                if v[i] == v[i]:
+                    v[i] = sqrt(v[i])
+        return var_col
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_cov(self, object other, double alpha, bint bias=False,
+                Py_ssize_t min_periods=0, bint adjust=True, bint ignore_na=False):
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan()
+        if r == 0: return res
+        if other.length < self.length:
+            raise ValueError("other column must be at least as long as self")
+        cdef bint other_is_double = isinstance(other, DoubleColumn)
+        cdef bint other_is_int = isinstance(other, IntColumn)
+        if not (other_is_double or other_is_int):
+            raise TypeError("other must be DoubleColumn or IntColumn")
+        cdef double* src = self.data_c
+        cdef DoubleColumn y_buf
+        if other_is_double:
+            _n_ewmcov(src, (<DoubleColumn>other).data_c, res.data_c,
+                      c, r, alpha, min_periods, adjust, ignore_na, bias)
+        else:
+            y_buf = _int_col_to_double(<IntColumn>other)
+            _n_ewmcov(src, y_buf.data_c, res.data_c,
+                      c, r, alpha, min_periods, adjust, ignore_na, bias)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ewm_corr(self, object other, double alpha, Py_ssize_t min_periods=0,
+                 bint adjust=True, bint ignore_na=False):
+        if alpha <= 0.0 or alpha > 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan()
+        if r == 0: return res
+        if other.length < self.length:
+            raise ValueError("other column must be at least as long as self")
+        cdef bint other_is_double = isinstance(other, DoubleColumn)
+        cdef bint other_is_int = isinstance(other, IntColumn)
+        if not (other_is_double or other_is_int):
+            raise TypeError("other must be DoubleColumn or IntColumn")
+        cdef double* src = self.data_c
+        cdef DoubleColumn y_buf, var_x, var_y
+        if other_is_double:
+            y_buf = <DoubleColumn>other
+        else:
+            y_buf = _int_col_to_double(<IntColumn>other)
+        var_x = DoubleColumn(max(r * c, 1), cols=c)
+        var_x.length = r * c
+        var_y = DoubleColumn(max(r * c, 1), cols=c)
+        var_y.length = r * c
+        _n_ewmcov(src, src, var_x.data_c, c, r, alpha, min_periods, adjust, ignore_na, True)
+        _n_ewmcov(y_buf.data_c, y_buf.data_c, var_y.data_c, c, r, alpha, min_periods, adjust, ignore_na, True)
+        _n_ewmcov(src, y_buf.data_c, res.data_c, c, r, alpha, min_periods, adjust, ignore_na, True)
+        cdef double* cov_ptr = res.data_c
+        cdef double* vx = var_x.data_c
+        cdef double* vy = var_y.data_c
+        cdef double denom
+        cdef Py_ssize_t total = r * c, i
+        with nogil:
+            for i in range(total):
+                denom = sqrt(vx[i] * vy[i])
+                if cov_ptr[i] == cov_ptr[i] and denom == denom and denom != 0.0:
+                    cov_ptr[i] = cov_ptr[i] / denom
+                else:
+                    cov_ptr[i] = NAN
+        return res
+
+
+
+
+# ============================================================
+    #  win_type 加权滚动（boxcar/triang）：仅 mean/sum/var/std
+    # ============================================================
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_win_mean(self, Py_ssize_t window, object weights, min_periods=None,
+                      bint center=False):
+        return self._roll_win_sum_mean(window, weights, min_periods, center, True)
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_win_sum(self, Py_ssize_t window, object weights, min_periods=None,
+                     bint center=False):
+        return self._roll_win_sum_mean(window, weights, min_periods, center, False)
+
+    cdef object _roll_win_sum_mean(self, Py_ssize_t window, object weights,
+                                   object min_periods, bint center, bint avg):
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan()
+        if r == 0: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        if mp < 1: mp = 1
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        _n_roll_wmean_sum(self.data_c, res.data_c, c, r, wbuf, window, mp, center, avg)
+        os_aligned_free(wbuf)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_win_var(self, Py_ssize_t window, object weights, bint ddof=True,
+                     min_periods=None, bint center=False):
+        if window < 1: raise ValueError("window must be >= 1")
+        cdef Py_ssize_t c = self.num_cols, r = self._get_rows_c() if self._get_rows_c() > 0 else self.length
+        cdef DoubleColumn res = self._make_like_nan()
+        if r == 0: return res
+        cdef Py_ssize_t mp = _resolve_min_periods(window, min_periods)
+        cdef double* wbuf = _weights_to_buf(weights, window)
+        _n_roll_wvar(self.data_c, res.data_c, c, r, wbuf, window, mp, center, 1 if ddof else 0)
+        os_aligned_free(wbuf)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def roll_win_std(self, Py_ssize_t window, object weights, bint ddof=True,
+                     min_periods=None, bint center=False):
+        cdef DoubleColumn var_col = self.roll_win_var(window, weights, ddof, min_periods, center)
+        cdef double* v = var_col.data_c
+        cdef Py_ssize_t n = var_col.length, i
+        with nogil:
+            for i in range(n):
+                if v[i] == v[i]:
+                    v[i] = sqrt(v[i])
+        return var_col
 
 
 # ============================================================
@@ -4737,11 +5115,11 @@ cdef class AsciiColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def replace(self, str old_str, str new_str):
+    def replace(self, str old_str, str new_str, int count=-1):
         cdef AsciiColumn res = AsciiColumn(max(self.length, 1))
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
-            res.append(self._get_str(i).replace(old_str, new_str))
+            res.append(self._get_str(i).replace(old_str, new_str, count))
         return res
 
     @cython.binding(False)
@@ -6267,7 +6645,7 @@ cdef class UCS2Column(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
-    def replace(self, str old, str new):
+    def replace(self, str old, str new, int count=-1):
         cdef Py_ssize_t i, n = self.length
         cdef Py_ssize_t total = 0
         cdef Py_ssize_t pos = 0
@@ -6275,7 +6653,7 @@ cdef class UCS2Column(BaseColumn):
         cdef str s
         cdef list new_strs = [None] * n
         for i in range(n):
-            s = self._get_str(i).replace(old, new)
+            s = self._get_str(i).replace(old, new, count)
             new_strs[i] = s
             total += PyUnicode_GET_LENGTH(s)
         if self.char_capacity < total:
