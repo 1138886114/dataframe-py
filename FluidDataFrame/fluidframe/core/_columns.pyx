@@ -7990,6 +7990,43 @@ cdef inline Py_ssize_t _fmt_write_int(char* dst, int v) noexcept nogil:
         k -= 1
     return w
 
+cdef inline Py_ssize_t _fmt_int_len(int v) noexcept nogil:
+    """十进制表示字节数（含负号），与 _fmt_write_int 输出长度一致。"""
+    if v == 0:
+        return 1
+    cdef bint neg = v < 0
+    cdef long t = -<long>v if neg else v
+    cdef Py_ssize_t k = 0
+    while t > 0:
+        k += 1
+        t /= 10
+    return k + (1 if neg else 0)
+
+cdef inline Py_ssize_t _fmt_expand_len(const char* fmt, Py_ssize_t flen,
+                                       int y, int m, int d) noexcept nogil:
+    """返回 _fmt_expand 的输出字节数（不写入缓冲区）。"""
+    cdef Py_ssize_t p = 0
+    cdef Py_ssize_t i = 0
+    cdef char c
+    while i < flen:
+        if fmt[i] == 37 and i + 1 < flen:   # '%'
+            c = fmt[i + 1]
+            if c == 89:                       # Y
+                p += _fmt_int_len(y)
+                i += 2
+                continue
+            elif c == 109:                    # m
+                p += 2
+                i += 2
+                continue
+            elif c == 100:                    # d
+                p += 2
+                i += 2
+                continue
+        p += 1
+        i += 1
+    return p
+
 cdef inline Py_ssize_t _fmt_expand(char* dst, const char* fmt, Py_ssize_t flen,
                                    int y, int m, int d) noexcept nogil:
     """单遍展开 strftime 模板：%Y=年（十进制），%m/%d=两位补零，其余字面量原样。"""
@@ -8375,11 +8412,6 @@ cdef class DateColumn(BaseColumn):
         cdef bytes b_fmt = fmt.encode('ascii', errors='ignore')
         cdef const char* f_ptr = b_fmt
         cdef Py_ssize_t f_len = len(b_fmt)
-        cdef Py_ssize_t n_pct_y = 0, j = 0
-        for j in range(f_len - 1):
-            if f_ptr[j] == 37 and f_ptr[j + 1] == 89:
-                n_pct_y += 1
-        cdef Py_ssize_t max_fmt = f_len + 6 * n_pct_y + 1
 
         if n == 0:
             return AsciiColumn(0)
@@ -8387,17 +8419,13 @@ cdef class DateColumn(BaseColumn):
         cdef Py_ssize_t* lens = <Py_ssize_t*>aligned_malloc(n * sizeof(Py_ssize_t))
         if lens == NULL:
             raise MemoryError()
-        cdef char* buf = <char*>aligned_malloc(max_fmt * n)
-        if buf == NULL:
-            os_aligned_free(lens)
-            raise MemoryError()
-        cdef Py_ssize_t total = 0, need_bytes = 0, acc = 0, src_off = 0, w
+        cdef Py_ssize_t total = 0, need_bytes = 0, acc = 0
         cdef AsciiColumn res
         try:
             with nogil:
                 for i in range(n):
                     _days_to_ymd(ptr[i], &y, &m, &d)
-                    lens[i] = _fmt_expand(buf + total, f_ptr, f_len, y, m, d)
+                    lens[i] = _fmt_expand_len(f_ptr, f_len, y, m, d)
                     total += lens[i]
 
             res = AsciiColumn(n)
@@ -8407,19 +8435,16 @@ cdef class DateColumn(BaseColumn):
                 res._reserve_bytes(max(res.byte_capacity * 2, need_bytes))
             with nogil:
                 for i in range(n):
-                    w = lens[i]
                     res.offsets_c[i] = acc
-                    if w > 0:
-                        memcpy(res.data_c + acc, buf + src_off, w)
-                    res.data_c[acc + w] = 0
-                    acc += w + 1
-                    src_off += w
+                    _days_to_ymd(ptr[i], &y, &m, &d)
+                    _fmt_expand(res.data_c + acc, f_ptr, f_len, y, m, d)
+                    res.data_c[acc + lens[i]] = 0
+                    acc += lens[i] + 1
             res.offsets_c[n] = acc
             res.byte_length = acc
             return res
         finally:
             os_aligned_free(lens)
-            os_aligned_free(buf)
 
     # ------------------------------------------------------------
     # 过滤算子 (纯 32 位整数比较，100% AVX2/AVX-512 SIMD 向量化)
