@@ -2908,16 +2908,16 @@ cdef class Series:
     def where(self, cond, other):
         """条件替换：当cond为True时保留原值，否则替换为other"""
         n = len(self)
-        new_vals = []
+        new_vals = [None] * n
         for i in range(n):
             if isinstance(cond, Series):
                 c = cond[i]
             else:
                 c = cond
             if c:
-                new_vals.append(self._col[i])
+                new_vals[i] = self._col[i]
             else:
-                new_vals.append(other)
+                new_vals[i] = other
         
         from fluidframe.core.dataframe import _column_from_list_impl
         new_col = _column_from_list_impl(None, self.name, new_vals)
@@ -2928,16 +2928,16 @@ cdef class Series:
     def mask(self, cond, other):
         """掩码替换：当cond为True时替换为other，否则保留原值"""
         n = len(self)
-        new_vals = []
+        new_vals = [None] * n
         for i in range(n):
             if isinstance(cond, Series):
                 c = cond[i]
             else:
                 c = cond
             if c:
-                new_vals.append(other)
+                new_vals[i] = other
             else:
-                new_vals.append(self._col[i])
+                new_vals[i] = self._col[i]
         
         from fluidframe.core.dataframe import _column_from_list_impl
         new_col = _column_from_list_impl(None, self.name, new_vals)
@@ -2952,9 +2952,9 @@ cdef class Series:
     def map(self, func):
         """映射函数"""
         n = len(self)
-        new_vals = []
+        new_vals = [None] * n
         for i in range(n):
-            new_vals.append(func(self._col[i]))
+            new_vals[i] = func(self._col[i])
         
         from fluidframe.core.dataframe import _column_from_list_impl
         new_col = _column_from_list_impl(None, self.name, new_vals)
@@ -2978,13 +2978,13 @@ cdef class Series:
     def replace(self, to_replace, value):
         """替换值"""
         n = len(self)
-        new_vals = []
+        new_vals = [None] * n
         for i in range(n):
             val = self._col[i]
             if val == to_replace:
-                new_vals.append(value)
+                new_vals[i] = value
             else:
-                new_vals.append(val)
+                new_vals[i] = val
         
         from fluidframe.core.dataframe import _column_from_list_impl
         new_col = _column_from_list_impl(None, self.name, new_vals)
@@ -3007,13 +3007,13 @@ cdef class Series:
             old_idx_map[self._index[i]] = i
         
         new_len = len(new_index)
-        new_vals = []
+        new_vals = [None] * new_len
         for i in range(new_len):
             idx_val = new_index[i]
             if idx_val in old_idx_map:
-                new_vals.append(self._col[old_idx_map[idx_val]])
+                new_vals[i] = self._col[old_idx_map[idx_val]]
             else:
-                new_vals.append(None)  # NaN for missing
+                new_vals[i] = None  # NaN for missing
         
         new_col = _column_from_list_impl(None, self.name, new_vals)
         return Series(self.name, new_col, new_index)
@@ -3687,13 +3687,14 @@ cdef class DataFrame:
 
         cdef uint32_t i
         cdef uint32_t n_cols = self._num_cols
+        cdef tuple schema_keys = self._schema_keys
 
         if kwargs:
             if args:
                 raise TypeError("Cannot mix positional args and keyword args in add_row.")
             for i in range(n_cols):
-                if self._schema_keys[i] not in kwargs:
-                    raise ValueError(f"Missing value for column: {self._schema_keys[i]}")
+                if schema_keys[i] not in kwargs:
+                    raise ValueError(f"Missing value for column: {schema_keys[i]}")
             try:
                 for i in range(n_cols):
                     _fast_insert_val(
@@ -3701,7 +3702,7 @@ cdef class DataFrame:
                         self._c_cols[i].data_ptr,
                         self._c_cols[i].col_obj,
                         row_idx,
-                        kwargs[self._schema_keys[i]]
+                        kwargs[schema_keys[i]]
                     )
             except Exception:
                 self._rollback_pending_writes(n_cols)
@@ -3914,28 +3915,42 @@ cdef class DataFrame:
         return names, types
 
     cdef list _get_row_strings(self, Py_ssize_t i):
-        cdef list row_strs = []
+        cdef list row_strs
         cdef RangeIndex ri
         cdef IntIndex ii
         cdef MultiIndex mi
-        cdef int j, code
+        cdef int j, code, pos, n_index_cells
+
+        if self.index is None or self.index.index_type == INDEX_RANGE or self.index.index_type == INDEX_INT:
+            n_index_cells = 1
+        else:
+            mi = <MultiIndex>self.index
+            n_index_cells = mi.nlevels
+
+        row_strs = [None] * (n_index_cells + len(self._columns))
+        pos = 0
 
         if self.index is None:
-            row_strs.append(str(i))
+            row_strs[pos] = str(i)
+            pos += 1
         elif self.index.index_type == INDEX_RANGE:
             ri = <RangeIndex>self.index
-            row_strs.append(str(ri.start + i * ri.step))
+            row_strs[pos] = str(ri.start + i * ri.step)
+            pos += 1
         elif self.index.index_type == INDEX_INT:
             ii = <IntIndex>self.index
-            row_strs.append(str(ii.data.data_c[i]))
+            row_strs[pos] = str(ii.data.data_c[i])
+            pos += 1
         elif self.index.index_type == INDEX_MULTI:
             mi = <MultiIndex>self.index
             for j in range(mi.nlevels):
                 code = (<IntColumn>mi.codes[j]).data_c[i]
-                row_strs.append(self._truncate_str(str(mi.levels[j][code])))
+                row_strs[pos] = self._truncate_str(str(mi.levels[j][code]))
+                pos += 1
 
         for col_name, col in self._columns.items():
-            row_strs.append(self._truncate_str(self._format_value_fast(col, i)))
+            row_strs[pos] = self._truncate_str(self._format_value_fast(col, i))
+            pos += 1
 
         return row_strs
 

@@ -4560,6 +4560,7 @@ cdef _from_list_impl(list rows, dict schema, object columns):
     cdef Py_ssize_t i, j
     cdef list col_order = list(parsed.keys())
     cdef str col_name
+    cdef list col_values
 
     if n_rows == 0:
         for col_name in col_order:
@@ -4571,7 +4572,9 @@ cdef _from_list_impl(list rows, dict schema, object columns):
 
     for j in range(n_cols):
         col_name = col_order[j]
-        col_values = [rows[i][j] for i in range(n_rows)]
+        col_values = [None] * n_rows
+        for i in range(n_rows):
+            col_values[i] = rows[i][j]
         df._columns[col_name] = _populate_column_impl(parsed[col_name], n_rows, col_values)
 
     _rename_columns_impl(df, columns)
@@ -4637,8 +4640,9 @@ cdef _randn_impl(Py_ssize_t rows, Py_ssize_t cols):
     for c_idx in range(cols):
         col = DoubleColumn(max(rows, 1))
         col.length = rows
-        for r_idx in range(rows):
-            col.data_c[r_idx] = _random_gauss()
+        with nogil:
+            for r_idx in range(rows):
+                col.data_c[r_idx] = _random_gauss()
         df._columns[col_names[c_idx]] = col
     return df
 
@@ -4654,8 +4658,9 @@ cdef _rand_impl(Py_ssize_t rows, Py_ssize_t cols):
     for c_idx in range(cols):
         col = DoubleColumn(max(rows, 1))
         col.length = rows
-        for r_idx in range(rows):
-            col.data_c[r_idx] = _random_uniform()
+        with nogil:
+            for r_idx in range(rows):
+                col.data_c[r_idx] = _random_uniform()
         df._columns[col_names[c_idx]] = col
     return df
 
@@ -5522,16 +5527,18 @@ cdef int _gb_build_groups(DataFrame df, list by_cols,
 # Aggregation helpers
 # ============================================================
 
-cdef inline double _gb_agg_int_sub(int* ptr, Py_ssize_t stride, int sub, Py_ssize_t* idxs, Py_ssize_t sz, _AggFunc agg) noexcept nogil:
+cdef inline double _n_gb_agg_fused(NumericType* ptr, Py_ssize_t stride, int sub,
+        Py_ssize_t* idxs, Py_ssize_t sz, _AggFunc agg) noexcept nogil:
+    """单核聚合：Int/Double 两族合一，支持 2D 子列偏移（sub*stride），一次 nogil 完成。"""
     cdef double val = 0.0, d, mean = 0.0, M2 = 0.0, delta, delta2
     cdef Py_ssize_t i, base = sub * stride
 
     if agg == _AGG_SUM:
-        for i in range(sz): val += ptr[base + idxs[i]]
+        for i in range(sz): val += <double>ptr[base + idxs[i]]
         return val
     if agg == _AGG_MEAN:
         if sz == 0: return NAN
-        for i in range(sz): val += ptr[base + idxs[i]]
+        for i in range(sz): val += <double>ptr[base + idxs[i]]
         return val / <double>sz
     if agg == _AGG_MIN:
         if sz == 0: return NAN
@@ -5549,60 +5556,16 @@ cdef inline double _gb_agg_int_sub(int* ptr, Py_ssize_t stride, int sub, Py_ssiz
         return val
     if agg == _AGG_VAR or agg == _AGG_STD:
         if sz < 2: return NAN
-        # 采用 Welford 算法实现单趟内存访问，省掉一次间接指针查询，速度翻倍
+        # 采用 Welford 算法实现单趟内存访问，省掉一次间接指针查询
         for i in range(sz):
             val = <double>ptr[base + idxs[i]]
             delta = val - mean
             mean += delta / (i + 1)
             delta2 = val - mean
             M2 += delta * delta2
-
         if agg == _AGG_VAR: return M2 / <double>(sz - 1)
         return sqrt(M2 / <double>(sz - 1))
 
-    return NAN
-
-cdef inline double _gb_agg_double_sub(double* ptr, Py_ssize_t stride, int sub, Py_ssize_t* idxs, Py_ssize_t sz, _AggFunc agg) noexcept nogil:
-    cdef double val = 0.0, d, mean = 0.0, M2 = 0.0, delta, delta2
-    cdef Py_ssize_t i, base = sub * stride
-
-    if agg == _AGG_SUM:
-        for i in range(sz): val += ptr[base + idxs[i]]
-        return val
-
-    if agg == _AGG_MEAN:
-        if sz == 0: return NAN
-        for i in range(sz): val += ptr[base + idxs[i]]
-        return val / <double>sz
-
-    # 使用 Welford 处理 VAR/STD
-    if agg == _AGG_VAR or agg == _AGG_STD:
-        if sz < 2: return NAN
-        for i in range(sz):
-            val = ptr[base + idxs[i]]
-            delta = val - mean
-            mean += delta / (i + 1)
-            delta2 = val - mean
-            M2 += delta * delta2
-
-        if agg == _AGG_VAR: return M2 / <double>(sz - 1)
-        return sqrt(M2 / <double>(sz - 1))
-
-    if agg == _AGG_MIN:
-        if sz == 0: return NAN
-        val = ptr[base + idxs[0]]
-        for i in range(1, sz):
-            d = ptr[base + idxs[i]]
-            if d < val: val = d
-        return val
-
-    if agg == _AGG_MAX:
-        if sz == 0: return NAN
-        val = ptr[base + idxs[0]]
-        for i in range(1, sz):
-            d = ptr[base + idxs[i]]
-            if d > val: val = d
-        return val
     return NAN
 
 cdef DoubleColumn _gb_native_agg(DataFrame df, _GroupRows* gr, str col_name, str func):
@@ -5623,16 +5586,18 @@ cdef DoubleColumn _gb_native_agg(DataFrame df, _GroupRows* gr, str col_name, str
         res_col.length = out_n * c_col
         if orig_col.dtype == TYPE_DOUBLE:
             d_ptr = (<DoubleColumn>orig_col).data_c
-            for sub in range(c_col):
-                for g_id in range(out_n):
-                    res_col.data_c[sub * out_n + g_id] = _gb_agg_double_sub(
-                        d_ptr, r_col, sub, gr.rows[g_id], gr.row_sizes[g_id], agg_type)
+            with nogil:
+                for sub in range(c_col):
+                    for g_id in range(out_n):
+                        res_col.data_c[sub * out_n + g_id] = _n_gb_agg_fused[double](
+                            d_ptr, r_col, sub, gr.rows[g_id], gr.row_sizes[g_id], agg_type)
         else:
             i_ptr = (<IntColumn>orig_col).data_c
-            for sub in range(c_col):
-                for g_id in range(out_n):
-                    res_col.data_c[sub * out_n + g_id] = _gb_agg_int_sub(
-                        i_ptr, r_col, sub, gr.rows[g_id], gr.row_sizes[g_id], agg_type)
+            with nogil:
+                for sub in range(c_col):
+                    for g_id in range(out_n):
+                        res_col.data_c[sub * out_n + g_id] = _n_gb_agg_fused[int](
+                            i_ptr, r_col, sub, gr.rows[g_id], gr.row_sizes[g_id], agg_type)
         return res_col
 
     res_col = DoubleColumn(max(out_n, 1))
@@ -5640,33 +5605,17 @@ cdef DoubleColumn _gb_native_agg(DataFrame df, _GroupRows* gr, str col_name, str
     out_ptr = res_col.data_c
 
     if orig_col.dtype == TYPE_DOUBLE:
-        col_dbl = <DoubleColumn>orig_col
-        if agg_type == _AGG_SUM:
-            for g_id in range(out_n): out_ptr[g_id] = col_dbl._sum_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_MEAN:
-            for g_id in range(out_n): out_ptr[g_id] = col_dbl._mean_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_MIN:
-            for g_id in range(out_n): out_ptr[g_id] = col_dbl._min_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_MAX:
-            for g_id in range(out_n): out_ptr[g_id] = col_dbl._max_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_VAR:
-            for g_id in range(out_n): out_ptr[g_id] = col_dbl._var_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_STD:
-            for g_id in range(out_n): out_ptr[g_id] = col_dbl._std_rows(gr.rows[g_id], gr.row_sizes[g_id])
+        d_ptr = (<DoubleColumn>orig_col).data_c
+        with nogil:
+            for g_id in range(out_n):
+                out_ptr[g_id] = _n_gb_agg_fused[double](
+                    d_ptr, r_col, 0, gr.rows[g_id], gr.row_sizes[g_id], agg_type)
     elif orig_col.dtype == TYPE_INT:
-        col_int = <IntColumn>orig_col
-        if agg_type == _AGG_SUM:
-            for g_id in range(out_n): out_ptr[g_id] = col_int._sum_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_MEAN:
-            for g_id in range(out_n): out_ptr[g_id] = col_int._mean_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_MIN:
-            for g_id in range(out_n): out_ptr[g_id] = col_int._min_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_MAX:
-            for g_id in range(out_n): out_ptr[g_id] = col_int._max_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_VAR:
-            for g_id in range(out_n): out_ptr[g_id] = col_int._var_rows(gr.rows[g_id], gr.row_sizes[g_id])
-        elif agg_type == _AGG_STD:
-            for g_id in range(out_n): out_ptr[g_id] = col_int._std_rows(gr.rows[g_id], gr.row_sizes[g_id])
+        i_ptr = (<IntColumn>orig_col).data_c
+        with nogil:
+            for g_id in range(out_n):
+                out_ptr[g_id] = _n_gb_agg_fused[int](
+                    i_ptr, r_col, 0, gr.rows[g_id], gr.row_sizes[g_id], agg_type)
 
     return res_col
 
