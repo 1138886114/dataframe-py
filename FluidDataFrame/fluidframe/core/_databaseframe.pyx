@@ -24,7 +24,7 @@ from fluidframe.core._columns cimport (
     _int_double_euclidean_dist, _int_double_manhattan_dist,
     _int_double_cosine_sim, _int_double_jaccard_sim, _int_double_hamming_dist,
     _c_shift_left, _c_shift_right, _col_pop_back, _col_pop_front, _col_concat,
-    _col_drop_row, _col_gather, _col_gather_zero, _col_gather_nan,
+    _col_drop_row, _col_gather_zero, _col_gather_nan,
     _col_shift_right_2d_double, _col_shift_right_2d_int, _col_shift_left_2d,
     _col_concat_2d, _col_gather_2d_zero, _col_gather_2d_nan,
     _col_count_nonzeros, _col_memcpy, _col_abs, _col_round, _cmp_double_asc,
@@ -1542,6 +1542,7 @@ cdef class _StringAccessor:
 
     # ==================== Extract / Findall ====================
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def extract(self, str pattern, int group=1):
         cdef BaseColumn col = self._series._col
@@ -1717,6 +1718,7 @@ cdef class _StringAccessor:
 
     # ==================== Strip / Pad ====================
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def strip(self, chars=None):
         cdef BaseColumn col = self._series._col
@@ -1726,6 +1728,7 @@ cdef class _StringAccessor:
             return self._wrap((<UCS2Column>col).strip(chars) if chars is not None else (<UCS2Column>col).strip())
         raise TypeError("String accessor requires string column")
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def lstrip(self, chars=None):
         cdef BaseColumn col = self._series._col
@@ -1735,6 +1738,7 @@ cdef class _StringAccessor:
             return self._wrap((<UCS2Column>col).lstrip(chars) if chars is not None else (<UCS2Column>col).lstrip())
         raise TypeError("String accessor requires string column")
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def rstrip(self, chars=None):
         cdef BaseColumn col = self._series._col
@@ -1744,6 +1748,7 @@ cdef class _StringAccessor:
             return self._wrap((<UCS2Column>col).rstrip(chars) if chars is not None else (<UCS2Column>col).rstrip())
         raise TypeError("String accessor requires string column")
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def center(self, int width, str fillchar=' '):
         cdef BaseColumn col = self._series._col
@@ -1753,6 +1758,7 @@ cdef class _StringAccessor:
             return self._wrap((<UCS2Column>col).center(width, fillchar))
         raise TypeError("String accessor requires string column")
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def ljust(self, int width, str fillchar=' '):
         cdef BaseColumn col = self._series._col
@@ -1762,6 +1768,7 @@ cdef class _StringAccessor:
             return self._wrap((<UCS2Column>col).ljust(width, fillchar))
         raise TypeError("String accessor requires string column")
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def rjust(self, int width, str fillchar=' '):
         cdef BaseColumn col = self._series._col
@@ -1771,6 +1778,7 @@ cdef class _StringAccessor:
             return self._wrap((<UCS2Column>col).rjust(width, fillchar))
         raise TypeError("String accessor requires string column")
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def pad(self, int width, str side='left', str fillchar=' '):
         cdef BaseColumn col = self._series._col
@@ -1792,6 +1800,7 @@ cdef class _StringAccessor:
 
     # ==================== Replace ====================
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def replace(self, str old, str new, int count=-1):
         cdef BaseColumn col = self._series._col
@@ -1803,6 +1812,7 @@ cdef class _StringAccessor:
 
     # ==================== Split ====================
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def split(self, str sep=None, int maxsplit=-1):
         cdef BaseColumn col = self._series._col
@@ -1812,6 +1822,7 @@ cdef class _StringAccessor:
             return self._wrap((<UCS2Column>col).str_split(sep, maxsplit))
         raise TypeError("String accessor requires string column")
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def rsplit(self, str sep=None, int maxsplit=-1):
         cdef BaseColumn col = self._series._col
@@ -1843,6 +1854,7 @@ cdef class _StringAccessor:
 
     # ==================== Slicing / Access ====================
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def get(self, int index, str default=''):
         cdef BaseColumn col = self._series._col
@@ -1852,6 +1864,7 @@ cdef class _StringAccessor:
             return self._wrap((<UCS2Column>col).get(index, default))
         raise TypeError("String accessor requires string column")
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def slice(self, int start=0, int stop=-1, int step=1):
         cdef BaseColumn col = self._series._col
@@ -1881,6 +1894,7 @@ cdef class _StringAccessor:
 
     # ==================== Concat ====================
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def cat(self, other, str sep=''):
         cdef BaseColumn col = self._series._col
@@ -1943,22 +1957,27 @@ cdef class _DateTimeAccessor:
                 f"`.dt.{name}` not supported for column type {type(col).__name__}")
         return _wrap_series(self._series.name, fn(), self._series._index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def weekday(self):
         return _wrap_series(self._series.name, self._series._col.day_of_week(), self._series._index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def dayofweek(self):
         return _wrap_series(self._series.name, self._series._col.day_of_week(), self._series._index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def dayofyear(self):
         return _wrap_series(self._series.name, self._series._col.day_of_year(), self._series._index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def weekofyear(self):
         return _wrap_series(self._series.name, self._series._col.week_of_year(), self._series._index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def strftime(self, str fmt):
         return _wrap_series(self._series.name, getattr(self._series._col, 'strftime')(fmt), self._series._index)
@@ -1994,6 +2013,7 @@ cdef class _CategoryAccessor:
         cdef CategoryColumn col = <CategoryColumn>self._series._col
         return list(col.categories)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def rename_categories(self, mapper, bint inplace=False):
         cdef CategoryColumn col = <CategoryColumn>self._series._col
@@ -2022,6 +2042,7 @@ cdef class _CategoryAccessor:
         if not inplace:
             return target
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def add_categories(self, list new_categories, bint inplace=False):
         cdef CategoryColumn col = <CategoryColumn>self._series._col
@@ -2037,6 +2058,7 @@ cdef class _CategoryAccessor:
         if not inplace:
             return target
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def remove_categories(self, list removals, bint inplace=False):
         cdef set rem_set = set([str(x) for x in removals])
@@ -2044,6 +2066,7 @@ cdef class _CategoryAccessor:
         cdef list new_cats = [c for c in col.categories if c not in rem_set]
         return self.set_categories(new_cats, inplace=inplace)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def set_categories(self, list new_categories, bint inplace=False):
         cdef CategoryColumn col = <CategoryColumn>self._series._col
@@ -2090,6 +2113,7 @@ cdef class _CategoryAccessor:
         if not inplace:
             return target
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def as_ordered(self, bint inplace=False):
         cdef CategoryColumn col = <CategoryColumn>self._series._col
@@ -2097,6 +2121,7 @@ cdef class _CategoryAccessor:
         if not inplace:
             return target
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def as_unordered(self, bint inplace=False):
         cdef CategoryColumn col = <CategoryColumn>self._series._col
@@ -2146,14 +2171,15 @@ cdef class Series:
         return self._index
     
     @index.setter
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def index(self, value):
         self._index = value
     
     @property
     def values(self):
-        """返回底层数据的Python列表"""
-        n = len(self)
-        return [self._col[i] for i in range(n)]
+        """返回底层数据的Python列表（2D 列返回行键元组，与 _col_to_keys/value_counts 一致）"""
+        return _col_to_keys(self._col)
 
     @property
     def shape(self):
@@ -2166,11 +2192,11 @@ cdef class Series:
 
     def __iter__(self):
         for i in range(len(self)):
-            yield self._col[i]
+            yield _col_row_key(self._col, i)
 
     def __contains__(self, val):
         for i in range(len(self)):
-            if self._col[i] == val:
+            if _col_row_key(self._col, i) == val:
                 return True
         return False
 
@@ -2184,6 +2210,8 @@ cdef class Series:
             raise AttributeError(f"'Series' object has no attribute '{name}'")
         attr = getattr(col, name, None)
         if callable(attr):
+            @cython.binding(False)
+            @cython.always_allow_keywords(False)
             def _forward(*args, **kwargs):
                 cdef BaseColumn rcol
                 cdef Py_ssize_t rlen
@@ -2225,15 +2253,15 @@ cdef class Series:
         if n <= max_display:
             for i in range(n):
                 idx_val = self._index[i] if self._index else i
-                lines.append(f"  {idx_val}: {self._col[i]}")
+                lines.append(f"  {idx_val}: {_col_row_key(self._col, i)}")
         else:
             for i in range(10):
                 idx_val = self._index[i] if self._index else i
-                lines.append(f"  {idx_val}: {self._col[i]}")
+                lines.append(f"  {idx_val}: {_col_row_key(self._col, i)}")
             lines.append(f"  ... ({n - 20} rows omitted)")
             for i in range(n - 10, n):
                 idx_val = self._index[i] if self._index else i
-                lines.append(f"  {idx_val}: {self._col[i]}")
+                lines.append(f"  {idx_val}: {_col_row_key(self._col, i)}")
         
         return "\n".join(lines)
 
@@ -2279,14 +2307,14 @@ cdef class Series:
             finally:
                 os_aligned_free(keep_c)
 
-        # 整数索引（2D 列按底层扁平索引取元素，与 DataFrame 旧语义一致）
+        # 整数索引（逻辑行；2D 列返回行键元组，与 _col_to_keys/factorize/value_counts 一致）
         if isinstance(key, int):
-            total = self._col.length
+            total = len(self)
             if key < 0:
                 key = total + key
             if key < 0 or key >= total:
                 raise IndexError("index out of range")
-            return self._col[key]
+            return _col_row_key(self._col, key)
 
         # 切片
         if isinstance(key, slice):
@@ -2323,8 +2351,10 @@ cdef class Series:
         raise TypeError(f"invalid index type: {type(key)}")
 
     def __setitem__(self, key, value):
-        """标量赋值"""
+        """标量赋值（2D 列禁止行级赋值，避免只写子列 0 的静默错误）"""
         if isinstance(key, int):
+            if self._col.is_2d and self._col.num_cols > 1:
+                raise ValueError("Cannot setitem on a 2D Series row; assign on the underlying 2D column")
             if key < 0:
                 key = self._col.length + key
             if key < 0 or key >= self._col.length:
@@ -2504,6 +2534,8 @@ cdef class Series:
     #  命名算术（pandas 风格：s.add(other) 等价于 s + other）
     # =================================================================
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def add(self, other):
         """加法：Series + other（other 可为 Series/列/标量）"""
         o = (<Series>other)._col if isinstance(other, Series) else other
@@ -2513,6 +2545,8 @@ cdef class Series:
             res = self._col.add_val(o)
         return Series(self.name, res, self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sub(self, other):
         """减法：Series - other"""
         o = (<Series>other)._col if isinstance(other, Series) else other
@@ -2522,6 +2556,8 @@ cdef class Series:
             res = self._col.sub_val(o)
         return Series(self.name, res, self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mul(self, other):
         """乘法：Series * other"""
         o = (<Series>other)._col if isinstance(other, Series) else other
@@ -2531,6 +2567,8 @@ cdef class Series:
             res = self._col.mul_val(o)
         return Series(self.name, res, self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def div(self, other):
         """除法：Series / other"""
         o = (<Series>other)._col if isinstance(other, Series) else other
@@ -2544,50 +2582,74 @@ cdef class Series:
     #  单列统计
     # =================================================================
     
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sum(self):
         """求和"""
         return self._col.sum()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mean(self):
         """均值"""
         return self._col.mean()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def std(self):
         """标准差"""
         return self._col.std()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def var(self):
         """方差"""
         return self._col.var()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def min(self):
         """最小值"""
         return self._col.min()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def max(self):
         """最大值"""
         return self._col.max()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def median(self):
         """中位数"""
         return self._col.median()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def prod(self):
         """连乘积"""
         return self._col.prod()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def count(self):
         """计数（非空/非NaN）"""
         return self._col.count()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def nunique(self):
         """唯一值数量（2D 列返回每子列的计数列表）"""
         return self._col._nunique()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def unique(self):
         """唯一值"""
         return self._col.unique()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def value_counts(self):
         """值计数，返回 Series：以值为索引（StringIndex）、频次为值，按频次降序。"""
         cdef list keys = _col_to_keys(self._col)
@@ -2607,34 +2669,50 @@ cdef class Series:
             cnt_ptr[i] = sorted_items[i][1]
         return Series(self.name, cnt_col, StringIndex(key_list))
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def argmax(self):
         """最大值索引"""
         return self._col.idxmax()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def argmin(self):
         """最小值索引"""
         return self._col.idxmin()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def quantile(self, q):
         """分位数"""
         return self._col.quantile(q)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def skew(self):
         """偏度"""
         return self._col.skew()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def kurt(self):
         """峰度"""
         return self._col.kurt()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mad(self):
         """平均绝对偏差"""
         return self._col.mad()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sem(self):
         """标准误"""
         return self._col.sem()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mode(self):
         """众数：返回以值为列的 Series（pandas 语义，按 Mode 值升序）"""
         cdef list vals = self._col.mode()
@@ -2647,54 +2725,80 @@ cdef class Series:
     #  单列变换
     # =================================================================
     
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def fillna(self, value):
         """填充NaN/None值"""
         return Series(self.name, self._col.fillna(value), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def ffill(self):
         """向前填充"""
         return Series(self.name, self._col.ffill(), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def bfill(self):
         """向后填充"""
         return Series(self.name, self._col.bfill(), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def astype(self, dtype):
         """类型转换"""
         return Series(self.name, self._col.astype(dtype), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def abs(self):
         """绝对值"""
         return Series(self.name, self._col.abs(), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def clip(self, lower=None, upper=None):
         """截断值"""
         return Series(self.name, self._col.clip(lower, upper), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def round(self, decimals):
         """四舍五入"""
         return Series(self.name, self._col.round(decimals), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def diff(self, periods=1):
         """差分"""
         return Series(self.name, self._col.diff(periods), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pct_change(self, periods=1):
         """百分比变化"""
         return Series(self.name, self._col.pct_change(periods), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cumsum(self):
         """累积和"""
         return Series(self.name, self._col.cumsum(), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cumprod(self):
         """累积积"""
         return Series(self.name, self._col.cumprod(), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cummax(self):
         """累积最大值"""
         return Series(self.name, self._col.cummax(), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cummin(self):
         """累积最小值"""
         return Series(self.name, self._col.cummin(), self._index)
@@ -2703,30 +2807,44 @@ cdef class Series:
     #  排序与索引
     # =================================================================
     
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def sort_values(self, ascending=True):
         """按值排序"""
         return self._col.sort_values(ascending)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def head(self, n=5):
         """前n行"""
         return self._col.head(n)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def tail(self, n=5):
         """后n行"""
         return self._col.tail(n)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def nsmallest(self, n):
         """最小的n个值"""
         return self._col.nsmallest(n)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def nlargest(self, n):
         """最大的n个值"""
         return self._col.nlargest(n)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def idxmax(self):
         """最大值索引"""
         return self._col.idxmax()
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def idxmin(self):
         """最小值索引"""
         return self._col.idxmin()
@@ -2735,22 +2853,32 @@ cdef class Series:
     #  布尔判断
     # =================================================================
     
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isna(self):
         """判断是否为NaN/None"""
         return Series(self.name, _series_isna(self._col), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def notna(self):
         """判断是否非NaN/None"""
         return Series(self.name, _series_notna(self._col), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def isin(self, values):
         """判断是否在值列表中"""
         return Series(self.name, self._col.isin(values), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def between(self, low, high):
         """判断是否在区间内"""
         return Series(self.name, self._col.between(low, high), self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def all(self):
         """判断是否全部为True"""
         n = len(self)
@@ -2761,6 +2889,8 @@ cdef class Series:
                 return False
         return True
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def any(self):
         """判断是否有True"""
         n = len(self)
@@ -2773,6 +2903,8 @@ cdef class Series:
     #  条件替换
     # =================================================================
     
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def where(self, cond, other):
         """条件替换：当cond为True时保留原值，否则替换为other"""
         n = len(self)
@@ -2791,6 +2923,8 @@ cdef class Series:
         new_col = _column_from_list_impl(None, self.name, new_vals)
         return Series(self.name, new_col, self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def mask(self, cond, other):
         """掩码替换：当cond为True时替换为other，否则保留原值"""
         n = len(self)
@@ -2813,6 +2947,8 @@ cdef class Series:
     #  映射与转换
     # =================================================================
     
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def map(self, func):
         """映射函数"""
         n = len(self)
@@ -2824,15 +2960,21 @@ cdef class Series:
         new_col = _column_from_list_impl(None, self.name, new_vals)
         return Series(self.name, new_col, self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def factorize(self):
         """分类编码（对标 pandas Series.factorize）：返回
         (codes, uniques)，uniques 按首次出现顺序、codes 与行数等长。"""
         return _series_factorize(self._col)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def apply(self, func):
         """应用函数"""
         return self.map(func)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def replace(self, to_replace, value):
         """替换值"""
         n = len(self)
@@ -2852,6 +2994,8 @@ cdef class Series:
     #  索引操作
     # =================================================================
     
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def reindex(self, new_index):
         """重新索引"""
         from fluidframe.core.dataframe import _column_from_list_impl
@@ -2874,6 +3018,8 @@ cdef class Series:
         new_col = _column_from_list_impl(None, self.name, new_vals)
         return Series(self.name, new_col, new_index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def reset_index(self):
         """重置索引"""
         from fluidframe.core.index import RangeIndex
@@ -2910,6 +3056,8 @@ cdef class Series:
     #  滚动窗口
     # =================================================================
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def rolling(self, Py_ssize_t window, min_periods=None, center=False, win_type=None):
         """滚动窗口访问器：返回 _RollingWindow（.mean()/.sum()/... 窗口算子）。
         win_type='boxcar'/'triang' 时仅支持 .mean()/.sum()/.var()/.std()（pandas Window 语义）。"""
@@ -2917,6 +3065,8 @@ cdef class Series:
             raise ValueError(f"Window size must be positive, got {window}")
         return _RollingWindow(self._col, window, min_periods, center, False, self.name, self._index, win_type)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def expanding(self, Py_ssize_t min_periods=1, axis=0):
         """扩展窗口访问器：等价于 rolling(window=行数, min_periods=min_periods)。
         复用 _RollingWindow（window=max(r, mp) 以支持 mp>r 时全 NaN 的 pandas 语义）。"""
@@ -2925,6 +3075,8 @@ cdef class Series:
         cdef Py_ssize_t r = <Py_ssize_t>self.length
         return _RollingWindow(self._col, max(r, min_periods), min_periods, False, False, self.name, self._index)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def ewm(self, com=None, span=None, halflife=None, alpha=None,
             Py_ssize_t min_periods=0, bint adjust=True, bint ignore_na=False):
         """指数加权窗口访问器（pandas 式）：参数四选一（com/span/halflife/alpha），
@@ -2936,31 +3088,43 @@ cdef class Series:
     #  距离度量（与另一列 / Series 逐元素计算）
     # =================================================================
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def euclidean_dist(self, other):
         """欧氏距离：与其他 Series/列 逐元素计算"""
         o = (<Series>other)._col if isinstance(other, Series) else other
         return self._col.euclidean_dist(o)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def manhattan_dist(self, other):
         """曼哈顿距离"""
         o = (<Series>other)._col if isinstance(other, Series) else other
         return self._col.manhattan_dist(o)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cosine_similarity(self, other):
         """余弦相似度"""
         o = (<Series>other)._col if isinstance(other, Series) else other
         return self._col.cosine_similarity(o)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def cosine_dist(self, other):
         """余弦距离"""
         o = (<Series>other)._col if isinstance(other, Series) else other
         return self._col.cosine_dist(o)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def jaccard_sim(self, other):
         """Jaccard 相似度"""
         o = (<Series>other)._col if isinstance(other, Series) else other
         return self._col.jaccard_sim(o)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def hamming_dist(self, other):
         """汉明距离"""
         o = (<Series>other)._col if isinstance(other, Series) else other
@@ -2970,18 +3134,26 @@ cdef class Series:
     #  导出
     # =================================================================
     
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_list(self):
         """转换为Python列表"""
         return self.values
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def tolist(self):
         """pandas 风格别名：转换为 Python 列表"""
         return self.values
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_numpy(self):
         """导出为一维 Python 列表（本库 to_numpy 约定为 Python 容器）"""
         return self.values
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_dict(self):
         """转换为字典（索引 -> 值）"""
         result = {}
@@ -2990,6 +3162,8 @@ cdef class Series:
             result[self._index[i]] = self._col[i]
         return result
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_pandas(self):
         """转换为pandas Series（如果pandas可用）"""
         try:
@@ -2998,6 +3172,8 @@ cdef class Series:
         except ImportError:
             raise ImportError("pandas is required for to_pandas()")
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def to_frame(self, name=None):
         """转换为单列 DataFrame（对标 pandas Series.to_frame）"""
         cdef DataFrame result = DataFrame()
@@ -3007,6 +3183,8 @@ cdef class Series:
         result.index = self._index
         return result
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def shift(self, int periods=1, fill_value=None):
         """移动数据（语义同 df.shift）：periods>0 下移，空位填 NaN/fill_value。"""
         n = len(self)
@@ -3027,6 +3205,8 @@ cdef class Series:
         cdef IndexBase idx = self._index
         return Series(self.name, col, idx)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def rank(self, str method='average', bint ascending=True, str na_option='keep'):
         """排名（pandas 语义）：average/min/max/first/dense。"""
         cdef BaseColumn col = self._col
@@ -3039,6 +3219,8 @@ cdef class Series:
             return Series(self.name, _rank_col((<DoubleColumn>col).data_c, n, method, ascending), self._index)
         raise TypeError(f"rank not supported for column type {col.dtype}")
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def describe(self, object percentiles=None):
         """数值统计概览（对标 pandas Series.describe）：count/mean/std/min/分位/max。"""
         cdef BaseColumn col = self._col
@@ -3063,6 +3245,8 @@ cdef class Series:
 # df.isnull / df.apply 完全对齐（2D 列走行级键，见 crud._col_to_keys）。
 # ============================================================
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def _series_value_counts(BaseColumn col, str key_name='value'):
     """列级 value_counts：行级键计数，2D 列键为子列元组，结果保持 cols 维度。"""
     cdef list keys = _col_to_keys(col)
@@ -3095,6 +3279,8 @@ def _series_value_counts(BaseColumn col, str key_name='value'):
     return result
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def _series_isna(BaseColumn col):
     """列级缺失掩码，语义与 df.isnull 一致：double=NaN、字符串=空串、类别=''，其余恒 False。
     2D 输入保持 cols 维度（IntColumn 掩码）。"""
@@ -3135,6 +3321,8 @@ def _series_isna(BaseColumn col):
     return new_col
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def _series_notna(BaseColumn col):
     """列级非缺失掩码：_series_isna 的结果取反。"""
     cdef object m = _series_isna(col)
@@ -3147,6 +3335,8 @@ def _series_notna(BaseColumn col):
     return mask_col
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def _series_factorize(BaseColumn col):
     """列级 factorize（对标 pandas Series.factorize）：返回
     (codes, uniques)，uniques 按首次出现顺序、codes 与行数等长。
@@ -3169,6 +3359,8 @@ def _series_factorize(BaseColumn col):
     return codes_list, uniques
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def _series_map(BaseColumn col, object func):
     """列级元素映射（对标 pandas Series.map）：逐存储单元应用 func。
     2D 列按列主序逐 cell 应用，数值结果保持 cols 维度。"""
@@ -3474,6 +3666,7 @@ cdef class DataFrame:
         self._fixed_capacity = capacity
         self._is_sealed = True   # 锁定扩容状态
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def add_row(self, *args, **kwargs):
         """
@@ -3851,6 +4044,8 @@ cdef class DataFrame:
                     result._columns[name] = new_col
         return result
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def get_series(self, name):
         """返回Series（单列代理），知道自己的名字和索引"""
         from fluidframe.core.series import Series
@@ -3922,6 +4117,8 @@ cdef class DataFrame:
         """始终为 2（DataFrame 语义）"""
         return 2
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def get(self, key, default=None):
         """按列名取 Series，不存在时返回 default（pandas df.get 语义）"""
         if key in self._columns:
@@ -3959,9 +4156,6 @@ cdef class DataFrame:
             result.index = self.index._take(indices, n)
         return result
 
-    cdef BaseColumn _column_from_list(self, str name, list values):
-        return _column_from_list_impl(self, name, values)
-
     cdef double _get_col_value_as_double(self, BaseColumn col, Py_ssize_t i):
         if col.dtype == TYPE_INT:
             return <double>(<IntColumn>col).data_c[i]
@@ -3969,6 +4163,7 @@ cdef class DataFrame:
             return (<DoubleColumn>col).data_c[i]
         return 0.0
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def groupby(self, by_cols):
         if self._groupby_cache is not None:
@@ -4015,6 +4210,7 @@ cdef class DataFrame:
     # ─── Thin delegate methods ───
 
     # CRUD
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def eval(self, str expr, bint inplace=False):
         return _eval_impl(self, expr, inplace)
@@ -4024,10 +4220,12 @@ cdef class DataFrame:
     def query(self, str expr):
         return _query_impl(self, expr)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def append_row(self, **kwargs):
         return _append_row_impl(self, kwargs)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def append(self, row, bint ignore_index=False):
         return _append_impl(self, row, ignore_index)
@@ -4047,6 +4245,7 @@ cdef class DataFrame:
     def pop_back(self):
         return _pop_back_impl(self)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def rename(self, mapper=None, columns=None, index=None, bint inplace=False):
         if columns is not None:
@@ -4085,6 +4284,7 @@ cdef class DataFrame:
     def reindex(self, list new_index):
         return _reindex_impl(self, new_index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def insert_row(self, Py_ssize_t pos, **kwargs):
         return _insert_row_impl(self, pos, kwargs)
@@ -4122,10 +4322,12 @@ cdef class DataFrame:
                 new_df.index = self.index
             return new_df
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def drop_with_index(self, list drop_indices, bint inplace=False):
         return _drop_with_index_impl(self, drop_indices, inplace)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def drop_index(self, object labels, bint inplace=False):
         return _drop_index_impl(self, labels, inplace)
@@ -4135,116 +4337,144 @@ cdef class DataFrame:
     def drop_raw(self, Py_ssize_t row_idx):
         return _drop_raw_impl(self, row_idx)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def insert(self, Py_ssize_t loc, str column, object value, bint allow_duplicates=False):
         return _insert_column_impl(self, column, value, loc)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def insert_column(self, str col_name, object col_data, Py_ssize_t pos=-1):
         return _insert_column_impl(self, col_name, col_data, pos)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def duplicate_column(self, str src_name, str new_name=None):
         _duplicate_column_impl(self, src_name, new_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def duplicate_rows(self, list indices=None):
         return _duplicate_rows_impl(self, indices)
 
     # Aggregation
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def mean(self, col_names=None):
         return _numeric_agg_impl(self, 'mean', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def sum(self, col_names=None):
         return _numeric_agg_impl(self, 'sum', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def min(self, col_names=None):
         return _numeric_agg_impl(self, 'min', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def max(self, col_names=None):
         return _numeric_agg_impl(self, 'max', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def std(self, col_names=None):
         return _numeric_agg_impl(self, 'std', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def var(self, col_names=None):
         return _numeric_agg_impl(self, 'var', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def median(self, col_names=None):
         return _numeric_agg_impl(self, 'median', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def quantile(self, q=0.5, col_names=None):
         return _numeric_agg_arg_impl(self, 'quantile', col_names, q)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def mode(self, col_names=None):
         return _mode_impl(self, col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def prod(self, col_names=None):
         return _numeric_agg_impl(self, 'prod', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def sem(self, col_names=None):
         return _numeric_agg_impl(self, 'sem', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def mad(self, col_names=None):
         return _numeric_agg_impl(self, 'mad', col_names)
 
     # 逐子列聚合（2D 列每个子列独立聚合，1D 列与普通聚合一致）
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def mean_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'mean', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def sum_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'sum', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def min_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'min', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def max_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'max', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def std_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'std', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def var_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'var', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def median_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'median', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def quantile_withcol(self, q=0.5, col_names=None):
         return _numeric_agg_arg_withcol_impl(self, 'quantile', col_names, q)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def mode_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'mode', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def prod_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'prod', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def sem_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'sem', col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def mad_withcol(self, col_names=None):
         return _numeric_agg_withcol_impl(self, 'mad', col_names)
@@ -4254,10 +4484,12 @@ cdef class DataFrame:
     def describe_withcol(self):
         return _describe_withcol_impl(self)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def count(self, col_names=None):
         return _count_impl(self, col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def describe(self, object percentiles=None):
         return _describe_impl(self, percentiles)
@@ -4267,6 +4499,7 @@ cdef class DataFrame:
     def value_counts(self, str col_name):
         return _value_counts_impl(self, col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def nunique(self, str col_name=None):
         return _nunique_impl(self, col_name)
@@ -4313,6 +4546,7 @@ cdef class DataFrame:
     def argmin(self, str col_name):
         return self._columns[col_name].idxmin()
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def idxmax(self, str col_name=None):
         """逐列最大值的行位置；指定列名时返回该列标量。"""
@@ -4329,6 +4563,7 @@ cdef class DataFrame:
             result[name] = col.idxmax()
         return _agg_series(result)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def idxmin(self, str col_name=None):
         """逐列最小值的行位置；指定列名时返回该列标量。"""
@@ -4355,10 +4590,12 @@ cdef class DataFrame:
     def factorize(self, str col_name):
         return _series_factorize(self._columns[col_name])
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def isin(self, str col_name, set values):
         return Series(col_name, self._columns[col_name].isin(values), self.index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def between(self, str col_name, low, high):
         return Series(col_name, self._columns[col_name].between(low, high), self.index)
@@ -4380,6 +4617,7 @@ cdef class DataFrame:
         """判断 DataFrame 是否为空，对标 pandas DataFrame.empty。"""
         return self.df_length == 0 or len(self._columns) == 0
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def update(self, DataFrame other):
         """用另一个 DataFrame 的值原地更新（按列名对齐），对标 pandas DataFrame.update。"""
@@ -4432,6 +4670,7 @@ cdef class DataFrame:
         for col_name in col_names:
             yield col_name, Series(col_name, self._columns[col_name], self.index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def iterrows(self):
         """按行迭代，返回 (index, Series) 对，对标 pandas DataFrame.iterrows。"""
@@ -4447,6 +4686,7 @@ cdef class DataFrame:
             idx_label = self.index[r] if self.index is not None else r
             yield idx_label, row_dict
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def itertuples(self):
         """按行迭代，返回 namedtuple，对标 pandas DataFrame.itertuples。"""
@@ -4464,6 +4704,7 @@ cdef class DataFrame:
             idx_label = self.index[r] if self.index is not None else r
             yield Tup(index=idx_label, **row_dict)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def join(self, DataFrame other, str how='left'):
         """按索引连接另一个 DataFrame，对标 pandas DataFrame.join。"""
@@ -4479,6 +4720,7 @@ cdef class DataFrame:
                                  f"Use merge() with on= parameter for column-based join.")
         return result
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def compare(self, DataFrame other, align_axis=1):
         """对比两个 DataFrame 的差异，返回差异值，对标 pandas DataFrame.compare 的简化版。"""
@@ -4500,6 +4742,7 @@ cdef class DataFrame:
                 diffs[cn] = diff_rows
         return diffs
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def combine_first(self, DataFrame other):
         """用另一个 DataFrame 填充本 DataFrame 的缺失值，对标 pandas DataFrame.combine_first。"""
@@ -4626,6 +4869,7 @@ cdef class DataFrame:
     def to_string(self):
         return _to_string_impl(self)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def print(self, max_rows=80):
         print(self.to_string())
@@ -4645,6 +4889,7 @@ cdef class DataFrame:
     def to_pickle(self, str path):
         return _to_pickle_impl(self, path)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def to_csv(self, str path, str sep=',', str na_rep='', str float_format=None,
                list columns=None, bint header=True, str line_terminator='\n'):
@@ -4660,6 +4905,7 @@ cdef class DataFrame:
     def to_dict(self):
         return _to_dict_impl(self)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def to_json(self, bint orient_records=True):
         return _to_json_impl(self, orient_records)
@@ -4690,51 +4936,62 @@ cdef class DataFrame:
     def concat(self, DataFrame other):
         return _concat_impl(self, other)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def merge(self, DataFrame right, object on=None, str how='inner'):
         if isinstance(on, str):
             on = [on]
         return _merge_impl(self, right, on, how)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def duplicated(self, list subset=None, str keep='first'):
         return _wrap_series('_mask', _duplicated_impl(self, subset, keep), self.index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def drop_duplicates(self, list subset=None, str keep='first', bint inplace=False):
         return _drop_duplicates_impl(self, subset, keep, inplace)
 
     # Transform
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def argsort_by(self, str col_name, bint reverse=False):
         return _argsort_by_impl(self, col_name, reverse)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def sort_values(self, str col_name, bint ascending=True, bint inplace=False):
         return _sort_values_impl(self, col_name, not ascending, inplace)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def sort_index(self, bint ascending=True, bint inplace=False):
         if 'index' not in self._columns:
             raise KeyError("No 'index' column found. Call reset_index() first.")
         return self.sort_values('index', ascending=ascending, inplace=inplace)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def diff(self, str col_name, int periods=1):
         return _wrap_series(col_name, _diff_impl(self, col_name, periods), self.index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def apply(self, object func, str axis='columns', bint raw=False):
         return _apply_impl(self, func, axis, raw)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def applymap(self, object func):
         return _apply_impl(self, func, 'columns', False)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def clip_column(self, str col_name, object lower=None, object upper=None, bint inplace=False):
         return _clip_column_impl(self, col_name, lower, upper, inplace)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def clip(self, object lower=None, object upper=None, bint inplace=False):
         return _clip_all_impl(self, lower, upper, inplace)
@@ -4749,6 +5006,7 @@ cdef class DataFrame:
     def mask_column(self, str col_name, str cond_col, object other):
         return _wrap_series(col_name, _mask_column_impl(self, col_name, cond_col, other), self.index)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def where_row(self, IntColumn mask, object fill=0):
         return _where_row_impl(self, mask, fill)
@@ -4768,6 +5026,7 @@ cdef class DataFrame:
     def notna(self):
         return _notna_impl(self)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def fillna(self, value=None, method=None, col_names=None):
         if method is not None:
@@ -4781,6 +5040,7 @@ cdef class DataFrame:
             raise ValueError("Must specify either 'value' or 'method'")
         return _fillna_impl(self, value, col_names)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def dropna(self, axis=0, str how='any', int thresh=-1, list subset=None):
         """删除含缺失值的行/列，对标 pandas DataFrame.dropna。
@@ -4835,6 +5095,7 @@ cdef class DataFrame:
     def abs(self):
         return _abs_impl(self)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def round(self, int decimals=0):
         return _round_impl(self, decimals)
@@ -4849,6 +5110,7 @@ cdef class DataFrame:
     def any(self):
         return _any_impl(self)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def pct_change(self, int periods=1):
         return _pct_change_impl(self, periods)
@@ -4873,10 +5135,12 @@ cdef class DataFrame:
     def head(self, Py_ssize_t n=5):
         return _head_impl(self, n)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def tail(self, Py_ssize_t n=5):
         return _tail_impl(self, n)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def sample(self, object n=None, object frac=None, bint replace=False, int seed=-1):
         return _sample_impl(self, n, frac, replace, seed)
@@ -4891,14 +5155,17 @@ cdef class DataFrame:
     def nlargest(self, Py_ssize_t n, str col_name):
         return _nlargest_impl(self, n, col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def pipe(self, object func, *args, **kwargs):
         return _pipe_impl(self, func, args, kwargs)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def assign(self, **kwargs):
         return _assign_impl(self, kwargs)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def select_dtypes(self, list include_types=None, list exclude_types=None):
         return _select_dtypes_impl(self, include_types, exclude_types)
@@ -5103,16 +5370,19 @@ cdef class DataFrame:
 
     # Factory
     @staticmethod
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def from_dict(data, schema=None, columns=None):
         return _from_dict_impl(data, schema, columns)
 
     @staticmethod
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def from_list(rows, schema, columns=None):
         return _from_list_impl(rows, schema, columns)
 
     @staticmethod
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def from_arrays(arrays, schema, columns=None):
         return _from_arrays_impl(arrays, schema, columns)
@@ -5140,6 +5410,7 @@ cdef class DataFrame:
         return _ones_impl(args[0], args[1])
 
     @staticmethod
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def randn(*args):
         if len(args) == 1:
@@ -5147,6 +5418,7 @@ cdef class DataFrame:
         return _randn_impl(args[0], args[1])
 
     @staticmethod
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def rand(*args):
         if len(args) == 1:
@@ -5165,6 +5437,8 @@ cdef class DataFrame:
             raise NotImplementedError("rolling supports axis=0 ('index') only")
         return _RollingWindow(self, window, min_periods, center, True, None, None, win_type)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def expanding(self, Py_ssize_t min_periods=1, axis=0):
         """扩展窗口访问器：等价于 rolling(window=行数, min_periods=min_periods)，
         复用 _RollingWindow 逐列滚动（window=max(r, mp) 以支持 mp>r 时全 NaN）。"""
@@ -5172,6 +5446,8 @@ cdef class DataFrame:
             raise NotImplementedError("expanding supports axis=0 ('index') only")
         return _RollingWindow(self, max(self.df_length, min_periods), min_periods, False, True)
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def ewm(self, com=None, span=None, halflife=None, alpha=None,
             Py_ssize_t min_periods=0, bint adjust=True, bint ignore_na=False):
         """指数加权窗口访问器（pandas 式）：参数四选一（com/span/halflife/alpha），
@@ -5180,26 +5456,31 @@ cdef class DataFrame:
                           adjust, ignore_na, True)
 
     # DataFrame-level shift (delegates to cdef _shift_impl)
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def shift(self, Py_ssize_t periods=1, str axis='index'):
         return _shift_impl(self, periods, axis)
 
     # DataFrame-level diff for all numeric columns
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def diff_all(self, int periods=1):
         return _diff_column_all_impl(self, periods)
 
     # DataFrame-level rank
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def rank(self, str col_name, str method='average', bint ascending=True, str na_option='keep'):
         return _wrap_series(col_name, _rank_impl(self, col_name, method, ascending, na_option), self.index)
 
     # DataFrame-level cut
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def cut(self, str col_name, list bins, bint include_lowest=False, str right='right'):
         return _wrap_series(col_name, _cut_impl(self, col_name, bins, include_lowest, right), self.index)
 
     # DataFrame-level qcut
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def qcut(self, str col_name, int q=4, str labels='True', double precision=3):
         return _wrap_series(col_name, _qcut_impl(self, col_name, q, labels, precision), self.index)
@@ -5244,6 +5525,8 @@ cdef class DataFrame:
 
 
 # Python-callable wrapper for _column_from_list_impl
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def column_from_list(DataFrame df, str name, list values):
     """Python-callable wrapper for _column_from_list_impl"""
     return _column_from_list_impl(df, name, values)
@@ -5375,11 +5658,13 @@ cdef class _DataFrameGroupByAccessor:
                 agg[cn] = func_name
             return self.agg(agg)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def size(self):
         self._ensure_built()
         return self._gr.count
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def agg(self, dict agg_dict):
         self._ensure_built()
@@ -5389,14 +5674,17 @@ cdef class _DataFrameGroupByAccessor:
             res._columns[col_name] = self._dispatch_agg(col_name, func_name)
         return res
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def sum(self, str col_name=None):
         return self._convenience_agg('sum', col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def mean(self, str col_name=None):
         return self._convenience_agg('mean', col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def count(self):
         self._ensure_built()
@@ -5404,30 +5692,37 @@ cdef class _DataFrameGroupByAccessor:
         res._columns['__count__'] = _gb_native_count(self._gr)
         return res
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def min(self, str col_name=None):
         return self._convenience_agg('min', col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def max(self, str col_name=None):
         return self._convenience_agg('max', col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def median(self, str col_name=None):
         return self._convenience_agg('median', col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def quantile(self, str col_name=None):
         return self._convenience_agg('quantile', col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def var(self, str col_name=None):
         return self._convenience_agg('var', col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def std(self, str col_name=None):
         return self._convenience_agg('std', col_name)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def apply(self, object func):
         self._ensure_built()
@@ -5459,14 +5754,17 @@ cdef class _DataFrameGroupByAccessor:
             result = result.concat(sub_dfs[i])
         return result
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def idxmax(self, str col_name=None):
         return self._idx_agg(col_name, True)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def idxmin(self, str col_name=None):
         return self._idx_agg(col_name, False)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def transform(self, object func):
         self._ensure_built()
@@ -5552,6 +5850,7 @@ cdef class _DataFrameGroupByAccessor:
 
         return result
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def filter(self, object func):
         self._ensure_built()
@@ -5606,56 +5905,69 @@ cdef class _DataFrameLinalgAccessor:
 
     # ==================== Matrix Operations ====================
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def dot(self, DataFrame b):
         return _linalg_dot(self._df, b)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def matmul(self, DataFrame b):
         return _linalg_dot(self._df, b)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def transpose(self):
         return _linalg_transpose(self._df)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def det(self):
         return _linalg_det(self._df)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def inv(self):
         return _linalg_inv(self._df)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def solve(self, DataFrame b):
         return _linalg_solve(self._df, b)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def norm(self, str ord_type="frobenius"):
         return _linalg_norm(self._df, ord_type)
 
     # ==================== Pairwise Distance ====================
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def euclidean_dist(self):
         return _linalg_pairwise(self._df, PW_EUCLIDEAN)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def manhattan_dist(self):
         return _linalg_pairwise(self._df, PW_MANHATTAN)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def cosine_dist(self):
         return _linalg_pairwise(self._df, PW_COSINE_DIST)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def hamming_dist(self):
         return _linalg_pairwise(self._df, PW_HAMMING)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def jaccard_sim(self):
         return _linalg_pairwise(self._df, PW_JACCARD)
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def cosine_similarity(self):
         return _linalg_pairwise(self._df, PW_COSINE_SIM)
@@ -5767,6 +6079,8 @@ class _SafeUnpickler(_pickle.Unpickler):
         super().__init__(file)
         self._allow_raw_pickle = allow_raw_pickle
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def find_class(self, module, name):
         if self._allow_raw_pickle:
             return super().find_class(module, name)
@@ -5779,6 +6093,8 @@ class _SafeUnpickler(_pickle.Unpickler):
         )
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def from_pickle(filename, bint allow_raw_pickle=False):
     """从 pickle 文件恢复 DataFrame。
     2D 列条目为 (typ, values, rows, cols)，重建后保持二维维度。"""
@@ -5890,6 +6206,8 @@ def from_pickle(filename, bint allow_raw_pickle=False):
     return df
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def read_csv(filename, dict schema, sep=','):
     """读取 CSV 文件，返回 DataFrame。必须提供 schema 指定列类型"""
     if not schema:
@@ -5975,11 +6293,15 @@ def read_csv(filename, dict schema, sep=','):
     return df
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def read_tsv(filename, dict schema):
     """读取 TSV 文件（tab 分隔），返回 DataFrame"""
     return read_csv(filename, schema=schema, sep='\t')
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def read_json(filename, dict schema):
     """读取 JSON 文件（records 格式），返回 DataFrame"""
     import json as _json
@@ -6039,6 +6361,8 @@ def read_json(filename, dict schema):
     return df
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def concat_outer(list dfs):
     """纵向拼接多个 DataFrame（外连接：取所有列的并集），重置索引。
     2D 列：使用列级 concat 保持二维维度结构不变。"""
@@ -6107,6 +6431,8 @@ def concat_outer(list dfs):
     return result
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def concat_inner(list dfs):
     """纵向拼接多个 DataFrame（内连接：仅取所有列的交集），重置索引。
     2D 列：使用列级 concat 保持二维维度结构不变。"""
@@ -6129,6 +6455,8 @@ def concat_inner(list dfs):
     return result
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def concat(list dfs, bint ignore_index=False):
     cdef DataFrame result = concat_outer(dfs)
     if ignore_index:
@@ -6136,6 +6464,8 @@ def concat(list dfs, bint ignore_index=False):
     return result
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def to_numeric(column, errors='coerce'):
     """Convert column to numeric values. Like pd.to_numeric.
     2D 输入保持同维度输出（is_2d/rows/cols 不变，逐单元转换）。"""
@@ -6181,6 +6511,8 @@ def to_numeric(column, errors='coerce'):
     return res
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def to_datetime(column, str fmt='', errors='coerce'):
     """Convert column to DateTimeColumn. Like pd.to_datetime.
     2D 输入保持同维度输出。"""
@@ -6221,6 +6553,8 @@ def to_datetime(column, str fmt='', errors='coerce'):
     return res
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def to_date(column, str fmt='', errors='coerce'):
     """Convert column to DateColumn (YYYYMMDD).
     2D 输入保持同维度输出。"""
@@ -6261,6 +6595,8 @@ def to_date(column, str fmt='', errors='coerce'):
     return res
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def to_time(column, str fmt='', errors='coerce'):
     """Convert column to TimeColumn (seconds since midnight).
     2D 输入保持同维度输出。"""
@@ -6301,6 +6637,8 @@ def to_time(column, str fmt='', errors='coerce'):
     return res
 
 
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def to_timedelta(values, str unit='D'):
     """Create a column of timedelta-like values (stored as int days). Like pd.to_timedelta."""
     n = len(values)
@@ -6323,6 +6661,8 @@ def to_timedelta(values, str unit='D'):
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
+@cython.binding(False)
+@cython.always_allow_keywords(False)
 def where(IntColumn cond, object true_val, object false_val):
     """numpy.where 等效替代。根据 cond 掩码列选择填充 true_val 或 false_val。"""
     cdef Py_ssize_t n = cond.length

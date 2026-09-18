@@ -186,7 +186,6 @@ cdef class DataFrame:
     cdef DataFrame _take(self, Py_ssize_t* indices, Py_ssize_t n)
     cdef DataFrame _slice_rows(self, object key)
     cdef DataFrame _cum_results(self, str method)
-    cdef BaseColumn _column_from_list(self, str name, list values)
     cdef void _shift_right(self, BaseColumn col, Py_ssize_t pos)
     cdef void _shift_left(self, BaseColumn col, Py_ssize_t pos)
     cdef double _get_col_value_as_double(self, BaseColumn col, Py_ssize_t i)

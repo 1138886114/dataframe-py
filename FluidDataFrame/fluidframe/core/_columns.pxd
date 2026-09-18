@@ -118,16 +118,6 @@ cdef inline void _col_drop_row(void* data_c, Py_ssize_t* length,
                 rem_len * elem_size)
     length[0] -= 1
 
-cdef inline void _col_gather(void* dst, void* src,
-                             Py_ssize_t* indices, Py_ssize_t n,
-                             Py_ssize_t elem_size) noexcept nogil:
-    cdef Py_ssize_t i, idx
-    for i in range(n):
-        idx = indices[i]
-        memcpy(<char*>dst + i * elem_size,
-               <char*>src + idx * elem_size,
-               elem_size)
-
 cdef inline void _col_gather_zero(void* dst, void* src,
                                   Py_ssize_t* indices, Py_ssize_t n,
                                   Py_ssize_t elem_size) noexcept nogil:

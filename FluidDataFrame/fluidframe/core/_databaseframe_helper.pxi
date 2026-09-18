@@ -3157,33 +3157,6 @@ cdef _count_impl(DataFrame self, col_names=None):
             result[name] = count
     return _agg_series(result)
 
-cdef inline double _qs_double(double* a, Py_ssize_t n, Py_ssize_t k) noexcept nogil:
-    cdef Py_ssize_t l = 0
-    cdef Py_ssize_t r = n - 1
-    cdef Py_ssize_t i, lt, gt
-    cdef double pivot, tmp
-    while l <= r:
-        pivot = a[l + (r - l) // 2]
-        lt = l
-        gt = r
-        i = l
-        while i <= gt:
-            if a[i] < pivot:
-                tmp = a[lt]; a[lt] = a[i]; a[i] = tmp
-                lt += 1; i += 1
-            elif a[i] > pivot:
-                tmp = a[i]; a[i] = a[gt]; a[gt] = tmp
-                gt -= 1
-            else:
-                i += 1
-        if k < lt:
-            r = lt - 1
-        elif k > gt:
-            l = gt + 1
-        else:
-            return a[k]
-    return a[k]
-
 
 cdef _describe_impl(DataFrame self, object percentiles):
     cdef dict stats = {}
@@ -6017,11 +5990,6 @@ cdef DataFrame _linalg_from_contiguous(double* data, Py_ssize_t rows, Py_ssize_t
     df._2d_blocks.append(block2d)
 
     return df
-
-cdef inline double _linalg_clip_val(double v, double min_v, double max_v) nogil:
-    if v < min_v: return min_v
-    if v > max_v: return max_v
-    return v
 
 # ============================================================
 #  Core linalg operations

@@ -717,12 +717,13 @@ def test_pickle_2d_roundtrip():
         df2 = from_pickle(fname)
         check('pkl2d shape', df2.shape == (4, 5))
         check('pkl2d a 2d', df2['a'].is_2d and df2['a'].cols == 2 and df2['a'].rows == 4)
-        check('pkl2d a flat', [df2['a'][i] for i in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
+        check('pkl2d a rows', [df2['a'][i] for i in range(4)] == [(1, 10), (2, 20), (3, 30), (4, 40)])
         check('pkl2d d 2d', df2['d'].is_2d and df2['d'].cols == 2 and df2['d'].rows == 4)
-        check('pkl2d d flat', [df2['d'][i] for i in range(8)] == [1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0])
+        check('pkl2d d rows', [df2['d'][i] for i in range(4)] == [(1.0, 10.0), (2.0, 20.0), (3.0, 30.0), (4.0, 40.0)])
         check('pkl2d dd 2d', df2['dd'].is_2d and df2['dd'].cols == 2 and df2['dd'].rows == 4)
-        check('pkl2d dd flat', [df2['dd'][i] for i in range(8)][:4] == [20230101, 20230102, 20230103, 20230104])
+        check('pkl2d dd rows', [df2['dd'][i] for i in range(4)] == [(20230101, 20240101), (20230102, 20240102), (20230103, 20240103), (20230104, 20240104)])
         check('pkl2d dt 2d', df2['dt'].is_2d and df2['dt'].cols == 2 and df2['dt'].rows == 4)
+        check('pkl2d dt rows', [df2['dt'][i] for i in range(4)] == [('2023-01-01', '2024-01-01'), ('2023-01-02', '2024-01-02'), ('2023-01-03', '2024-01-03'), ('2023-01-04', '2024-01-04')])
         check('pkl2d s 1d', [df2['s'][i] for i in range(4)] == ['x', 'y', 'z', 'w'])
     finally:
         os.unlink(fname)
@@ -1319,40 +1320,40 @@ def test_take_path_2d():
     sub = df.iloc[[0, 2]]
     check('take 2d len', len(sub) == 2)
     check('take 2d a2d cols', sub['a2d'].cols == 2 and sub['a2d'].rows == 2)
-    check('take 2d a2d flat', [sub['a2d'][i] for i in range(4)] == [1, 3, 10, 30])
+    check('take 2d a2d rows', [sub['a2d'][i] for i in range(2)] == [(1, 10), (3, 30)])
     check('take 2d a 1d', [sub['a'][i] for i in range(2)] == [1, 3])
     # head / tail
     h = df.head(3)
-    check('take head a2d flat', [h['a2d'][i] for i in range(6)] == [1, 2, 3, 10, 20, 30])
+    check('take head a2d rows', [h['a2d'][i] for i in range(3)] == [(1, 10), (2, 20), (3, 30)])
     t = df.tail(2)
-    check('take tail a2d flat', [t['a2d'][i] for i in range(4)] == [3, 4, 30, 40])
+    check('take tail a2d rows', [t['a2d'][i] for i in range(2)] == [(3, 30), (4, 40)])
     # sample
     s = df.sample(2, seed=7)
     check('take sample a2d cols', s['a2d'].cols == 2 and s['a2d'].rows == 2)
-    check('take sample a2d flat', [s['a2d'][i] for i in range(4)] == [3, 1, 30, 10])
+    check('take sample a2d rows', [s['a2d'][i] for i in range(2)] == [(3, 30), (1, 10)])
 
 def test_sort_values_2d():
     df = DataFrame({'a': int})
     df.append_row(a=4); df.append_row(a=2); df.append_row(a=3); df.append_row(a=1)
     df['a2d'] = IntColumn.from_2d([4, 2, 3, 1, 40, 20, 30, 10], 4, 2)
     r = df.sort_values('a')
-    check('sort 2d a2d flat', [r['a2d'][i] for i in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
+    check('sort 2d a2d rows', [r['a2d'][i] for i in range(4)] == [(1, 10), (2, 20), (3, 30), (4, 40)])
     check('sort 2d a2d cols', r['a2d'].cols == 2 and r['a2d'].rows == 4)
     # inplace
     df.sort_values('a', inplace=True)
-    check('sort 2d inplace flat', [df['a2d'][i] for i in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
+    check('sort 2d inplace rows', [df['a2d'][i] for i in range(4)] == [(1, 10), (2, 20), (3, 30), (4, 40)])
 
 def test_reindex_2d():
     df = _make_2d_frame()
     r = df.reindex([3, 0])
     check('reindex 2d len', len(r) == 2)
     check('reindex 2d a2d cols', r['a2d'].cols == 2 and r['a2d'].rows == 2)
-    check('reindex 2d a2d flat', [r['a2d'][i] for i in range(4)] == [4, 1, 40, 10])
+    check('reindex 2d a2d rows', [r['a2d'][i] for i in range(2)] == [(4, 40), (1, 10)])
     # missing label 填充：两子列都填默认值
     r2 = df.reindex([0, 1, 2, 3, 4])
     check('reindex 2d fill len', len(r2) == 5)
-    check('reindex 2d fill flat', [r2['a2d'][i] for i in range(10)] == [1, 2, 3, 4, 0, 10, 20, 30, 40, 0])
-    check('reindex 2d fill rows', r2['a2d'].rows == 5 and r2['a2d'].cols == 2)
+    check('reindex 2d fill rows', [r2['a2d'][i] for i in range(5)] == [(1, 10), (2, 20), (3, 30), (4, 40), (0, 0)])
+    check('reindex 2d fill num_rows', r2['a2d'].rows == 5 and r2['a2d'].cols == 2)
 
 def test_drop_duplicates_2d():
     df = DataFrame({'a': int})
@@ -1360,8 +1361,8 @@ def test_drop_duplicates_2d():
     df['a2d'] = IntColumn.from_2d([1, 1, 2, 2, 10, 10, 20, 20], 4, 2)
     r = df.drop_duplicates()
     check('dup 2d len', len(r) == 2)
-    check('dup 2d a2d flat', [r['a2d'][i] for i in range(4)] == [1, 2, 10, 20])
-    check('dup 2d a2d rows', r['a2d'].rows == 2 and r['a2d'].cols == 2)
+    check('dup 2d a2d rows', [r['a2d'][i] for i in range(2)] == [(1, 10), (2, 20)])
+    check('dup 2d a2d num_rows', r['a2d'].rows == 2 and r['a2d'].cols == 2)
 
 def test_duplicated_2d_rowaware():
     # col0 重复但 col1 区分：旧 flat 读只读 col0 会误判为 dup
@@ -1372,7 +1373,7 @@ def test_duplicated_2d_rowaware():
     check('dup row-aware distinct', [df.duplicated(subset=['a2d'])[i] for i in range(2)] == [0, 0])
     r = df.drop_duplicates(subset=['a2d'])
     check('dup row-aware drop len', len(r) == 2)
-    check('dup row-aware drop flat', [r['a2d'][i] for i in range(4)] == [1, 1, 10, 20])
+    check('dup row-aware drop rows', [r['a2d'][i] for i in range(2)] == [(1, 10), (1, 20)])
 
     # 整行重复 → 仅第 2 个标记 dup
     df2 = DataFrame({'a': int})
@@ -1381,7 +1382,7 @@ def test_duplicated_2d_rowaware():
     check('dup row-aware dup', [df2.duplicated(subset=['a2d'])[i] for i in range(3)] == [0, 0, 1])
     check('dup row-aware keep-last', [df2.duplicated(subset=['a2d'], keep='last')[i] for i in range(3)] == [1, 0, 0])
     r2 = df2.drop_duplicates(subset=['a2d'])
-    check('dup row-aware drop flat', [r2['a2d'][i] for i in range(4)] == [1, 2, 10, 20])
+    check('dup row-aware drop rows', [r2['a2d'][i] for i in range(2)] == [(1, 10), (2, 20)])
 
 def test_display_export_2d():
     df = _make_2d_frame()
@@ -1389,10 +1390,10 @@ def test_display_export_2d():
     s = df.to_string()
     check('disp 2d row0', '[1, 10]' in s)
     check('disp 2d row3', '[4, 40]' in s)
-    # to_dict：{列名: Series}（2D 列与 df[col] 语义一致，值按底层扁平索引）
+    # to_dict：{列名: Series}（2D 列与 df[col] 语义一致，值按行键元组）
     d = df.to_dict()
     check('exp 2d dict is Series', isinstance(d['a2d'], Series))
-    check('exp 2d dict flat', d['a2d'].tolist() == [1, 2, 3, 4])
+    check('exp 2d dict rows', d['a2d'].tolist() == [(1, 10), (2, 20), (3, 30), (4, 40)])
     # to_numpy
     arr = df.to_numpy()
     check('exp 2d numpy', arr[0][2] == [1, 10] and arr[3][2] == [4, 40])
@@ -1430,25 +1431,25 @@ def test_elementwise_2d():
     df['a2d'] = IntColumn.from_2d([1, -2, -3, 4, -10, 20, 30, -40], 4, 2)
     df['d2d'] = DoubleColumn.from_2d([1.5, -2.4, -3.6, 4.2, -10.7, 20.1, 30.9, -40.5], 4, 2)
 
-    # abs：保形 2D，全 flat 逐元素
+    # abs：保形 2D，逐元素；Series 取值按行键元组（A2）
     o = df.abs()
     c = o['a2d']
     check('elem2d abs int shape', c.cols == 2 and c.rows == 4 and c.length == 4)
-    check('elem2d abs int flat', [c[i] for i in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
+    check('elem2d abs int rows', [c[i] for i in range(4)] == [(1, 10), (2, 20), (3, 30), (4, 40)])
     c = o['d2d']
-    check('elem2d abs dbl flat', [c[i] for i in range(8)] == [1.5, 2.4, 3.6, 4.2, 10.7, 20.1, 30.9, 40.5])
+    check('elem2d abs dbl rows', [c[i] for i in range(4)] == [(1.5, 10.7), (2.4, 20.1), (3.6, 30.9), (4.2, 40.5)])
 
     # round：保形 2D
     o = df.round()
     c = o['d2d']
     check('elem2d round shape', c.cols == 2 and c.rows == 4)
-    check('elem2d round flat', [c[i] for i in range(8)] == [2, -2, -4, 4, -11, 20, 31, -40])
+    check('elem2d round rows', [c[i] for i in range(4)] == [(2, -11), (-2, 20), (-4, 31), (4, -40)])
 
     # replace：数字遍历全 flat（subcol1 的 20 被替换为 -1）
     o = df.replace(20, -1)
     c = o['a2d']
     check('elem2d replace shape', c.cols == 2)
-    check('elem2d replace subcol1', [c[i] for i in range(8)] == [1, -2, -3, 4, -10, -1, 30, -40])
+    check('elem2d replace rows', [c[i] for i in range(4)] == [(1, -10), (-2, -1), (-3, 30), (4, -40)])
 
     # isnull：2D 输出保形（subcol1 的 NaN 也要标记）
     d2 = DataFrame({'x': float})
@@ -1458,13 +1459,13 @@ def test_elementwise_2d():
     o = d2.isnull()
     c = o['d2d']
     check('elem2d isnull shape', c.cols == 2 and c.rows == 4)
-    check('elem2d isnull flat', [c[i] for i in range(8)] == [0, 1, 0, 0, 0, 0, 1, 0])
+    check('elem2d isnull rows', [c[i] for i in range(4)] == [(0, 0), (1, 0), (0, 1), (0, 0)])
 
     # fillna：填满全 flat（subcol1 的 NaN 也要填）
     o = d2.fillna(9.0)
     c = o['d2d']
     check('elem2d fillna shape', c.cols == 2 and c.rows == 4)
-    check('elem2d fillna subcol1', [c[i] for i in range(8)] == [0.0, 9.0, 3.0, 4.0, 5.0, 6.0, 9.0, 8.0])
+    check('elem2d fillna rows', [c[i] for i in range(4)] == [(0.0, 5.0), (9.0, 6.0), (3.0, 9.0), (4.0, 8.0)])
 
     # all/any：扫描全部子列（subcol1 的 0 需参与判定）
     d3 = DataFrame({'a': int})
@@ -1493,23 +1494,23 @@ def test_series_row_2d():
     pc = df.pct_change()
     c = pc['a2d']
     check('sr2d pct shape', c.cols == 2 and c.rows == 4 and c.length == 4)
-    check('sr2d pct nan0', math.isnan(c[0]) and math.isnan(c[4]))
-    check('sr2d pct sub0 r1', abs(c[1] - 1.0) < 1e-9)
-    check('sr2d pct sub1 r1', abs(c[5] - 1.0) < 1e-9)
-    check('sr2d pct sub1 r2', abs(c[6] - 0.5) < 1e-9)  # (30-20)/20
+    check('sr2d pct nan0', math.isnan(c[0][0]) and math.isnan(c[0][1]))
+    check('sr2d pct sub0 r1', abs(c[1][0] - 1.0) < 1e-9)
+    check('sr2d pct sub1 r1', abs(c[1][1] - 1.0) < 1e-9)
+    check('sr2d pct sub1 r2', abs(c[2][1] - 0.5) < 1e-9)  # (30-20)/20
     c0 = pc['a'][0]
     check('sr2d pct 1d untouched', c0 is not None)  # int col 也给 Double 序列（此处仅保形检查）
 
     # ffill/bfill：逐子列独立（NaN 不跨子列）
     ff = df.ffill()
     c = ff['d2d']
-    check('sr2d ffill sub0', [c[i] for i in range(4)] == [1.0, 1.0, 3.0, 3.0])
-    check('sr2d ffill sub1', [c[i] for i in range(4, 8)] == [10.0, 20.0, 20.0, 40.0])
+    check('sr2d ffill sub0', [c[i][0] for i in range(4)] == [1.0, 1.0, 3.0, 3.0])
+    check('sr2d ffill sub1', [c[i][1] for i in range(4)] == [10.0, 20.0, 20.0, 40.0])
     bf = df.bfill()
     c = bf['d2d']
-    check('sr2d bfill sub0', [c[i] for i in range(4)] == [1.0, 3.0, 3.0, float('nan')] or
-                             ([c[i] for i in range(3)] == [1.0, 3.0, 3.0] and math.isnan(c[3])))
-    check('sr2d bfill sub1', [c[i] for i in range(4, 8)] == [10.0, 20.0, 40.0, 40.0])
+    check('sr2d bfill sub0', [c[i][0] for i in range(4)] == [1.0, 3.0, 3.0, float('nan')] or
+                             ([c[i][0] for i in range(3)] == [1.0, 3.0, 3.0] and math.isnan(c[3][0])))
+    check('sr2d bfill sub1', [c[i][1] for i in range(4)] == [10.0, 20.0, 40.0, 40.0])
 
     # shift：逐子列独立位移（仅数值列，避免 str 报错）
     dsh = DataFrame({'a': int})
@@ -1518,10 +1519,10 @@ def test_series_row_2d():
     sh = dsh.shift(1)
     c = sh['a2d']
     check('sr2d shift shape', c.cols == 2 and c.rows == 4)
-    check('sr2d shift +1', [c[i] for i in range(8)] == [0, 1, 2, 3, 0, 10, 20, 30])
+    check('sr2d shift +1', [c[i] for i in range(4)] == [(0, 0), (1, 10), (2, 20), (3, 30)])
     sh2 = dsh.shift(-1)
     c = sh2['a2d']
-    check('sr2d shift -1', [c[i] for i in range(8)] == [2, 3, 4, 0, 20, 30, 40, 0])
+    check('sr2d shift -1', [c[i] for i in range(4)] == [(2, 20), (3, 30), (4, 40), (0, 0)])
 
     # dropna：任一子列该行 NaN 即整行丢弃
     dq = DataFrame({'v': float})
@@ -1532,7 +1533,7 @@ def test_series_row_2d():
     check('sr2d dropna rows', r.shape[0] == 3)
     c = r['x2d']
     check('sr2d dropna 2d', c.cols == 2 and c.rows == 3)
-    check('sr2d dropna flat', [c[i] for i in range(6)] == [1.0, 3.0, 4.0, 5.0, 7.0, 8.0])
+    check('sr2d dropna rows2', [c[i] for i in range(3)] == [(1.0, 5.0), (3.0, 7.0), (4.0, 8.0)])
 
     # pivot：values 为 2D 时单元为向量 → 输出透视列保形 2D
     dfp = DataFrame({'idx': int, 'col': str})
@@ -1543,9 +1544,9 @@ def test_series_row_2d():
     check('sr2d pivot shape', p.shape == (2, 3))
     ca = p['A']
     check('sr2d pivot A 2d', ca.cols == 2 and ca.rows == 2)
-    check('sr2d pivot A flat', [ca[i] for i in range(4)] == [1.0, 5.0, 2.0, 6.0])
+    check('sr2d pivot A rows', [ca[i] for i in range(2)] == [(1.0, 2.0), (5.0, 6.0)])
     cb = p['B']
-    check('sr2d pivot B flat', [cb[i] for i in range(4)] == [3.0, 7.0, 4.0, 8.0])
+    check('sr2d pivot B rows', [cb[i] for i in range(2)] == [(3.0, 4.0), (7.0, 8.0)])
 
     # melt：values 为 2D → value 输出列保形 2D
     dfm = DataFrame({'id': str})
@@ -1556,26 +1557,26 @@ def test_series_row_2d():
     check('sr2d melt var', m['variable'][0] == 'x2d')
     check('sr2d melt id', m['id'][0] == 'r1')
     check('sr2d melt value 2d', m['value'].cols == 2 and m['value'].rows == 2)
-    check('sr2d melt value flat', [m['value'][i] for i in range(4)] == [1.0, 2.0, 10.0, 20.0])
+    check('sr2d melt value rows', [m['value'][i] for i in range(2)] == [(1.0, 10.0), (2.0, 20.0)])
 
     # expanding_sum / ewm_mean：逐子列独立
     ex = df.expanding_sum('a2d')
     check('sr2d exp shape', ex.cols == 2 and ex.rows == 4)
-    check('sr2d exp flat', [ex[i] for i in range(8)] == [1.0, 3.0, 6.0, 10.0, 10.0, 30.0, 60.0, 100.0])
+    check('sr2d exp rows', [ex[i] for i in range(4)] == [(1.0, 10.0), (3.0, 30.0), (6.0, 60.0), (10.0, 100.0)])
     ew = df.ewm_mean('a2d', span=3)
     check('sr2d ewm shape', ew.cols == 2 and ew.rows == 4)
     check('sr2d ewm sub0',
-          abs(ew[0] - 1.0) < 1e-9 and abs(ew[1] - 1.6666666666666667) < 1e-9 and
-          abs(ew[2] - 2.4285714285714284) < 1e-9 and abs(ew[3] - 3.2666666666666666) < 1e-9)
+          abs(ew[0][0] - 1.0) < 1e-9 and abs(ew[1][0] - 1.6666666666666667) < 1e-9 and
+          abs(ew[2][0] - 2.4285714285714284) < 1e-9 and abs(ew[3][0] - 3.2666666666666666) < 1e-9)
     check('sr2d ewm sub1',
-          abs(ew[4] - 10.0) < 1e-9 and abs(ew[5] - 16.666666666666668) < 1e-9 and
-          abs(ew[6] - 24.285714285714285) < 1e-9 and abs(ew[7] - 32.666666666666664) < 1e-9)
+          abs(ew[0][1] - 10.0) < 1e-9 and abs(ew[1][1] - 16.666666666666668) < 1e-9 and
+          abs(ew[2][1] - 24.285714285714285) < 1e-9 and abs(ew[3][1] - 32.666666666666664) < 1e-9)
 
     # apply axis='columns'：func 逐子列标量（n*c 个），输出保形
     o = df.apply(lambda v: v * 2)
     c = o['a2d']
     check('sr2d apply cols 2d', c.cols == 2 and c.rows == 4)
-    check('sr2d apply cols flat', [c[i] for i in range(8)] == [2, 4, 6, 8, 20, 40, 60, 80])
+    check('sr2d apply cols rows', [c[i] for i in range(4)] == [(2, 20), (4, 40), (6, 60), (8, 80)])
     check('sr2d apply 1d len', o['a'].length == 4)
     check('sr2d apply str 1d', o['s'].length == 4)
 
@@ -1586,9 +1587,9 @@ def test_series_row_2d():
     of = dn.apply(lambda v: v + 0.5)
     cf = of['x2d']
     check('sr2d apply float2d', cf.cols == 2 and cf.rows == 4)
-    check('sr2d apply float flat', [cf[i] for i in range(8)] == [1.5, 2.5, 3.5, 4.5, 10.5, 20.5, 30.5, 40.5])
+    check('sr2d apply float rows', [cf[i] for i in range(4)] == [(1.5, 10.5), (2.5, 20.5), (3.5, 30.5), (4.5, 40.5)])
 
-    # apply axis='index'：2D 单元为整行向量
+    # apply axis='index'：2D 单元为整行向量（r['a2d'] 已是行键元组）
     rows = df.apply(lambda r: (r['a2d'][0], r['a2d'][1], r['s']), axis='index')
     check('sr2d apply idx r0', rows[0] == (1, 10, 'w'))
     check('sr2d apply idx r3', rows[3] == (4, 40, 'z'))
@@ -1601,12 +1602,13 @@ def test_series_row_2d():
     t = dt.T
     check('sr2d T len', t.df_length == 3)
     ta = t['a']
-    check('sr2d T a 2d', ta.cols == 2 and ta.rows == 3)
-    check('sr2d T a flat', [ta[i] for i in range(6)] == [5.0, 1.0, 100.0, float('nan'), 10.0, 300.0] or
-                           ([ta[0], ta[1], ta[2], ta[4], ta[5]] == [5.0, 1.0, 100.0, 10.0, 300.0] and math.isnan(ta[3])))
+    check('sr2d T a 2d', ta.cols == 2 and ta.rows == 3
+          and ta[0][0] == 5.0 and math.isnan(ta[0][1])
+          and ta[1] == (1.0, 10.0) and ta[2] == (100.0, 300.0))
     tp = t['p2d']
-    check('sr2d T p2d flat', [tp[i] for i in range(6)] == [6.0, 2.0, 200.0, float('nan'), 20.0, 400.0] or
-                            ([tp[0], tp[1], tp[2], tp[4], tp[5]] == [6.0, 2.0, 200.0, 20.0, 400.0] and math.isnan(tp[3])))
+    check('sr2d T p2d 2d', tp.cols == 2 and tp.rows == 3
+          and tp[0][0] == 6.0 and math.isnan(tp[0][1])
+          and tp[1] == (2.0, 20.0) and tp[2] == (200.0, 400.0))
 
     # reshape：元素 = 整行单元（子列向量），输出保形
     dr = DataFrame({'x': int})
@@ -1615,9 +1617,10 @@ def test_series_row_2d():
     dr['r2'] = IntColumn.from_2d([3, 4, 30, 40], 2, 2)
     res = dr.reshape(2, 3)
     check('sr2d reshape shape', res.shape == (2, 3))
-    check('sr2d reshape A', [res['A'][i] for i in range(2)] == [1.0, 2.0])
-    check('sr2d reshape B', [res['B'][i] for i in range(4)] == [1.0, 2.0, 10.0, 20.0])
-    check('sr2d reshape C', [res['C'][i] for i in range(4)] == [3.0, 4.0, 30.0, 40.0])
+    check('sr2d reshape A', res['A'][0][0] == 1.0 and math.isnan(res['A'][0][1])
+          and res['A'][1][0] == 2.0 and math.isnan(res['A'][1][1]))
+    check('sr2d reshape B', [res['B'][i] for i in range(2)] == [(1.0, 10.0), (2.0, 20.0)])
+    check('sr2d reshape C', [res['C'][i] for i in range(2)] == [(3.0, 30.0), (4.0, 40.0)])
 
 
 def test_shift_time_cols():
@@ -1930,20 +1933,20 @@ def test_where_mask_row_2d():
 
     r = df.where_column('v', 'cond', 99.0)
     check('2d where dims', r.rows == 4 and r.is_2d and r.cols == 2)
-    check('2d where flat', [r[i] for i in range(8)] == [1.0, 99.0, 3.0, 99.0, 10.0, 99.0, 30.0, 99.0])
+    check('2d where rows', [r[i] for i in range(4)] == [(1.0, 10.0), (99.0, 99.0), (3.0, 30.0), (99.0, 99.0)])
 
     ri = df.where_column('iv', 'cond', 77)
-    check('2d where int', [ri[i] for i in range(8)] == [1, 77, 3, 77, 10, 77, 30, 77])
+    check('2d where int', [ri[i] for i in range(4)] == [(1, 10), (77, 77), (3, 30), (77, 77)])
 
     m = df.mask_column('v', 'cond', 5.0)
-    check('2d mask flat', [m[i] for i in range(8)] == [5.0, 2.0, 5.0, 4.0, 5.0, 20.0, 5.0, 40.0])
+    check('2d mask rows', [m[i] for i in range(4)] == [(5.0, 5.0), (2.0, 20.0), (5.0, 5.0), (4.0, 40.0)])
 
     mask = IntColumn()
     for c in [1, 0, 1, 0]: mask.append(c)
     rr = df.where_row(mask, fill=-1)
     check('2d where_row shape', rr.shape == (4, 3))
-    check('2d where_row double', [rr['v'][i] for i in range(8)] == [1.0, -1.0, 3.0, -1.0, 10.0, -1.0, 30.0, -1.0])
-    check('2d where_row int', [rr['iv'][i] for i in range(8)] == [1, -1, 3, -1, 10, -1, 30, -1])
+    check('2d where_row double', [rr['v'][i] for i in range(4)] == [(1.0, 10.0), (-1.0, -1.0), (3.0, 30.0), (-1.0, -1.0)])
+    check('2d where_row int', [rr['iv'][i] for i in range(4)] == [(1, 10), (-1, -1), (3, 30), (-1, -1)])
 
     bad = IntColumn.from_2d([1]*8, 4, 2)
     df._columns['badc'] = bad

@@ -1811,17 +1811,6 @@ cdef inline void _n_cmp_col(DateLike* s, DateLike* o, int* r,
     else:
         for i in range(n): r[i] = s[i] != o[i]
 
-cdef list _n_unique(DateLike* ptr, Py_ssize_t n, set seen, list result) except *:
-    """按存储值域去重（DateTime/Time 使用）；Date 因返回 YYYYMMDD 保留自身实现。"""
-    cdef Py_ssize_t i
-    cdef DateLike val
-    for i in range(n):
-        val = ptr[i]
-        if val not in seen:
-            seen.add(val)
-            result.append(val)
-    return result
-
 cdef inline void _n_isin(DateLike* src, DateLike* keys, Py_ssize_t n,
                          Py_ssize_t m, unsigned char* out) noexcept nogil:
     """齐集检索：就地 qsort keys 后逐元素二分查找，结果写入 0/1 掩码。"""

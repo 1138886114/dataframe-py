@@ -190,6 +190,85 @@ def test_series_api():
     check('describe mean', d[1] == 2.5)
 
 # ------------------------------------------------------------------
+# A2: Series 对 2D 列的元素访问必须返回"行键元组"（列主序下读全行），
+#     而非扁平读第 0 子列（此前只读到子列 0 前 r 个的静默错误）
+# ------------------------------------------------------------------
+def test_series_2d_element_access():
+    dc = DoubleColumn.from_2d(
+        [1.0, 2.0, 3.0, 4.0,
+         10.0, 20.0, 30.0, 40.0], 4, 2)
+    s = Series('a', dc, RangeIndex(0, 4))
+    exp = [(1.0, 10.0), (2.0, 20.0), (3.0, 30.0), (4.0, 40.0)]
+
+    check('A2 len is rows', len(s) == 4)
+    check('A2 values row tuples', s.values == exp)
+    check('A2 iter row tuples', list(s) == exp)
+    check('A2 scalar getitem', s[0] == (1.0, 10.0) and s[3] == (4.0, 40.0))
+    check('A2 negative getitem', s[-1] == (4.0, 40.0) and s[-4] == (1.0, 10.0))
+    check('A2 getitem consistency', [s[i] for i in range(len(s))] == exp)
+
+    raised = False
+    try:
+        s[4]
+    except IndexError:
+        raised = True
+    check('A2 getitem oob raises', raised)
+    raised = False
+    try:
+        s[-5]
+    except IndexError:
+        raised = True
+    check('A2 getitem neg oob raises', raised)
+
+    check('A2 contains row tuple', (3.0, 30.0) in s and (1.0, 10.0) in s)
+    check('A2 no scalar match', 3.0 not in s)
+    check('A2 no wrong tuple', (99.0, 99.0) not in s)
+
+    vc = s.value_counts()
+    check('A2 value_counts uses row keys', list(vc.index) == exp)
+
+    # 切片 / 布尔掩码走行级 take，保持行元组
+    sliced = s[1:3]
+    check('A2 slice row-aware', sliced.values == [(2.0, 20.0), (3.0, 30.0)])
+    mask_col = IntColumn(4)
+    for v in [1, 0, 1, 0]:
+        mask_col.append(v)
+    mask = Series('m', mask_col, RangeIndex(0, 4))
+    check('A2 mask row-aware', s[mask].values == [(1.0, 10.0), (3.0, 30.0)])
+
+    # repr 展示行元组
+    check('A2 repr shows tuple', '(1.0, 10.0)' in repr(s))
+
+    # 2D Int 载体
+    ic = IntColumn.from_2d([1, 2, 2, 3, 10, 20, 20, 30], 4, 2)
+    s2 = Series('i', ic, RangeIndex(0, 4))
+    check('A2 int values row tuples', s2.values == [(1, 10), (2, 20), (2, 20), (3, 30)])
+    check('A2 int getitem', s2[2] == (2, 20))
+
+    # DataFrame 路由
+    df = _make_df2d()
+    sf = df.get_series('a')
+    check('A2 df route', sf[1] == (2.0, 20.0) and sf.values == exp)
+
+    # 行级赋值在 2D 上明确报错（避免只写子列 0）
+    raised = False
+    try:
+        s[0] = 5.0
+    except ValueError:
+        raised = True
+    check('A2 setitem 2d raises', raised)
+
+    # 1D 语义不受影响
+    c = IntColumn(3)
+    for v in [10, 20, 30]:
+        c.append(v)
+    s3 = Series('x', c, RangeIndex(0, 3))
+    check('A2 1d values intact', s3.values == [10, 20, 30])
+    check('A2 1d getitem intact', s3[1] == 20)
+    check('A2 1d iter intact', list(s3) == [10, 20, 30])
+    check('A2 1d contains intact', 20 in s3 and 99 not in s3)
+
+# ------------------------------------------------------------------
 # Run
 # ------------------------------------------------------------------
 if __name__ == '__main__':
@@ -199,5 +278,6 @@ if __name__ == '__main__':
     test_gap2_arith_shape()
     test_df_api_basics()
     test_series_api()
+    test_series_2d_element_access()
     print(f"Results: {passed} passed, {failed} failed")
     sys.exit(0 if failed == 0 else 1)

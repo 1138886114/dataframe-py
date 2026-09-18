@@ -161,6 +161,8 @@ cdef class IntColumn(BaseColumn):
     def _owns_data(self): return self.owns_data
 
     @_owns_data.setter
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def _owns_data(self, bint val): self.owns_data = val
 
     @cython.binding(False)
@@ -607,6 +609,8 @@ cdef class IntColumn(BaseColumn):
     @cython.always_allow_keywords(False)
 
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def median(self):
         cdef Py_ssize_t c = self.num_cols
         cdef Py_ssize_t r = self._get_rows_c()
@@ -2606,6 +2610,8 @@ cdef class DoubleColumn(BaseColumn):
         return self.owns_data
 
     @_owns_data.setter
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def _owns_data(self, bint val):
         self.owns_data = val
 
@@ -5333,6 +5339,7 @@ cdef class AsciiColumn(BaseColumn):
             res.append(self._get_str(i).replace(old_str, new_str, count))
         return res
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def replaces(self, *args):
         if len(args) % 2 != 0:
@@ -6485,6 +6492,7 @@ cdef class AsciiColumn(BaseColumn):
             return self.copy()
         raise TypeError(f"Failed to cast CHAR256 column to internal type id: {target_type}")
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def str_split(self, sep=None, int maxsplit=-1):
         cdef list res = []
@@ -7907,6 +7915,7 @@ cdef class UCS2Column(BaseColumn):
         snprintf(err_buf, sizeof(err_buf), "Failed to cast UCS2 column to internal type id: %d", target_type)
         raise TypeError(err_buf.decode('ascii'))
 
+    @cython.always_allow_keywords(False)
     @cython.binding(False)
     def str_split(self, sep=None, int maxsplit=-1):
         cdef list res = []
@@ -8003,6 +8012,8 @@ cdef class DateColumn(BaseColumn):
         return self.owns_data
 
     @_owns_data.setter
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def _owns_data(self, bint val):
         self.owns_data = val
 
@@ -10135,6 +10146,8 @@ cdef class DateTimeColumn(BaseColumn):
         return self.owns_data
 
     @_owns_data.setter
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def _owns_data(self, bint val):
         self.owns_data = val
 
@@ -10857,6 +10870,8 @@ cdef class TimeColumn(BaseColumn):
         return self.owns_data
 
     @_owns_data.setter
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def _owns_data(self, bint val):
         self.owns_data = val
 

@@ -17,8 +17,8 @@ def check(name, cond):
         print(f'  FAIL: {name}')
 
 def sub_2d(col, sub, i):
-    """读取 2D 列 col 第 sub 个子列第 i 行（列优先 data_c[sub*rows + i]）"""
-    return col[sub * col.rows + i]
+    """读取 2D 列 col 第 i 行行键元组的第 sub 个子列（A2 行元组语义：col[i][sub]）"""
+    return col[i][sub]
 
 def sample_var(vals):
     m = sum(vals) / len(vals)
