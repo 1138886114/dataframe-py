@@ -12,7 +12,7 @@ from cpython.unicode cimport Py_UCS2
 cdef enum DataType:
     TYPE_INT = 0
     TYPE_DOUBLE = 2
-    TYPE_CHAR256 = 3
+    TYPE_ASCII = 3
     TYPE_UCS2 = 4
     TYPE_DATE = 5
     TYPE_BOOL = 6

@@ -51,7 +51,7 @@ cdef int _resolve_astype_target(object target) except -1:
             if _fast_match(c_str, b"float", 5): return TYPE_DOUBLE
             if _fast_match(c_str, b"int32", 5): return TYPE_INT
             if _fast_match(c_str, b"int64", 5): return TYPE_INT
-            if _fast_match(c_str, b"ascii", 5): return TYPE_CHAR256
+            if _fast_match(c_str, b"ascii", 5): return TYPE_ASCII
         elif length == 6:
             if _fast_match(c_str, b"double", 6): return TYPE_DOUBLE
             if _fast_match(c_str, b"string", 6): return TYPE_UCS2
@@ -60,7 +60,6 @@ cdef int _resolve_astype_target(object target) except -1:
             if _fast_match(c_str, b"float64", 7): return TYPE_DOUBLE
             if _fast_match(c_str, b"boolean", 7): return TYPE_BOOL
             if _fast_match(c_str, b"unicode", 7): return TYPE_UCS2
-            if _fast_match(c_str, b"char256", 7): return TYPE_CHAR256
         elif length == 8:
             if _fast_match(c_str, b"datetime", 8): return TYPE_DATETIME
             if _fast_match(c_str, b"category", 8): return TYPE_CATEGORY

@@ -2013,7 +2013,7 @@ cdef class IntColumn(BaseColumn):
                 uc.append(buf[:sz].decode('ascii'))
             return uc
 
-        elif target_type == TYPE_CHAR256:
+        elif target_type == TYPE_ASCII:
             cc = AsciiColumn(first_col_cap)
             for i in range(first_col_n):
                 cc.append(str(s_ptr[i]))
@@ -4384,7 +4384,7 @@ cdef class DoubleColumn(BaseColumn):
                     uc.append(buf[:sz].decode('ascii'))
             return uc
 
-        elif target_type == TYPE_CHAR256:
+        elif target_type == TYPE_ASCII:
             cc = AsciiColumn(first_col_cap)
             cc.length = first_col_n
             with nogil:
@@ -4993,7 +4993,7 @@ cdef class AsciiColumn(BaseColumn):
     def __cinit__(self, Py_ssize_t init_capacity=16):
         self.capacity = max(init_capacity, 1)
         self.length = 0
-        self.dtype = TYPE_CHAR256
+        self.dtype = TYPE_ASCII
 
         self.offsets_c = <Py_ssize_t*>aligned_malloc((self.capacity + 1) * sizeof(Py_ssize_t))
         if not self.offsets_c:
@@ -6304,7 +6304,7 @@ cdef class AsciiColumn(BaseColumn):
         cdef Py_ssize_t i, n = self.length
         for i in range(n):
             items.append(repr(self._get_str(i)))
-        return f"Char256Column([{', '.join(items)}])"
+        return f"AsciiColumn([{', '.join(items)}])"
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -6488,9 +6488,9 @@ cdef class AsciiColumn(BaseColumn):
                 s = self._get_str(i)
                 tmc.append(s if s else 0)
             return tmc
-        elif target_type == TYPE_CHAR256:
+        elif target_type == TYPE_ASCII:
             return self.copy()
-        raise TypeError(f"Failed to cast CHAR256 column to internal type id: {target_type}")
+        raise TypeError(f"Failed to cast ASCII column to internal type id: {target_type}")
 
     @cython.always_allow_keywords(False)
     @cython.binding(False)
@@ -7866,7 +7866,7 @@ cdef class UCS2Column(BaseColumn):
                     bc_ptr[i] = 0
             return bc
 
-        elif target_type == TYPE_CHAR256:
+        elif target_type == TYPE_ASCII:
             cc = AsciiColumn(safe_cap)
             for i in range(n):
                 cc.append(self._get_str(i))
@@ -9191,7 +9191,7 @@ cdef class DateColumn(BaseColumn):
                     _days_to_ymd(s_ptr[i], &y, &m, &d)
                     dc.data_c[i] = <double>(y * 10000 + m * 100 + d)
             return dc
-        elif target_type == TYPE_CHAR256:
+        elif target_type == TYPE_ASCII:
             cc = AsciiColumn(first_col_cap)
             cc.length = first_col_n
             with nogil:
@@ -9622,7 +9622,7 @@ cdef class BoolColumn(BaseColumn):
                 s_val = BOOL_STRS[1 if ptr[i] != 0 else 0]
                 uc.append(s_val)
             return uc
-        elif target_type == TYPE_CHAR256:
+        elif target_type == TYPE_ASCII:
             cc = AsciiColumn(safe_cap)
             for i in range(n):
                 s_val = BOOL_STRS[1 if ptr[i] != 0 else 0]
@@ -10162,7 +10162,7 @@ cdef class CategoryColumn(BaseColumn):
             for i in range(n):
                 uc.append(self._resolve(i))
             return uc
-        elif target_type == TYPE_CHAR256:
+        elif target_type == TYPE_ASCII:
             cc = AsciiColumn(safe_cap)
             for i in range(n):
                 cc.append(self._resolve(i))
@@ -10878,7 +10878,7 @@ cdef class DateTimeColumn(BaseColumn):
                     tmc_ptr[i] = rem + SEC_PER_DAY if rem < 0 else rem
             return tmc
 
-        elif target_type == TYPE_CHAR256:
+        elif target_type == TYPE_ASCII:
             cc = AsciiColumn(first_col_cap)
             cc.length = first_col_n
             with nogil:
@@ -11514,7 +11514,7 @@ cdef class TimeColumn(BaseColumn):
                 for i in range(first_col_n):
                     bc.data_c[i] = <unsigned char>(ptr[i] != 0)
             return bc
-        elif target_type == TYPE_CHAR256:
+        elif target_type == TYPE_ASCII:
             cc = AsciiColumn(first_col_cap)
             cc.length = first_col_n
             with nogil:

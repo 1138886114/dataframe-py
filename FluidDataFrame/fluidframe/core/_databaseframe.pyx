@@ -33,14 +33,14 @@ from fluidframe.core._columns cimport (
     IntColumn, DoubleColumn, AsciiColumn, UCS2Column, DateColumn, BoolColumn,
     CategoryColumn, DateTimeColumn, TimeColumn,
     _days_to_ymd, _ymd_to_days, _parse_date_str, _parse_datetime_str, _parse_time_str,
-    TYPE_INT, TYPE_DOUBLE, TYPE_CHAR256, TYPE_UCS2, TYPE_DATE, TYPE_BOOL,
+    TYPE_INT, TYPE_DOUBLE, TYPE_ASCII, TYPE_UCS2, TYPE_DATE, TYPE_BOOL,
     TYPE_CATEGORY, TYPE_DATETIME, TYPE_TIME,
 )
 
 # ============================================================
 #  Python-level imports used across DataFrame implementation
 # ============================================================
-from fluidframe._schema_types import Char256, Date, Bool, Category, DateTime, Time, _parse_schema
+from fluidframe._schema_types import Ascii, Date, Bool, Category, DateTime, Time, _parse_schema
 
 
 # ============================================================
@@ -58,13 +58,13 @@ cdef list _DT_ATTRS = [
 
 
 cdef dict _TYPE_NAMES = {
-    TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_CHAR256: 'char256',
+    TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_ASCII: 'ascii',
     TYPE_UCS2: 'ucs2', TYPE_DATE: 'date', TYPE_BOOL: 'bool',
     TYPE_CATEGORY: 'category', TYPE_DATETIME: 'datetime', TYPE_TIME: 'time',
 }
 
 cdef dict _TYPE_PYCLASSES = {
-    TYPE_INT: int, TYPE_DOUBLE: float, TYPE_CHAR256: Char256,
+    TYPE_INT: int, TYPE_DOUBLE: float, TYPE_ASCII: Ascii,
     TYPE_UCS2: str, TYPE_DATE: Date, TYPE_BOOL: bool,
     TYPE_CATEGORY: Category, TYPE_DATETIME: DateTime, TYPE_TIME: Time,
 }
@@ -1444,7 +1444,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def contains(self, object pat):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).str_contains_mask(pat))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).contains(pat))
@@ -1454,7 +1454,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def startswith(self, prefix):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).startswith(prefix))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).startswith(prefix))
@@ -1464,7 +1464,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def endswith(self, suffix):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).endswith(suffix))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).endswith(suffix))
@@ -1474,7 +1474,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def find(self, str sub):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).find(sub))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).find(sub))
@@ -1484,7 +1484,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def rfind(self, str sub):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).rfind(sub))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).rfind(sub))
@@ -1494,7 +1494,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def index(self, str sub):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).find(sub))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).find(sub))
@@ -1504,7 +1504,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def rindex(self, str sub):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).rindex(sub))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).rindex(sub))
@@ -1514,7 +1514,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def count(self, str sub):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).count(sub))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).count(sub))
@@ -1524,7 +1524,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def match(self, str pattern):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).match(pattern))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).match(pattern))
@@ -1534,7 +1534,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def fullmatch(self, str pattern):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).fullmatch(pattern))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).fullmatch(pattern))
@@ -1546,7 +1546,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def extract(self, str pattern, int group=1):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).extract(pattern))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).extract(pattern, group))
@@ -1556,7 +1556,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def extractall(self, str pattern):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).extractall(pattern))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).extractall(pattern))
@@ -1566,7 +1566,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def findall(self, str pattern):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).findall(pattern))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).findall(pattern))
@@ -1578,7 +1578,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def isalpha(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).isalpha())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).isalpha())
@@ -1588,7 +1588,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def isnumeric(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).isnumeric())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).isnumeric())
@@ -1598,7 +1598,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def isalnum(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).isalnum())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).isalnum())
@@ -1608,7 +1608,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def isdigit(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).isdigit())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).isdigit())
@@ -1618,7 +1618,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def isdecimal(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).isdecimal())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).isdecimal())
@@ -1628,7 +1628,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def islower(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).islower())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).islower())
@@ -1638,7 +1638,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def isupper(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).isupper())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).isupper())
@@ -1648,7 +1648,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def isspace(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).isspace())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).isspace())
@@ -1660,7 +1660,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def upper(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).upper())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).upper())
@@ -1670,7 +1670,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def lower(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).lower())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).lower())
@@ -1680,7 +1680,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def title(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).title())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).title())
@@ -1690,7 +1690,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def capitalize(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).capitalize())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).capitalize())
@@ -1700,7 +1700,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def swapcase(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).swapcase())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).swapcase())
@@ -1710,7 +1710,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def casefold(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).casefold())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).casefold())
@@ -1722,7 +1722,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def strip(self, chars=None):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).strip(chars) if chars is not None else (<AsciiColumn>col).strip())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).strip(chars) if chars is not None else (<UCS2Column>col).strip())
@@ -1732,7 +1732,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def lstrip(self, chars=None):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).lstrip(chars) if chars is not None else (<AsciiColumn>col).lstrip())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).lstrip(chars) if chars is not None else (<UCS2Column>col).lstrip())
@@ -1742,7 +1742,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def rstrip(self, chars=None):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).rstrip(chars) if chars is not None else (<AsciiColumn>col).rstrip())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).rstrip(chars) if chars is not None else (<UCS2Column>col).rstrip())
@@ -1752,7 +1752,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def center(self, int width, str fillchar=' '):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).center(width, fillchar))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).center(width, fillchar))
@@ -1762,7 +1762,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def ljust(self, int width, str fillchar=' '):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).ljust(width, fillchar))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).ljust(width, fillchar))
@@ -1772,7 +1772,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def rjust(self, int width, str fillchar=' '):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).rjust(width, fillchar))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).rjust(width, fillchar))
@@ -1782,7 +1782,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def pad(self, int width, str side='left', str fillchar=' '):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).pad(width, side, fillchar))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).pad(width, side, fillchar))
@@ -1792,7 +1792,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def zfill(self, int width):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).zfill(width))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).zfill(width))
@@ -1804,7 +1804,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def replace(self, str old, str new, int count=-1):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).replace(old, new, count))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).replace(old, new, count))
@@ -1816,7 +1816,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def split(self, str sep=None, int maxsplit=-1):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).str_split(sep, maxsplit))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).str_split(sep, maxsplit))
@@ -1826,7 +1826,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def rsplit(self, str sep=None, int maxsplit=-1):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).rsplit(sep, maxsplit))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).rsplit(sep, maxsplit))
@@ -1836,7 +1836,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def partition(self, str sep):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).partition(sep))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).partition(sep))
@@ -1846,7 +1846,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def rpartition(self, str sep):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).rpartition(sep))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).rpartition(sep))
@@ -1858,7 +1858,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def get(self, int index, str default=''):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).get(index, default))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).get(index, default))
@@ -1868,7 +1868,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def slice(self, int start=0, int stop=-1, int step=1):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).slice(start, stop, step))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).slice(start, stop, step))
@@ -1878,7 +1878,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def len(self):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).len())
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).len())
@@ -1886,7 +1886,7 @@ cdef class _StringAccessor:
 
     def __getitem__(self, key):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).str_getitem(key))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).str_getitem(key))
@@ -1898,7 +1898,7 @@ cdef class _StringAccessor:
     @cython.binding(False)
     def cat(self, other, str sep=''):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).cat(other, sep))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).cat(other, sep))
@@ -1908,7 +1908,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def prefix(self, str pre):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).prefix(pre))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).prefix(pre))
@@ -1918,7 +1918,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def suffix(self, str suf):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).suffix(suf))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).suffix(suf))
@@ -1928,7 +1928,7 @@ cdef class _StringAccessor:
     @cython.always_allow_keywords(False)
     def repeat(self, int repeats):
         cdef BaseColumn col = self._series._col
-        if col.dtype == TYPE_CHAR256:
+        if col.dtype == TYPE_ASCII:
             return self._wrap((<AsciiColumn>col).repeat(repeats))
         elif col.dtype == TYPE_UCS2:
             return self._wrap((<UCS2Column>col).repeat(repeats))
@@ -3033,7 +3033,7 @@ cdef class Series:
     def str(self):
         """字符串访问器，返回_StringAccessor实例"""
         cdef int dt = self._col.dtype
-        if dt != TYPE_CHAR256 and dt != TYPE_UCS2:
+        if dt != TYPE_ASCII and dt != TYPE_UCS2:
             raise AttributeError("Can only use .str accessor with string values!")
         return _StringAccessor(self)
 
@@ -3302,7 +3302,7 @@ def _series_isna(BaseColumn col):
         with nogil:
             for i in range(total):
                 out_ptr[i] = 1 if isnan(d_ptr[i]) else 0
-    elif col.dtype == TYPE_CHAR256:
+    elif col.dtype == TYPE_ASCII:
         offset_ptr = (<AsciiColumn>col).offsets_c
         with nogil:
             for i in range(total):
@@ -3389,7 +3389,7 @@ cdef class DataFrame:
             return (<IntColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_DOUBLE:
             return (<DoubleColumn>col).take_by_indices(indices, n, inplace)
-        elif col.dtype == TYPE_CHAR256:
+        elif col.dtype == TYPE_ASCII:
             return (<AsciiColumn>col).take_by_indices(indices, n, inplace)
         elif col.dtype == TYPE_UCS2:
             return (<UCS2Column>col).take_by_indices(indices, n, inplace)
@@ -3483,7 +3483,7 @@ cdef class DataFrame:
                     self._columns[col_name] = IntColumn()
                 elif dtype == TYPE_DOUBLE:
                     self._columns[col_name] = DoubleColumn()
-                elif dtype == TYPE_CHAR256:
+                elif dtype == TYPE_ASCII:
                     self._columns[col_name] = AsciiColumn()
                 elif dtype == TYPE_UCS2:
                     self._columns[col_name] = UCS2Column()
@@ -3622,7 +3622,7 @@ cdef class DataFrame:
 
         # 3. 处理离散的非等宽字段列
         for name, dtype in other_cols.items():
-            if dtype == TYPE_CHAR256:
+            if dtype == TYPE_ASCII:
                 self._columns[name] = AsciiColumn(capacity)
             elif dtype == TYPE_UCS2:
                 self._columns[name] = UCS2Column(capacity)
@@ -3730,7 +3730,7 @@ cdef class DataFrame:
     cdef void _rollback_pending_writes(self, uint32_t n_cols) noexcept:
         cdef uint32_t i
         for i in range(n_cols):
-            if self._c_cols[i].dtype == TYPE_CHAR256:
+            if self._c_cols[i].dtype == TYPE_ASCII:
                 (<AsciiColumn>self._c_cols[i].col_obj).undo_nolen()
             elif self._c_cols[i].dtype == TYPE_UCS2:
                 (<UCS2Column>self._c_cols[i].col_obj).undo_nolen()
@@ -3748,7 +3748,7 @@ cdef class DataFrame:
     cdef inline str _fast_type_name(self, int dt):
         if dt == TYPE_INT: return 'i64'
         elif dt == TYPE_DOUBLE: return 'f64'
-        elif dt == TYPE_CHAR256: return 'str'
+        elif dt == TYPE_ASCII: return 'str'
         elif dt == TYPE_UCS2: return 'str'
         elif dt == TYPE_DATE: return 'date'
         elif dt == TYPE_DATETIME: return 'datetime'
@@ -3885,7 +3885,7 @@ cdef class DataFrame:
 
         val = col[i]
         if val is None or val == '': return "null"
-        if dt in (TYPE_CHAR256, TYPE_UCS2, TYPE_CATEGORY):
+        if dt in (TYPE_ASCII, TYPE_UCS2, TYPE_CATEGORY):
             return f'"{str(val).replace(chr(10), "\\n").replace(chr(13), "\\r")}"'
         return str(val)
 
@@ -4786,7 +4786,7 @@ cdef class DataFrame:
                     new_col = DoubleColumn(len(vals))
                     for r in range(len(vals)):
                         new_col.append(float(vals[r]))
-                elif dtype == TYPE_CHAR256:
+                elif dtype == TYPE_ASCII:
                     new_col = AsciiColumn()
                     for v in vals:
                         new_col.append(str(v) if v is not None else '')
@@ -6079,7 +6079,7 @@ cdef class _DataFrameMetricAccessor:
 
 import pickle as _pickle
 import csv as _csv
-from fluidframe._schema_types import Char256 as _Char256, Date as _Date, Bool as _Bool, \
+from fluidframe._schema_types import Ascii as _Ascii, Date as _Date, Bool as _Bool, \
     Category as _Category, DateTime as _DateTime, Time as _Time, _parse_schema as _parse_schema
 
 
@@ -6147,7 +6147,7 @@ def from_pickle(filename, bint allow_raw_pickle=False):
                 col = DoubleColumn()
                 for v in values:
                     col.append(v)
-        elif typ == 'char256':
+        elif typ == 'ascii':
             col = AsciiColumn()
             for v in values:
                 col.append(v)
@@ -6246,7 +6246,7 @@ def read_csv(filename, dict schema, sep=','):
                 df._columns[name] = IntColumn()
             elif dtype == TYPE_DOUBLE:
                 df._columns[name] = DoubleColumn()
-            elif dtype == TYPE_CHAR256:
+            elif dtype == TYPE_ASCII:
                 df._columns[name] = AsciiColumn()
             elif dtype == TYPE_DATE:
                 df._columns[name] = DateColumn()
@@ -6274,7 +6274,7 @@ def read_csv(filename, dict schema, sep=','):
             for i in range(n_rows):
                 val = rows[i][j].strip()
                 col.append(float(val) if val else NAN)
-        elif py_type == TYPE_CHAR256:
+        elif py_type == TYPE_ASCII:
             col = AsciiColumn(n_rows)
             for i in range(n_rows):
                 col.append(rows[i][j])
@@ -6348,7 +6348,7 @@ def read_json(filename, dict schema):
                 val = records[i].get(name)
                 col_d.data_c[i] = <double>val if val is not None else NAN
             df._columns[name] = col_d
-        elif py_type == TYPE_CHAR256:
+        elif py_type == TYPE_ASCII:
             col_a = AsciiColumn(max(n_rows, 1))
             for i in range(n_rows):
                 col_a.append(str(records[i].get(name, '')))
@@ -6427,7 +6427,7 @@ def concat_outer(list dfs):
                 elif ref.dtype == TYPE_BOOL:
                     fill_col = BoolColumn()
                     for _ in range(total): fill_col.append(False)
-                elif ref.dtype == TYPE_CHAR256:
+                elif ref.dtype == TYPE_ASCII:
                     fill_col = AsciiColumn()
                     for _ in range(total): fill_col.append('')
                 elif ref.dtype == TYPE_UCS2:

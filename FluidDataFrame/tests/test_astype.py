@@ -43,9 +43,9 @@ uc = ic.astype('ucs2')
 check(uc[0] == '1', "int->ucs2 [0]")
 check(uc[2] == '42', "int->ucs2 [2]")
 
-# int -> char256
-cc = ic.astype('char256')
-check(cc[0] == '1', "int->char256 [0]")
+# int -> ascii
+cc = ic.astype('ascii')
+check(cc[0] == '1', "int->ascii [0]")
 
 # int -> timestamp (small ints treated as epoch days, read back as YYYYMMDD)
 tc = ic.astype('timestamp')
@@ -95,27 +95,27 @@ uc3 = bc3.astype('ucs2')
 check(uc3[0] == 'True', "bool->ucs2 [0]")
 check(uc3[1] == 'False', "bool->ucs2 [1]")
 
-# ==================== Char256Column.astype ====================
-print("=== Char256Column.astype ===")
+# ==================== AsciiColumn.astype ====================
+print("=== AsciiColumn.astype ===")
 cc2 = AsciiColumn(4)
 cc2.append('123'); cc2.append('45.67'); cc2.append('-7'); cc2.append('20240101')
 
-# char256 -> int
+# ascii -> int
 ic4 = cc2.astype('int')
-check(ic4[0] == 123, "char256->int [0]")
-check(ic4[2] == -7, "char256->int [2]")
+check(ic4[0] == 123, "ascii->int [0]")
+check(ic4[2] == -7, "ascii->int [2]")
 
-# char256 -> double
+# ascii -> double
 dc4 = cc2.astype('double')
-check(dc4[1] == 45.67, "char256->double [1]")
+check(dc4[1] == 45.67, "ascii->double [1]")
 
-# char256 -> ucs2
+# ascii -> ucs2
 uc4 = cc2.astype('ucs2')
-check(uc4[0] == '123', "char256->ucs2 [0]")
+check(uc4[0] == '123', "ascii->ucs2 [0]")
 
-# char256 -> timestamp
+# ascii -> timestamp
 tc2 = cc2.astype('timestamp')
-check(tc2[3] == 20240101, "char256->timestamp [3]")
+check(tc2[3] == 20240101, "ascii->timestamp [3]")
 
 # ==================== UCS2Column.astype ====================
 print("=== UCS2Column.astype ===")

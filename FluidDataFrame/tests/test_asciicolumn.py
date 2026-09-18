@@ -35,7 +35,7 @@ def make_series(vals, name='s'):
 
 
 # =====================================================================
-#  Column-level tests (from test_char256column.py)
+#  Column-level tests (from test_asciicolumn.py)
 # =====================================================================
 def test_empty():
     col = AsciiColumn()
@@ -122,7 +122,7 @@ def test_growth():
 # =====================================================================
 #  Str accessor tests
 # =====================================================================
-class TestChar256Search:
+class TestAsciiSearch:
     def test_contains(self):
         col = make(['Hello World', 'Python Programming', 'Data Science', 'hello python'])
         r = col.str_contains_mask('Python')
@@ -150,7 +150,7 @@ class TestChar256Search:
         check('fullmatch', [col.fullmatch(r'\d+')[i] for i in range(4)] == [0, 0, 0, 1])
 
 
-class TestChar256TypeCheck:
+class TestAsciiTypeCheck:
     def test_isalpha(self):
         col = make(['abc', 'ABC123', 'Hello', ''])
         check('isalpha', [col.isalpha()[i] for i in range(4)] == [1, 0, 1, 0])
@@ -171,7 +171,7 @@ class TestChar256TypeCheck:
         check('isspace', [col.isspace()[i] for i in range(4)] == [1, 1, 0, 0])
 
 
-class TestChar256CaseConversion:
+class TestAsciiCaseConversion:
     def test_upper_lower(self):
         col = make(['Hello', 'PYTHON'])
         check('upper', [col.upper()[i] for i in range(2)] == ['HELLO', 'PYTHON'])
@@ -191,7 +191,7 @@ class TestChar256CaseConversion:
         check('casefold', col.casefold()[0] == 'hello')
 
 
-class TestChar256StripPad:
+class TestAsciiStripPad:
     def test_strip(self):
         col = make(['  hello  ', 'world'])
         check('strip', [col.strip()[i] for i in range(2)] == ['hello', 'world'])
@@ -215,7 +215,7 @@ class TestChar256StripPad:
         check('zfill', [col.zfill(8)[i] for i in range(2)] == ['00000042', '000hello'])
 
 
-class TestChar256Split:
+class TestAsciiSplit:
     def test_split(self):
         col = make(['a b c', 'd-e-f'])
         check('split space', col.str_split(' ') == [['a', 'b', 'c'], ['d-e-f']])
@@ -234,7 +234,7 @@ class TestChar256Split:
         check('rpartition', col.rpartition('.') == [('a.b', '.', 'c'), ('', '', 'abc')])
 
 
-class TestChar256Access:
+class TestAsciiAccess:
     def test_getitem(self):
         col = make(['Hello', 'World'])
         check('getitem 0', [col.str_getitem(0)[i] for i in range(2)] == ['H', 'W'])
@@ -256,7 +256,7 @@ class TestChar256Access:
         check('len', [col.len()[i] for i in range(2)] == [5, 6])
 
 
-class TestChar256Concat:
+class TestAsciiConcat:
     def test_cat(self):
         col = make(['Hello', 'World'])
         check('cat sep', [col.cat(col, sep=' ')[i] for i in range(2)] == ['Hello Hello', 'World World'])
@@ -273,7 +273,7 @@ class TestChar256Concat:
         check('repeat', [col.repeat(3)[i] for i in range(2)] == ['ababab', 'cdcdcd'])
 
 
-class TestChar256Regex:
+class TestAsciiRegex:
     def test_findall(self):
         col = make(['a1b2', 'c3d4', 'xyz'])
         check('findall', col.findall(r'\d+') == [['1', '2'], ['3', '4'], []])
@@ -284,7 +284,7 @@ class TestChar256Regex:
         check('extract', [r[i] for i in range(3)] == ['abc', 'def', ''])
 
 
-class TestChar256Chained:
+class TestAsciiChained:
     def test_chained(self):
         col = make(['  Hello World  ', '  Python  '])
         check('strip+upper', [col.strip().upper()[i] for i in range(2)] == ['HELLO WORLD', 'PYTHON'])
@@ -312,7 +312,7 @@ class TestSeriesStrSmoke:
 
 
 def run_all():
-    print('=== AsciiColumn (Char256) Tests ===')
+    print('=== AsciiColumn (Ascii) Tests ===')
     # Column-level tests
     test_empty()
     test_append()
@@ -325,9 +325,9 @@ def run_all():
     test_unique()
     test_growth()
     # Str accessor tests (column-level direct methods)
-    for cls in [TestChar256Search, TestChar256TypeCheck, TestChar256CaseConversion,
-                TestChar256StripPad, TestChar256Split, TestChar256Access,
-                TestChar256Concat, TestChar256Regex, TestChar256Chained]:
+    for cls in [TestAsciiSearch, TestAsciiTypeCheck, TestAsciiCaseConversion,
+                TestAsciiStripPad, TestAsciiSplit, TestAsciiAccess,
+                TestAsciiConcat, TestAsciiRegex, TestAsciiChained]:
         for name in dir(cls):
             if name.startswith('test_'):
                 getattr(cls(), name)()

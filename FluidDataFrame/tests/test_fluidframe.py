@@ -1,7 +1,7 @@
 import sys
 sys.path.insert(0, '.')
 from fluidframe.core.dataframe import DataFrame
-from fluidframe._schema_types import Char256, Date
+from fluidframe._schema_types import Ascii, Date
 
 passed = 0
 failed = 0
@@ -24,7 +24,7 @@ def expect_exception(exc_type, fn, *args, **kwargs):
         return False
 
 def _make_df():
-    df = DataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
+    df = DataFrame({'id': int, 'score': float, 'name': str, 'tag': Ascii, 'dt': Date})
     rows = [
         (1, 88.5, 'Alice', 'senior', 20230115), (2, 92.0, 'Bob', 'mid', 20230620),
         (3, 75.3, 'Charlie', 'senior', 20221201), (4, 60.0, 'Diana', 'low', 20240229),
@@ -46,7 +46,7 @@ class TestReadCsv:
         try:
             df.to_csv(fname)
             from fluidframe.core.dataframe import read_csv
-            df2 = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
+            df2 = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': Ascii, 'dt': Date})
             check('csv shape', df2.shape == (10, 5))
             check('csv id[0]', df2['id'][0] == 1)
             check('csv name[4]', df2['name'][4] == 'Eve')

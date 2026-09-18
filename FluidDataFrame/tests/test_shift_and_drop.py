@@ -70,15 +70,15 @@ def test_shift_left_double():
     check('shift_left_double [0]', col[0] == 2.5)
     check('shift_left_double [1]', col[1] == 3.5)
 
-def test_shift_left_char256():
+def test_shift_left_ascii():
     col = AsciiColumn(4)
     col.append('abc')
     col.append('def')
     col.append('ghi')
     col.shift_left(1)
-    check('shift_left_char256 len', col.length == 2)
-    check('shift_left_char256 [0]', col[0] == 'abc')
-    check('shift_left_char256 [1]', col[1] == 'ghi')
+    check('shift_left_ascii len', col.length == 2)
+    check('shift_left_ascii [0]', col[0] == 'abc')
+    check('shift_left_ascii [1]', col[1] == 'ghi')
 
 def test_shift_left_ucs2():
     col = UCS2Column(4)
@@ -143,37 +143,37 @@ def test_shift_left_time():
 # drop_row tests for missing column types
 # ============================================================
 
-def test_drop_row_char256():
+def test_drop_row_ascii():
     col = AsciiColumn(4)
     col.append('aaa')
     col.append('bbb')
     col.append('ccc')
     col.append('ddd')
     col.drop_row(1)
-    check('drop_row_char256 len', col.length == 3)
-    check('drop_row_char256 [0]', col[0] == 'aaa')
-    check('drop_row_char256 [1]', col[1] == 'ccc')
-    check('drop_row_char256 [2]', col[2] == 'ddd')
+    check('drop_row_ascii len', col.length == 3)
+    check('drop_row_ascii [0]', col[0] == 'aaa')
+    check('drop_row_ascii [1]', col[1] == 'ccc')
+    check('drop_row_ascii [2]', col[2] == 'ddd')
 
-def test_drop_row_char256_first():
+def test_drop_row_ascii_first():
     col = AsciiColumn(4)
     col.append('aaa')
     col.append('bbb')
     col.append('ccc')
     col.drop_row(0)
-    check('drop_row_char256_first len', col.length == 2)
-    check('drop_row_char256_first [0]', col[0] == 'bbb')
-    check('drop_row_char256_first [1]', col[1] == 'ccc')
+    check('drop_row_ascii_first len', col.length == 2)
+    check('drop_row_ascii_first [0]', col[0] == 'bbb')
+    check('drop_row_ascii_first [1]', col[1] == 'ccc')
 
-def test_drop_row_char256_last():
+def test_drop_row_ascii_last():
     col = AsciiColumn(4)
     col.append('aaa')
     col.append('bbb')
     col.append('ccc')
     col.drop_row(2)
-    check('drop_row_char256_last len', col.length == 2)
-    check('drop_row_char256_last [0]', col[0] == 'aaa')
-    check('drop_row_char256_last [1]', col[1] == 'bbb')
+    check('drop_row_ascii_last len', col.length == 2)
+    check('drop_row_ascii_last [0]', col[0] == 'aaa')
+    check('drop_row_ascii_last [1]', col[1] == 'bbb')
 
 def test_drop_row_ucs2():
     col = UCS2Column(4)
@@ -314,8 +314,8 @@ def test_argsort_by_duplicates():
 
 def test_argsort_by_strings():
     from fluidframe.core.dataframe import DataFrame
-    from fluidframe._schema_types import Char256
-    df = DataFrame({'a': Char256})
+    from fluidframe._schema_types import Ascii
+    df = DataFrame({'a': Ascii})
     df.append_row(a='c')
     df.append_row(a='a')
     df.append_row(a='b')
@@ -366,7 +366,7 @@ def run_all():
     test_shift_left_int_first()
     test_shift_left_int_last()
     test_shift_left_double()
-    test_shift_left_char256()
+    test_shift_left_ascii()
     test_shift_left_ucs2()
     test_shift_left_date()
     test_shift_left_bool()
@@ -375,9 +375,9 @@ def run_all():
     test_shift_left_time()
 
     print('=== drop_row Tests (Missing Types) ===')
-    test_drop_row_char256()
-    test_drop_row_char256_first()
-    test_drop_row_char256_last()
+    test_drop_row_ascii()
+    test_drop_row_ascii_first()
+    test_drop_row_ascii_last()
     test_drop_row_ucs2()
     test_drop_row_ucs2_first()
     test_drop_row_ucs2_last()

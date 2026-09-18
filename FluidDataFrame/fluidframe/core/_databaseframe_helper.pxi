@@ -48,7 +48,7 @@ cdef BaseColumn _col_take(BaseColumn col, Py_ssize_t* indices, Py_ssize_t n, bin
         return (<IntColumn>col).take_by_indices(indices, n, inplace)
     elif col.dtype == TYPE_DOUBLE:
         return (<DoubleColumn>col).take_by_indices(indices, n, inplace)
-    elif col.dtype == TYPE_CHAR256:
+    elif col.dtype == TYPE_ASCII:
         return (<AsciiColumn>col).take_by_indices(indices, n, inplace)
     elif col.dtype == TYPE_UCS2:
         return (<UCS2Column>col).take_by_indices(indices, n, inplace)
@@ -86,7 +86,7 @@ cdef inline int _cstrncmp(const char* a, Py_ssize_t a_len, const char* b, Py_ssi
         return 1
     return 0
 
-cdef void _c_argsort_char256(char* data, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
+cdef void _c_argsort_ascii(char* data, Py_ssize_t* offsets, Py_ssize_t* indices, Py_ssize_t left, Py_ssize_t right) noexcept nogil:
     if left >= right: return
 
     cdef Py_ssize_t stack[64]
@@ -290,7 +290,7 @@ cdef inline void _fast_insert_val(int dtype, void* data_ptr, void* col_obj,
             (<int64_t*>data_ptr)[row_idx] = tmp_dt * 1000000LL
     elif dtype == TYPE_TIME:
         (<int32_t*>data_ptr)[row_idx] = <int32_t>val
-    elif dtype == TYPE_CHAR256:
+    elif dtype == TYPE_ASCII:
         (<AsciiColumn>col_obj).append_nolen(val)
     elif dtype == TYPE_UCS2:
         (<UCS2Column>col_obj).append_nolen(val)
@@ -372,7 +372,7 @@ cdef inline void _fast_set_cell(BaseColumn col, int dtype, Py_ssize_t idx, objec
         else:
             (<int32_t*>(<TimeColumn>col).data_c)[idx] = <int32_t>val
 
-    elif dtype == TYPE_CHAR256:
+    elif dtype == TYPE_ASCII:
         (<AsciiColumn>col)._set_item(idx, str(val))
 
     elif dtype == TYPE_UCS2:
@@ -875,7 +875,7 @@ cdef _get_dummies_impl(DataFrame self, col_names, str prefix, bint drop_first):
     if col_names is None:
         selected = []
         for name, col in result._columns.items():
-            if col.dtype == TYPE_CHAR256 or col.dtype == TYPE_UCS2 or col.dtype == TYPE_CATEGORY:
+            if col.dtype == TYPE_ASCII or col.dtype == TYPE_UCS2 or col.dtype == TYPE_CATEGORY:
                 selected.append(name)
     else:
         selected = list(col_names)
@@ -999,7 +999,7 @@ cdef BaseColumn _reindex_column_impl(BaseColumn col, Py_ssize_t* index_map, Py_s
             else:
                 new_col.append(None)
         return new_col
-    elif dtype == TYPE_CHAR256:
+    elif dtype == TYPE_ASCII:
         new_col = AsciiColumn(max(new_len, 1))
         for i in range(new_len):
             old_idx = index_map[i]
@@ -1209,7 +1209,7 @@ cdef _insert_row_impl(DataFrame self, Py_ssize_t pos, dict kwargs):
             # -------------------------------------------------------------
             # 变长列组：ASCII / UCS2 (平移 + 写入 一体化处理)
             # -------------------------------------------------------------
-            elif dtype == TYPE_CHAR256:
+            elif dtype == TYPE_ASCII:
                 cc_obj = <AsciiColumn>col_obj
                 if cc_obj.length >= cc_obj.capacity:
                     cc_obj._reserve_rows(max(16, cc_obj.capacity * 2))
@@ -1541,9 +1541,9 @@ cdef _argsort_by_impl(DataFrame self, str col_name, bint reverse):
         elif col.dtype == TYPE_DOUBLE:
             with nogil:
                 _c_argsort_numeric((<DoubleColumn>col).data_c, indices_c, 0, n - 1)
-        elif col.dtype == TYPE_CHAR256:
+        elif col.dtype == TYPE_ASCII:
             with nogil:
-                _c_argsort_char256((<AsciiColumn>col).data_c, (<AsciiColumn>col).offsets_c, indices_c, 0, n - 1)
+                _c_argsort_ascii((<AsciiColumn>col).data_c, (<AsciiColumn>col).offsets_c, indices_c, 0, n - 1)
         elif col.dtype == TYPE_UCS2:
             with nogil:
                 _c_argsort_ucs2((<UCS2Column>col).chars_c, (<UCS2Column>col).offsets_c, indices_c, 0, n - 1)
@@ -1767,7 +1767,7 @@ cdef _isnull_impl(DataFrame self):
             with nogil:
                 for i in range(total):
                     out_ptr[i] = 1 if isnan(d_ptr[i]) else 0
-        elif col.dtype == TYPE_CHAR256:
+        elif col.dtype == TYPE_ASCII:
             offset_ptr = (<AsciiColumn>col).offsets_c
             with nogil:
                 for i in range(total):
@@ -1833,7 +1833,7 @@ cdef _fillna_impl(DataFrame self, object value, col_names):
                     if isnan(d_ptr[i]):
                         d_ptr[i] = d_val
 
-        elif col.dtype == TYPE_CHAR256 and isinstance(value, str):
+        elif col.dtype == TYPE_ASCII and isinstance(value, str):
             ascii_col = <AsciiColumn>col
             s_val = value
             for i in range(total):
@@ -1976,7 +1976,7 @@ cdef _assign_impl(DataFrame self, dict kwargs):
 
 cdef _select_dtypes_impl(DataFrame self, list include_types, list exclude_types):
     cdef DataFrame result = DataFrame()
-    cdef dict dtype_map = {TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_CHAR256: 'char256',
+    cdef dict dtype_map = {TYPE_INT: 'int', TYPE_DOUBLE: 'float', TYPE_ASCII: 'ascii',
                            TYPE_UCS2: 'ucs2', TYPE_DATE: 'date',
                            TYPE_BOOL: 'bool', TYPE_CATEGORY: 'category',
                            TYPE_DATETIME: 'datetime', TYPE_TIME: 'time'}
@@ -2370,9 +2370,9 @@ cdef _replace_impl(DataFrame self, object to_replace, object value):
                     elif d_ptr[i] == d_target:
                         d_ptr[i] = d_val
 
-        elif col.dtype in (TYPE_CHAR256, TYPE_UCS2) and isinstance(to_replace, str):
+        elif col.dtype in (TYPE_ASCII, TYPE_UCS2) and isinstance(to_replace, str):
             # 精确匹配替换（pandas df.replace 语义），单遍构建并保持原 dtype
-            if col.dtype == TYPE_CHAR256:
+            if col.dtype == TYPE_ASCII:
                 a2c = AsciiColumn(max(total, 1))
                 for i in range(total):
                     sv = col[i]
@@ -3214,7 +3214,7 @@ cdef _describe_impl(DataFrame self, object percentiles):
         # =========================================================
         # 2. 离散类型处理 (String / Category / Bool)
         # =========================================================
-        elif col_obj.dtype in (TYPE_CHAR256, TYPE_UCS2, TYPE_BOOL, TYPE_CATEGORY):
+        elif col_obj.dtype in (TYPE_ASCII, TYPE_UCS2, TYPE_BOOL, TYPE_CATEGORY):
             keys = _col_to_keys(col_obj)
             freq_map = {}
             max_freq = 0
@@ -3822,7 +3822,7 @@ cdef inline BaseColumn _gather_or_reorder(DataFrame df, BaseColumn src_col,
     # =========================================================================
     # 第四梯队：永远为 1D 的变长字符串类型
     # =========================================================================
-    elif dtype == TYPE_CHAR256:
+    elif dtype == TYPE_ASCII:
         res_c256 = AsciiColumn(max(result_len, 1))
         res_c256._reserve_bytes((<AsciiColumn>src_col).byte_length)
         for i in range(result_len):
@@ -3943,7 +3943,7 @@ cdef BaseColumn _join_gather_str(BaseColumn l_col, BaseColumn r_col,
     cdef AsciiColumn jc_a
     cdef UCS2Column jc_u
 
-    if l_col.dtype == TYPE_CHAR256:
+    if l_col.dtype == TYPE_ASCII:
         jc_a = AsciiColumn(max(n, 1))
         jc_a._reserve_bytes((<AsciiColumn>l_col).byte_length + (<AsciiColumn>r_col).byte_length)
         for i in range(n):
@@ -4084,7 +4084,7 @@ cdef _merge_impl(DataFrame self, DataFrame other, list on, str how='inner'):
         # 2. 列数据聚合搬运
         for cn in join_cols:
             src_col = self._columns[cn]
-            if src_col.dtype == TYPE_CHAR256 or src_col.dtype == TYPE_UCS2:
+            if src_col.dtype == TYPE_ASCII or src_col.dtype == TYPE_UCS2:
                 jc_col = _join_gather_str(src_col, other._columns[cn], left_idx_c, right_idx_c, result_len)
             else:
                 jc_col = _gather_or_reorder(self, src_col, left_idx_c, result_len)
@@ -4366,7 +4366,7 @@ cdef double _corrcoef_cov_withcols_impl(DataFrame self, col_a, col_b, bint is_co
 cdef _make_empty_column_impl(int dtype):
     if dtype == TYPE_INT: return IntColumn()
     elif dtype == TYPE_DOUBLE: return DoubleColumn()
-    elif dtype == TYPE_CHAR256: return AsciiColumn()
+    elif dtype == TYPE_ASCII: return AsciiColumn()
     elif dtype == TYPE_UCS2: return UCS2Column()
     elif dtype == TYPE_DATE: return DateColumn()
     elif dtype == TYPE_BOOL: return BoolColumn()
@@ -4387,7 +4387,7 @@ cdef _populate_column_impl(int dtype, Py_ssize_t n, list values):
         dbl_col.length = n
         for i in range(n): dbl_col.data_c[i] = <double>values[i]
         return dbl_col
-    elif dtype == TYPE_CHAR256:
+    elif dtype == TYPE_ASCII:
         c256_col = AsciiColumn(n)
         for i in range(n): c256_col.append(<str>values[i])
         return c256_col
@@ -5230,7 +5230,7 @@ cdef _ByColPtrs _extract_by_col_ptrs(DataFrame df, list by_cols):
         ptrs.offsets[idx] = NULL
         # 2D 列（is_2d 且 cols>1）：按完整行向量参与分组；其余列子列数=1
         is2d, c_col, r_col = _col_shape_probe(col)
-        if is2d and c_col > 1 and col.dtype != TYPE_CHAR256 and col.dtype != TYPE_UCS2:
+        if is2d and c_col > 1 and col.dtype != TYPE_ASCII and col.dtype != TYPE_UCS2:
             ptrs.cols[idx] = <int>c_col
             ptrs.strides[idx] = r_col
         else:
@@ -5240,7 +5240,7 @@ cdef _ByColPtrs _extract_by_col_ptrs(DataFrame df, list by_cols):
             ptrs.data[idx] = <void*>(<IntColumn>col).data_c
         elif col.dtype == TYPE_DOUBLE:
             ptrs.data[idx] = <void*>(<DoubleColumn>col).data_c
-        elif col.dtype == TYPE_CHAR256:
+        elif col.dtype == TYPE_ASCII:
             ptrs.data[idx] = <void*>(<AsciiColumn>col).data_c
             ptrs.offsets[idx] = <void*>(<AsciiColumn>col).offsets_c
         elif col.dtype == TYPE_UCS2:
@@ -5297,7 +5297,7 @@ cdef uint64_t _gb_hash_row(_ByColPtrs ptrs, Py_ssize_t row_idx) nogil:
             i_data = <int*>ptrs.data[col_idx]
             for sub in range(n_sub):
                 h = _gb_mix_hash(h, <uint64_t>i_data[sub * stride + row_idx])
-        elif ptrs.types[col_idx] == TYPE_CHAR256:
+        elif ptrs.types[col_idx] == TYPE_ASCII:
             c_data = <char*>ptrs.data[col_idx]
             start = (<Py_ssize_t*>ptrs.offsets[col_idx])[row_idx]
             end = (<Py_ssize_t*>ptrs.offsets[col_idx])[row_idx + 1]
@@ -5351,7 +5351,7 @@ cdef bint _gb_rows_equal(_ByColPtrs ptrs, Py_ssize_t row1, Py_ssize_t row2) noex
             i_data = <int*>ptrs.data[col_idx]
             for sub in range(n_sub):
                 if i_data[sub * stride + row1] != i_data[sub * stride + row2]: return False
-        elif ptrs.types[col_idx] == TYPE_CHAR256:
+        elif ptrs.types[col_idx] == TYPE_ASCII:
             c_data = <char*>ptrs.data[col_idx]
             start1 = (<Py_ssize_t*>ptrs.offsets[col_idx])[row1]
             end1 = (<Py_ssize_t*>ptrs.offsets[col_idx])[row1 + 1]

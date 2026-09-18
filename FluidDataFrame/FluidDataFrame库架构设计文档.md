@@ -41,7 +41,7 @@ FluidFrame 是一个 **基于 Cython 实现的高性能 pandas 风格 DataFrame 
 |---|---|---|---|---|
 | 0 | TYPE_INT | `int` | `int32_t*` | 原始整数 |
 | 2 | TYPE_DOUBLE | `float` | `double*` | IEEE-754 双精度 |
-| 3 | TYPE_CHAR256 | `Char256` | `char*` + offset | 变长 ASCII 字节串（定长 256 字节单元） |
+| 3 | TYPE_ASCII | `Ascii` | `char*` + offset | 变长 ASCII 字节串（定长 256 字节单元） |
 | 4 | TYPE_UCS2 | `str` | `Py_UCS2*` + offset | UCS-2 码元串（无 NUL 终止符） |
 | 5 | TYPE_DATE | `Date` | `int32_t*` | 距 epoch 的天数（解析时支持 YYYYMMDD） |
 | 6 | TYPE_BOOL | `bool` | `unsigned char*` | 0/1 |
@@ -122,7 +122,7 @@ cdef struct ColMeta:
 BaseColumn (抽象, _columns.pyx:27)
  ├── IntColumn        (:105)   ── 2D 列优先支持
  ├── DoubleColumn     (:2399)  ── 2D 列优先支持
- ├── AsciiColumn      (:4655)  ── char256 双区存储
+ ├── AsciiColumn      (:4655)  ── ascii 双区存储
  ├── UCS2Column       (:6117)  ── UCS2 双区存储
  ├── DateColumn       (:7406)  ── 2D 列优先支持
  ├── BoolColumn       (:8531)
@@ -225,7 +225,7 @@ DataFrame (:2749)
 - **布局**：`int* data_c`（64 字节对齐），`object _base_obj`。`is_2d = num_cols>1`。
 - **2D 行内核**（`:992-1038`）：`_sum_rows/_mean_rows/_min_rows/_max_rows/_count_rows/_var_rows/_std_rows`，供 FastDataFrame 分组/聚合直取。
 - **零拷贝导入**：`_load_from_1d_array`（`int[::1]` C 连续视图）、`_load_from_2d_array`（Fortran 连续 `int[::1,:]` 逐列拆 view）。
-- **astype**（`:1891`）9 向转换：如 →DOUBLE nogil 扩宽、→UCS2/CHAR256 走 `snprintf`、→DATE `_ymd_to_days`、→DATETIME 微秒化、→TIME、→CATEGORY。
+- **astype**（`:1891`）9 向转换：如 →DOUBLE nogil 扩宽、→UCS2/ASCII 走 `snprintf`、→DATE `_ymd_to_days`、→DATETIME 微秒化、→TIME、→CATEGORY。
 - 滚动 12 种、距离 6 种、比较 6 种、掩码代数、qsort/bsearch 的 `isin`。
 
 ### 4.3 DoubleColumn（`_columns.pyx:2399-4654`，@final）
@@ -236,7 +236,7 @@ DataFrame (:2749)
 -滚动（`:4262` 起）含 `roll_corr/roll_cov` 增量实现与 `_roll_apply_weights`（私有 FIR 卷积核，右对齐内积、不归一化、需等窗长权重、未满窗 NaN——与 `win_type` 加权窗口语义不同，命名区分无歧义）。
 - 数值内核全部来自 `_columns_helper.pxi` 的 fused 类型函数（`_n_*`）。
 
-### 4.4 AsciiColumn（`_columns.pyx:4655-6116`，char256）
+### 4.4 AsciiColumn（`_columns.pyx:4655-6116`，ascii）
 
 - **布局**：`char* data_c`（字节竞技场）+ `Py_ssize_t* offsets_c`；**NUL 结尾**。`byte_capacity / byte_length` 双容量字段。`_reserve_rows`/`_reserve_bytes` 分别伸缩两区。
 - 双缓冲一致性：`append_nolen/undo_nolen` 支持"未提交写入"（DataFrame add_row 回滚用）。
@@ -314,7 +314,7 @@ DataFrame (:2749)
 - 统计 22 种、变换 15 种、掩码 8 种、`map/factorize/apply/replace/where/mask`、`reindex/reset_index`、`rolling(window, min_periods=None, center=False, win_type=None)`/`expanding(min_periods=1)`/`ewm(com/span/halflife/alpha, ...)` 返回对应 cdef 访问器（`_databaseframe.pxd` 声明，`pyx` 实现，Series/DataFrame 双模式，委托列 `roll_*`/`ewm_*`）。
 - 补齐的 pandas 对齐 API：`shape`、`to_numpy`（别名 `values`）、`shift(periods, fill_value)`（委托 `_shift_column_impl`，Int 空位 0 / 其余 NaN，fill_value 覆盖）、`rank(method/ascending/na_option)`（复用 `_rank_col`/`_rank_row_keys`）、`describe(percentiles)`（数值列 count/mean/std/min/25/50/75/max）。
 - 导出：`to_list/tolist/to_dict/to_pandas/to_frame`。
-- 访问器属性：`.str`（要求 char256/ucs2）、`.dt`（date/datetime/time）、`.cat`（category），类型不符抛 AttributeError。
+- 访问器属性：`.str`（要求 ascii/ucs2）、`.dt`（date/datetime/time）、`.cat`（category），类型不符抛 AttributeError。
 
 ### 4.14 访问器
 
@@ -329,7 +329,7 @@ DataFrame (:2749)
 - **字段**（`_databaseframe.pxd:143-159`）：`_schema/_schema_keys/_ordered_cols/_2d_blocks/_columns/_fixed_capacity/df_length/_is_sealed/_num_cols/_c_cols/index` + 三个访问器缓存。
 - **构造管线**（`__init__:2794` → `reserve_with_capacity:2904`）：按 dtype 分两组（固定宽数值 vs 变长/布尔/类别），为每种数值类型发一块列优先合并块，逐列 `create_view` 窗口，并填充 `_c_cols`；最后封存内存。
 - **add_row 极限推流**（`:3034`）：位置/关键字两用，逐列 `_fast_insert_val` 写裸指针，成功后 `df_length+=1` 并同步全部 `len_ptr`；失败 `_rollback_pending_writes`。
-- **排序**：C 层 quicksort argsort 内核 `_c_argsort_numeric(pxi:149)/_c_argsort_char256(pxi:89)/_c_argsort_ucs2(pxi:218)`，纯 nogil；2D 列退化为 Python key `_col_row_key`。
+- **排序**：C 层 quicksort argsort 内核 `_c_argsort_numeric(pxi:149)/_c_argsort_ascii(pxi:89)/_c_argsort_ucs2(pxi:218)`，纯 nogil；2D 列退化为 Python key `_col_row_key`。
 - **rolling**：`df.rolling(window, min_periods=None, center=False, axis=0, win_type=None)` 返回 `_RollingWindow`（`_databaseframe.pxd` 声明的 cdef 双模式访问器，实现 `pyx` 于 `_RollingWrapper` 旧址 `:192` 起，`DataFrame.rolling` 入口 `~:4556`）——C 核 `_n_roll_*` 滑动聚合并装回整表 DataFrame（非数值列跳过、无数值列 TypeError、`axis!=0/‘index’→NotImplementedError`）；`min_periods/center` 提前在 `_roll_win_bounds` 计算边界，count-aware 核天然支持部分窗口。
 - **expanding**：`df/s.expanding(min_periods=1, axis=0)` = `_RollingWindow(obj, max(r, min_periods), min_periods, False, ...)`（核内 `n=min(i+1,window)` → expanding 计数；`mp>r` 全 NaN 不误报）；≡ pandas `expanding ≡ rolling(window=行数)`，全算子等价已验证。
 - **ewm**：`df/s.ewm(com/span/halflife/alpha, min_periods=0, adjust=True, ignore_na=False)` 返回 `_EWMWindow`（`pxd` 声明，`pyx` 实现于 `_RollingWindow` 之后）；参数解析 `_resolve_ewm_alpha`（com/span/halflife→alpha，互斥/缺参错误串与 pandas 一致），委托列级 `ewm_mean/sum/var/std/cov/corr`，C 核 `_n_ewm`/`_n_ewmcov`（`_columns_helper.pxi`，逐列递推、无 times 等间隔假设）；var/std 用 `bias`（对齐 pandas，非 ddof），sum+adjust=False → `NotImplementedError`。
@@ -378,7 +378,7 @@ DataFrame (:2749)
 | 特性 | pandas | FluidFrame 实现 |
 |---|---|---|
 | 内存 | BlockManager / Arrow | 列优先 2D 合并块 + 零拷贝视图 |
-| 字符串 | object/PyArrow | 双区 char256 / UCS2 专用列类 |
+| 字符串 | object/PyArrow | 双区 ascii / UCS2 专用列类 |
 | 日期 | datetime64[ns] | 定制 int32 day 纪元 / int64 微秒纪元 |
 | 类别 | Categorical | int codes + dict 字典 |
 | 索引 | Index/MultiIndex | 4 种 Index 子类，MultiIndex 位级哈希缓存 |

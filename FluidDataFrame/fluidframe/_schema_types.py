@@ -3,7 +3,7 @@ import sys
 
 TYPE_INT = 0
 TYPE_DOUBLE = 2
-TYPE_CHAR256 = 3
+TYPE_ASCII = 3
 TYPE_UCS2 = 4
 TYPE_DATE = 5
 TYPE_BOOL = 6
@@ -12,7 +12,7 @@ TYPE_DATETIME = 8
 TYPE_TIME = 9
 
 
-class Char256:
+class Ascii:
     """用于在 Schema 中标记纯 ASCII 256字节定长字符串类型的占位类"""
     pass
 
@@ -46,7 +46,7 @@ _STRING_TYPE_MAP = {
     'int': TYPE_INT,
     'float': TYPE_DOUBLE,
     'double': TYPE_DOUBLE,
-    'char256': TYPE_CHAR256,
+    'ascii': TYPE_ASCII,
     'ucs2': TYPE_UCS2,
     'str': TYPE_UCS2,
     'string': TYPE_UCS2,
@@ -69,7 +69,7 @@ def _parse_schema(schema_dict):
         if v is int: parsed[k] = TYPE_INT
         elif v is float: parsed[k] = TYPE_DOUBLE
         elif v is bool: parsed[k] = TYPE_BOOL
-        elif v is Char256: parsed[k] = TYPE_CHAR256
+        elif v is Ascii: parsed[k] = TYPE_ASCII
         elif v is str: parsed[k] = TYPE_UCS2
         elif v is Date: parsed[k] = TYPE_DATE
         elif v is DateTime: parsed[k] = TYPE_DATETIME

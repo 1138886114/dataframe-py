@@ -16,7 +16,7 @@ from fluidframe.core.timecolumn import TimeColumn
 from fluidframe.core.datetimecolumn import DateTimeColumn
 from fluidframe.core.boolcolumn import BoolColumn
 from fluidframe.core.categorycolumn import CategoryColumn
-from fluidframe._schema_types import Char256, Date
+from fluidframe._schema_types import Ascii, Date
 
 passed = 0
 failed = 0
@@ -49,10 +49,10 @@ def make_complex_df():
       id:    int
       score: double
       name:  UCS2 (str)
-      tag:   Char256
+      tag:   Ascii
       dt:    Date
     """
-    df = DataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
+    df = DataFrame({'id': int, 'score': float, 'name': str, 'tag': Ascii, 'dt': Date})
     rows = [
         (1, 88.5,  'Alice',   'senior',   20230115),
         (2, 92.0,  'Bob',     'mid',      20230620),
@@ -86,8 +86,8 @@ def test_init():
     df = DataFrame({'a': str})
     check('schema str', isinstance(df._columns['a'], UCS2Column))
 
-    df = DataFrame({'a': Char256})
-    check('schema char256', isinstance(df._columns['a'], AsciiColumn))
+    df = DataFrame({'a': Ascii})
+    check('schema ascii', isinstance(df._columns['a'], AsciiColumn))
 
     df = DataFrame({'a': Date})
     check('schema timestamp', isinstance(df._columns['a'], DateColumn))
@@ -104,7 +104,7 @@ def test_init_complex():
     check('complex dtypes int', df.dtypes['id'] is int)
     check('complex dtypes float', df.dtypes['score'] is float)
     check('complex dtypes str', df.dtypes['name'] is str)
-    check('complex dtypes char256', df.dtypes['tag'] is Char256)
+    check('complex dtypes ascii', df.dtypes['tag'] is Ascii)
     check('complex dtypes timestamp', df.dtypes['dt'] is Date)
 
 
@@ -126,7 +126,7 @@ _RESERVE_ROWS = [
 
 def _make_reserved_df():
     df = DataFrame({'id': int, 'x0': int, 'y0': int, 'x1': int, 'y1': int,
-                        'score': float, 'name': str, 'tag': Char256, 'dt': Date,
+                        'score': float, 'name': str, 'tag': Ascii, 'dt': Date,
                         'flags': int})
     df.reserve_with_capacity(len(_RESERVE_ROWS) + 16)
     return df
@@ -171,7 +171,7 @@ def test_reserve_with_capacity():
     check('reserve missing key error', expect_exception(ValueError, df.add_row, id=99))
 
     # 达到固定容量后必须拒绝写入
-    df3 = DataFrame({'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
+    df3 = DataFrame({'id': int, 'score': float, 'name': str, 'tag': Ascii, 'dt': Date})
     df3.reserve_with_capacity(len(_RESERVE_ROWS))
     for r in _RESERVE_ROWS:
         df3.add_row(id=r[0], score=r[5], name=r[6], tag=r[7], dt=r[8])
@@ -211,8 +211,8 @@ def test_reserve_filters():
 
     mask = (df['tag'].len() <= 3) & (df['flags'] >= 3)
     r = df.loc[mask]
-    check('reserve filter char256 shape', r.shape == (3, 10))
-    check('reserve filter char256 ids', sorted(r['id'][i] for i in range(3)) == [4, 9, 10])
+    check('reserve filter ascii shape', r.shape == (3, 10))
+    check('reserve filter ascii ids', sorted(r['id'][i] for i in range(3)) == [4, 9, 10])
 
     mask = df['name'].len() <= 4
     r = df.loc[mask]
@@ -226,7 +226,7 @@ def test_reserve_filters():
 
 
 def test_add_row_failure_rollback():
-    # 中途失败（flags 位于 name/tag 之后）：UCS2/CHAR256 已写入但未提交 → 必须整体回滚
+    # 中途失败（flags 位于 name/tag 之后）：UCS2/ASCII 已写入但未提交 → 必须整体回滚
     df = _make_reserved_df()
     for r in _RESERVE_ROWS:
         df.add_row(id=r[0], x0=r[1], y0=r[2], x1=r[3], y1=r[4], score=r[5],
@@ -262,7 +262,7 @@ def test_append():
     check('append id[0]', df['id'][0] == 1)
     check('append name[1]', df['name'][1] == 'Bob')
 
-    df = DataFrame({'i': int, 'f': float, 's': str, 'c': Char256, 't': Date})
+    df = DataFrame({'i': int, 'f': float, 's': str, 'c': Ascii, 't': Date})
     df.append_row(i=1, f=2.5, s='hello', c='world', t=20160101)
     check('append types i', df['i'][0] == 1)
     check('append types f', df['f'][0] == 2.5)
@@ -504,7 +504,7 @@ def test_sort_str():
     check('sort name asc', s['name'][0] == 'Alice')
     check('sort name last', s['name'][9] == 'Judy')
 
-def test_sort_char256():
+def test_sort_ascii():
     df = make_complex_df()
     s = df.sort_values('tag')
     check('sort tag asc', s['tag'][0] == 'low')
@@ -665,7 +665,7 @@ def test_csv():
     try:
         df.to_csv(fname)
         from fluidframe.core.dataframe import read_csv
-        df2 = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': Char256, 'dt': Date})
+        df2 = read_csv(fname, schema={'id': int, 'score': float, 'name': str, 'tag': Ascii, 'dt': Date})
         check('csv shape', df2.shape == (10, 5))
         check('csv id[0]', df2['id'][0] == 1)
         check('csv name[4]', df2['name'][4] == 'Eve')
@@ -900,12 +900,12 @@ def test_loc_float_mask():
     check('float mask shape', r.shape == (3, 5))
     check('float mask names', set(r['name'][i] for i in range(3)) == {'Bob', 'Eve', 'Ivan'})
 
-def test_loc_char256_mask():
+def test_loc_ascii_mask():
     df = make_complex_df()
     mask = df['tag'].len() <= 3
     r = df.loc[mask]
-    check('char256 mask shape', r.shape == (6, 5))
-    check('char256 mask tags', set(r['tag'][i] for i in range(6)) == {'mid', 'low'})
+    check('ascii mask shape', r.shape == (6, 5))
+    check('ascii mask tags', set(r['tag'][i] for i in range(6)) == {'mid', 'low'})
 
 def test_loc_ucs2_mask():
     df = make_complex_df()
@@ -931,7 +931,7 @@ def test_loc_and_combined():
     check('and 3-type ids', sorted([r['id'][i] for i in range(3)]) == [5, 6, 8])
 
 def test_loc_or_combined():
-    """int OR char256 len — 2 different types"""
+    """int OR ascii len — 2 different types"""
     df = make_complex_df()
     mask = (df['id'] <= 2) | (df['tag'].len() <= 3)
     r = df.loc[mask]
@@ -947,7 +947,7 @@ def test_loc_not_mask():
     check('not mask ids', [r['id'][i] for i in range(5)] == [1, 2, 3, 4, 5])
 
 def test_loc_complex_4type():
-    """int AND float AND char256 AND timestamp — 4 types"""
+    """int AND float AND ascii AND timestamp — 4 types"""
     df = make_complex_df()
     mask = (df['id'] >= 3) & (df['score'] < 90.0) & (df['tag'].startswith('sen')) & (df['dt'] <= 20230620)
     r = df.loc[mask]
@@ -991,7 +991,7 @@ def _random_date():
 def test_stress_append():
     N = 10000
     t0 = time.time()
-    df = DataFrame({'id': int, 'val': float, 'name': str, 'tag': Char256, 'dt': Date})
+    df = DataFrame({'id': int, 'val': float, 'name': str, 'tag': Ascii, 'dt': Date})
     for i in range(N):
         df.append_row(id=i, val=random.random() * 100,
                       name=_random_string(random.randint(3, 8)),
@@ -1020,7 +1020,7 @@ def test_stress_sort():
 
 def test_stress_loc_filter():
     N = 10000
-    df = DataFrame({'id': int, 'val': float, 'tag': Char256})
+    df = DataFrame({'id': int, 'val': float, 'tag': Ascii})
     for i in range(N):
         df.append_row(id=i, val=random.random() * 100,
                       tag=random.choice(['X', 'Y', 'Z']))
@@ -1102,9 +1102,9 @@ def test_stress_csv_roundtrip():
         os.unlink(fname)
 
 def test_stress_multi_type_filter():
-    """Stress test: filter on int + float + char256 + timestamp simultaneously"""
+    """Stress test: filter on int + float + ascii + timestamp simultaneously"""
     N = 8000
-    df = DataFrame({'id': int, 'score': float, 'tag': Char256, 'dt': Date})
+    df = DataFrame({'id': int, 'score': float, 'tag': Ascii, 'dt': Date})
     for i in range(N):
         df.append_row(id=i, score=random.random() * 100,
                       tag=random.choice(['alpha', 'beta', 'gamma']),
@@ -2503,7 +2503,7 @@ def test_ffill_bfill_non_double():
     check('A1 Series date bfill', [sdf['d'].bfill()[i] for i in range(2)] == [20230101, 20230102])
 
     # ---- DataFrame 层：混合帧 ----
-    df = DataFrame({'i': int, 'f': float, 's': str, 't256': 'char256',
+    df = DataFrame({'i': int, 'f': float, 's': str, 't256': 'ascii',
                     'd': 'date', 'b': bool, 'c': 'category'})
     df.append_row(i=1, f=1.0, s='a', t256='a', d=20230101, b=True, c='x')
     df.append_row(i=2, f=float('nan'), s='', t256='', d=20230102, b=False, c=None)
@@ -2916,7 +2916,7 @@ def run_all():
     test_sort_int()
     test_sort_float()
     test_sort_str()
-    test_sort_char256()
+    test_sort_ascii()
     test_sort_timestamp()
     test_sort_index()
 
@@ -2963,7 +2963,7 @@ def run_all():
     # loc — boolean masks (single type)
     test_loc_int_mask()
     test_loc_float_mask()
-    test_loc_char256_mask()
+    test_loc_ascii_mask()
     test_loc_ucs2_mask()
     test_loc_timestamp_mask()
 
