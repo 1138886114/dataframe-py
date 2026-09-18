@@ -8375,7 +8375,11 @@ cdef class DateColumn(BaseColumn):
         cdef bytes b_fmt = fmt.encode('ascii', errors='ignore')
         cdef const char* f_ptr = b_fmt
         cdef Py_ssize_t f_len = len(b_fmt)
-        cdef Py_ssize_t max_fmt = f_len + 24
+        cdef Py_ssize_t n_pct_y = 0, j = 0
+        for j in range(f_len - 1):
+            if f_ptr[j] == 37 and f_ptr[j + 1] == 89:
+                n_pct_y += 1
+        cdef Py_ssize_t max_fmt = f_len + 6 * n_pct_y + 1
 
         if n == 0:
             return AsciiColumn(0)

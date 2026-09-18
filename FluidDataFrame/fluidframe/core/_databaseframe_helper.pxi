@@ -1847,98 +1847,6 @@ cdef _fillna_impl(DataFrame self, object value, col_names):
                     ucs2_col._set_item(i, s_val)
     return result
 
-cdef _dropna_impl(DataFrame self):
-    if self.df_length == 0: return _copy_impl(self)
-    cdef Py_ssize_t n = self.df_length
-
-    cdef char* keep_mask = <char*>aligned_malloc(n * sizeof(char))
-    if not keep_mask: raise MemoryError()
-    memset(keep_mask, 1, n)
-
-    cdef Py_ssize_t i, j, k, keep_count = 0
-    cdef double* d_data
-    cdef str name
-    cdef BaseColumn col
-    cdef Py_ssize_t* keep_idx = NULL
-    cdef Py_ssize_t start, end, str_len
-    cdef bint is2d
-    cdef Py_ssize_t c_out, r_out
-    cdef Py_ssize_t* offsets_ptr
-
-    try:
-        for name, col in self._columns.items():
-            if col.dtype == TYPE_DOUBLE:
-                d_data = (<DoubleColumn>col).data_c
-                _probe_shape(col, &is2d, &c_out, &r_out)
-                with nogil:
-                    if is2d and c_out > 1:
-                        for k in range(r_out):
-                            if not keep_mask[k]: continue
-                            for j in range(c_out):
-                                if isnan(d_data[j * r_out + k]):
-                                    keep_mask[k] = 0
-                                    break
-                    else:
-                        for i in range(n):
-                            if keep_mask[i] and isnan(d_data[i]):
-                                keep_mask[i] = 0
-
-            elif col.dtype == TYPE_CHAR256:
-                offsets_ptr = (<AsciiColumn>col).offsets_c
-                with nogil:
-                    for i in range(n):
-                        if keep_mask[i]:
-                            str_len = offsets_ptr[i + 1] - offsets_ptr[i]
-                            if str_len == 0:
-                                keep_mask[i] = 0
-
-            elif col.dtype == TYPE_UCS2:
-                offsets_ptr = (<UCS2Column>col).offsets_c
-                with nogil:
-                    for i in range(n):
-                        if keep_mask[i]:
-                            if offsets_ptr[i] == offsets_ptr[i + 1]:
-                                keep_mask[i] = 0
-
-        for i in range(n):
-            keep_count += keep_mask[i]
-
-        if keep_count == n:
-            return _copy_impl(self)
-        if keep_count == 0:
-            return DataFrame()
-
-        keep_idx = <Py_ssize_t*>aligned_malloc(max(keep_count, 1) * sizeof(Py_ssize_t))
-        if not keep_idx: raise MemoryError()
-
-        j = 0
-        for i in range(n):
-            if keep_mask[i]:
-                keep_idx[j] = i
-                j += 1
-
-        return self._take(keep_idx, keep_count)
-    finally:
-        if keep_mask: os_aligned_free(keep_mask)
-        if keep_idx: os_aligned_free(keep_idx)
-
-
-cdef DataFrame _reindex_rows(DataFrame self, list keep_rows):
-    """按行索引列表重排行，返回新的 DataFrame。"""
-    cdef Py_ssize_t n = len(keep_rows)
-    if n == 0:
-        return DataFrame()
-    cdef Py_ssize_t* idx_c = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
-    if not idx_c: raise MemoryError()
-    cdef Py_ssize_t i
-    try:
-        for i in range(n):
-            idx_c[i] = <Py_ssize_t>keep_rows[i]
-        return self._take(idx_c, n)
-    finally:
-        os_aligned_free(idx_c)
-
-
 cdef DataFrame _dropna_columns_impl(DataFrame self, str how):
     """删除包含缺失值的列。"""
     cdef list drop_cols = []
@@ -5255,7 +5163,7 @@ cdef int _group_rows_append(_GroupRows* gr, int group_id, Py_ssize_t row_idx) no
     cdef Py_ssize_t* new_ptr
     if gr.row_sizes[group_id] >= gr.row_capacities[group_id]:
         new_cap = gr.row_capacities[group_id] * 2
-        new_ptr = <Py_ssize_t*>aligned_realloc(gr.rows[group_id], new_cap * sizeof(Py_ssize_t), gr.row_capacities[group_id] * sizeof(Py_ssize_t))
+        new_ptr = <Py_ssize_t*>aligned_realloc(gr.rows[group_id], gr.row_capacities[group_id] * sizeof(Py_ssize_t), new_cap * sizeof(Py_ssize_t))
         if not new_ptr: return -1
         gr.rows[group_id] = new_ptr
         gr.row_capacities[group_id] = new_cap
