@@ -2491,10 +2491,9 @@ cdef _ffill_impl(DataFrame self):
     cdef str name
     cdef BaseColumn col
     for name, col in self._columns.items():
-        if col.dtype == TYPE_DOUBLE:
-            result._columns[name] = col.ffill()
-        else:
-            result._columns[name] = col.copy()
+        # 统一经各列自身的 ffill() 分发：double 填充 NaN、字符串/类别填充空值，
+        # 整型/日期/datetime/time/bool 无缺失哨兵则返回拷贝（语义与 pandas 一致）。
+        result._columns[name] = col.ffill()
     return result
 
 cdef _bfill_impl(DataFrame self):
@@ -2504,10 +2503,7 @@ cdef _bfill_impl(DataFrame self):
     cdef str name
     cdef BaseColumn col
     for name, col in self._columns.items():
-        if col.dtype == TYPE_DOUBLE:
-            result._columns[name] = col.bfill()
-        else:
-            result._columns[name] = col.copy()
+        result._columns[name] = col.bfill()
     return result
 
 cdef _pivot_impl(DataFrame self, str index, str columns, str values):

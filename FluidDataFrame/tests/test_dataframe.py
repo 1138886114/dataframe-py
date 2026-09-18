@@ -14,6 +14,8 @@ from fluidframe.core.ucs2column import UCS2Column
 from fluidframe.core.datecolumn import DateColumn as DateColumn
 from fluidframe.core.timecolumn import TimeColumn
 from fluidframe.core.datetimecolumn import DateTimeColumn
+from fluidframe.core.boolcolumn import BoolColumn
+from fluidframe.core.categorycolumn import CategoryColumn
 from fluidframe._schema_types import Char256, Date
 
 passed = 0
@@ -2430,6 +2432,112 @@ def test_ffill_bfill():
     check('bfill last stays nan', math.isnan(bf['a'][3]))
 
 
+def test_ffill_bfill_non_double():
+    """A1 修复：Int/Date/DateTime/Time（及 Bool）列此前 ffill/bfill 会静默
+    copy（DataFrame 层）或直接抛 NotImplementedError（列/Series 层）。
+    现在：无缺失哨兵的列返回保形拷贝；字符串/类别列真实填充空值。"""
+    # ---- 列级：无缺失哨兵的 dtype 返回保形拷贝 ----
+    ic = IntColumn()
+    for v in [1, 2, 3]:
+        ic.append(v)
+    check('A1 int ffill type', isinstance(ic.ffill(), IntColumn))
+    check('A1 int ffill values', [ic.ffill()[i] for i in range(3)] == [1, 2, 3])
+    check('A1 int bfill values', [ic.bfill()[i] for i in range(3)] == [1, 2, 3])
+
+    dc = DateColumn()
+    for v in [20230101, 20230102]:
+        dc.append(v)
+    check('A1 date ffill values', [dc.ffill()[i] for i in range(2)] == [20230101, 20230102])
+    check('A1 date bfill values', [dc.bfill()[i] for i in range(2)] == [20230101, 20230102])
+
+    bc = BoolColumn()
+    for v in [True, False]:
+        bc.append(v)
+    check('A1 bool ffill values', [bc.ffill()[i] for i in range(2)] == [True, False])
+
+    dtc = DateTimeColumn()
+    dtc.append('2023-01-01 00:00:00')
+    dtc.append('2023-01-02 00:00:00')
+    dtc2 = dtc.ffill()
+    check('A1 datetime ffill preserved', [dtc2[i] for i in range(2)] == [dtc[i] for i in range(2)])
+
+    tmc = TimeColumn()
+    tmc.append('01:00:00')
+    tmc.append('02:00:00')
+    tmc2 = tmc.bfill()
+    check('A1 time ffill preserved', [tmc2[i] for i in range(2)] == [tmc[i] for i in range(2)])
+
+    # ---- 列级：字符串/类别列空值真实填充 ----
+    s1 = AsciiColumn()
+    for v in ['a', '', 'bc', '']:
+        s1.append(v)
+    ff = s1.ffill(); bf = s1.bfill()
+    check('A1 ascii ffill', [ff[i] for i in range(4)] == ['a', 'a', 'bc', 'bc'])
+    check('A1 ascii bfill 0-keep', bf[0] == 'a')
+    check('A1 ascii bfill fill', [bf[i] for i in range(1, 3)] == ['bc', 'bc'])
+    check('A1 ascii bfill tail-empty', bf[3] == '')
+
+    u2 = UCS2Column()
+    for v in ['', 'a', '', '', 'b', '']:
+        u2.append(v)
+    uff = u2.ffill(); ubf = u2.bfill()
+    check('A1 ucs2 ffill', [uff[i] for i in range(6)] == ['', 'a', 'a', 'a', 'b', 'b'])
+    check('A1 ucs2 bfill', [ubf[i] for i in range(6)] == ['a', 'a', 'b', 'b', 'b', ''])
+
+    cc = CategoryColumn()
+    for v in ['x', None, '', 'y', None]:
+        cc.append(v)
+    cff = cc.ffill(); cbf = cc.bfill()
+    check('A1 cat ffill', [cff[i] for i in range(5)] == ['x', 'x', 'x', 'y', 'y'])
+    check('A1 cat bfill', [cbf[i] for i in range(5)] == ['x', 'y', 'y', 'y', ''])
+    check('A1 cat ffill type', isinstance(cff, CategoryColumn))
+
+    # ---- Series 层：此前非 double 列 ffill/bfill 直接抛错 ----
+    sdf = DataFrame({'n': int, 'd': 'date'})
+    sdf.append_row(n=1, d=20230101)
+    sdf.append_row(n=2, d=20230102)
+    check('A1 Series int ffill', [sdf['n'].ffill()[i] for i in range(2)] == [1, 2])
+    check('A1 Series date bfill', [sdf['d'].bfill()[i] for i in range(2)] == [20230101, 20230102])
+
+    # ---- DataFrame 层：混合帧 ----
+    df = DataFrame({'i': int, 'f': float, 's': str, 't256': 'char256',
+                    'd': 'date', 'b': bool, 'c': 'category'})
+    df.append_row(i=1, f=1.0, s='a', t256='a', d=20230101, b=True, c='x')
+    df.append_row(i=2, f=float('nan'), s='', t256='', d=20230102, b=False, c=None)
+    df.append_row(i=3, f=3.0, s='b', t256='bc', d=20230103, b=True, c='y')
+    df.append_row(i=4, f=float('nan'), s='', t256='', d=20230104, b=False, c=None)
+    ff = df.ffill(); bf = df.bfill()
+    check('A1 df i kept', [ff['i'][k] for k in range(4)] == [1, 2, 3, 4])
+    check('A1 df f ffill', [ff['f'][k] for k in range(4)] == [1.0, 1.0, 3.0, 3.0])
+    check('A1 df s ffill', [ff['s'][k] for k in range(4)] == ['a', 'a', 'b', 'b'])
+    check('A1 df t256 ffill', [ff['t256'][k] for k in range(4)] == ['a', 'a', 'bc', 'bc'])
+    check('A1 df d kept', [ff['d'][k] for k in range(4)] == [20230101, 20230102, 20230103, 20230104])
+    check('A1 df b kept', [ff['b'][k] for k in range(4)] == [True, False, True, False])
+    check('A1 df c ffill', [ff['c'][k] for k in range(4)] == ['x', 'x', 'y', 'y'])
+    check('A1 df f bfill', [bf['f'][k] for k in range(4)] == [1.0, 3.0, 3.0, float('nan')] or
+                           ([bf['f'][k] for k in range(3)] == [1.0, 3.0, 3.0] and math.isnan(bf['f'][3])))
+    check('A1 df c bfill', [bf['c'][k] for k in range(4)] == ['x', 'y', 'y', ''])
+
+    # fillna(method='ffill'/bfill) 路由
+    fr = df.fillna(method='ffill')
+    check('A1 fillna-ffill route', [fr['f'][k] for k in range(4)] == [1.0, 1.0, 3.0, 3.0])
+    br = df.fillna(method='bfill')
+    check('A1 fillna-bfill route', [br['c'][k] for k in range(4)] == ['x', 'y', 'y', ''])
+
+    # ---- 2D：IntColumn 保形；Double 逐子列独立 ----
+    i2 = IntColumn.from_2d([1, 2, 3, 4, 10, 20, 30, 40], 4, 2)
+    i2f = i2.ffill(); i2b = i2.bfill()
+    check('A1 int2d ffill shape', i2f.cols == 2 and i2f.rows == 4)
+    check('A1 int2d ffill values', [i2f[k] for k in range(8)] == [1, 2, 3, 4, 10, 20, 30, 40])
+    check('A1 int2d bfill shape', i2b.cols == 2 and i2b.rows == 4 and i2b.length == 8)
+
+    d2 = DoubleColumn.from_2d([1.0, float('nan'), 3.0, float('nan'),
+                               10.0, 20.0, float('nan'), 40.0], 4, 2)
+    d2f = d2.ffill()
+    check('A1 dbl2d ffill sub0', [d2f[k] for k in range(4)] == [1.0, 1.0, 3.0, 3.0])
+    check('A1 dbl2d ffill sub1', [d2f[k] for k in range(4, 8)] == [10.0, 20.0, 20.0, 40.0])
+
+
 def test_eq():
     df1 = DataFrame({'a': int, 'b': float})
     df1.append_row(a=1, b=1.0)
@@ -2981,6 +3089,7 @@ def run_all():
     test_pct_change()
     test_replace()
     test_ffill_bfill()
+    test_ffill_bfill_non_double()
     test_eq()
     test_pivot()
     test_melt()

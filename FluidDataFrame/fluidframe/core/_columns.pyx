@@ -298,6 +298,19 @@ cdef class IntColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
+    def ffill(self):
+        """向前填充缺失值。IntColumn 无 NaN 缺失表示（isna 恒为 False），
+        语义与 pandas 中不含缺失的整数列一致：各子列内容保持不变（返回拷贝）。"""
+        return self.copy()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def bfill(self):
+        """向后填充缺失值。语义同 ffill()：整数列无缺失哨兵，返回拷贝。"""
+        return self.copy()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pop_back(self):
         if not self.owns_data: raise RuntimeError("Cannot modify a view/slice.")
         if self.length == 0: raise IndexError("pop from empty column")
@@ -5113,6 +5126,125 @@ cdef class AsciiColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
+    def ffill(self):
+        """向前填充空串（本库缺失语义：isna 视空串为缺失，对标 double 的 NaN 填充）。
+
+        存储约定：每串占 content+1 字节（含 NUL 结尾），偏移差=1 表示空串。
+        效率说明：两次 O(n) 遍历，一次确定目的偏移表，一次 memcpy 写载荷，
+        结果字节区连续紧凑，与 append 的存储布局一致。"""
+        cdef Py_ssize_t n = self.length
+        cdef AsciiColumn res = AsciiColumn(max(n, 1))
+        if n == 0:
+            return res
+        cdef Py_ssize_t* src_offs = self.offsets_c
+        cdef Py_ssize_t* dst_offs = res.offsets_c
+        cdef Py_ssize_t* src_map = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
+        if not src_map:
+            raise MemoryError()
+        cdef Py_ssize_t i, s, span, cur_len, total = 0
+        cdef Py_ssize_t last_idx = -1, last_len = 0
+        cdef Py_ssize_t si, ss, ss_len
+        cdef char* dst_data
+        dst_offs[0] = 0
+        try:
+            for i in range(n):
+                s = src_offs[i]
+                span = src_offs[i + 1] - s
+                if span <= 1 and last_idx >= 0:
+                    src_map[i] = last_idx
+                    cur_len = last_len
+                elif span <= 1:
+                    src_map[i] = -1
+                    cur_len = 0
+                else:
+                    last_idx = i
+                    last_len = span - 1
+                    src_map[i] = i
+                    cur_len = span - 1
+                dst_offs[i + 1] = dst_offs[i] + cur_len + 1
+            total = dst_offs[n]
+            if total > 0:
+                if total > res.byte_capacity:
+                    res._reserve_bytes(total)
+                dst_data = res.data_c
+                for i in range(n):
+                    s = dst_offs[i]
+                    si = src_map[i]
+                    if si < 0:
+                        dst_data[s] = 0
+                        continue
+                    ss = src_offs[si]
+                    ss_len = src_offs[si + 1] - ss - 1
+                    if ss_len > 0:
+                        memcpy(dst_data + s, self.data_c + ss, ss_len)
+                    dst_data[s + ss_len] = 0
+                res.byte_length = total
+            res.length = n
+        finally:
+            os_aligned_free(src_map)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def bfill(self):
+        """向后填充空串（缺失语义）。与 ffill() 同构，O(n)。"""
+        cdef Py_ssize_t n = self.length
+        cdef AsciiColumn res = AsciiColumn(max(n, 1))
+        if n == 0:
+            return res
+        cdef Py_ssize_t* src_offs = self.offsets_c
+        cdef Py_ssize_t* dst_offs = res.offsets_c
+        cdef Py_ssize_t* src_map = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
+        if not src_map:
+            raise MemoryError()
+        cdef Py_ssize_t i, s, span, cur_len, total = 0
+        cdef Py_ssize_t next_idx = n
+        cdef Py_ssize_t si, ss, ss_len
+        cdef char* dst_data
+        dst_offs[0] = 0
+        try:
+            for i in range(n - 1, -1, -1):
+                if src_offs[i + 1] - src_offs[i] > 1:
+                    next_idx = i
+                src_map[i] = next_idx
+            for i in range(n):
+                s = src_offs[i]
+                span = src_offs[i + 1] - s
+                if span <= 1:
+                    if src_map[i] < n:
+                        si = src_map[i]
+                        cur_len = src_offs[si + 1] - src_offs[si] - 1
+                    else:
+                        src_map[i] = -1
+                        cur_len = 0
+                else:
+                    src_map[i] = i
+                    cur_len = span - 1
+                dst_offs[i + 1] = dst_offs[i] + cur_len + 1
+            total = dst_offs[n]
+            if total > 0:
+                if total > res.byte_capacity:
+                    res._reserve_bytes(total)
+                dst_data = res.data_c
+                for i in range(n):
+                    s = dst_offs[i]
+                    si = src_map[i]
+                    if si < 0:
+                        dst_data[s] = 0
+                        continue
+                    ss = src_offs[si]
+                    ss_len = src_offs[si + 1] - ss - 1
+                    if ss_len > 0:
+                        memcpy(dst_data + s, self.data_c + ss, ss_len)
+                    dst_data[s + ss_len] = 0
+                res.byte_length = total
+            res.length = n
+        finally:
+            os_aligned_free(src_map)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pop_back(self):
         if self.length == 0:
             raise IndexError("pop from empty column")
@@ -6533,6 +6665,116 @@ cdef class UCS2Column(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
+    def ffill(self):
+        """向前填充空串（本库缺失语义：isna 视空串为缺失，对标 double 的 NaN 填充）。
+
+        效率说明：两次 O(n) 遍历，一次确定目的偏移表，一次 memcpy 写载荷，
+        结果字符区连续紧凑，与 append 的存储布局一致。"""
+        cdef Py_ssize_t n = self.length
+        cdef UCS2Column res = UCS2Column(max(n, 1))
+        if n == 0:
+            return res
+        cdef Py_ssize_t* src_offs = self.offsets_c
+        cdef Py_ssize_t* dst_offs = res.offsets_c
+        cdef Py_ssize_t* src_map = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
+        if not src_map:
+            raise MemoryError()
+        cdef Py_ssize_t i, slen, cur_len, total = 0
+        cdef Py_ssize_t last_idx = -1, last_len = 0
+        cdef Py_ssize_t si, ss, sslen
+        cdef Py_UCS2* dst_chars
+        dst_offs[0] = 0
+        try:
+            for i in range(n):
+                slen = src_offs[i + 1] - src_offs[i]
+                if slen == 0 and last_idx >= 0:
+                    src_map[i] = last_idx
+                    cur_len = last_len
+                elif slen == 0:
+                    src_map[i] = -1
+                    cur_len = 0
+                else:
+                    last_idx = i
+                    last_len = slen
+                    src_map[i] = i
+                    cur_len = slen
+                dst_offs[i + 1] = dst_offs[i] + cur_len
+            total = dst_offs[n]
+            if total > 0:
+                if total > res.char_capacity:
+                    res._reserve_chars(total)
+                dst_chars = res.chars_c
+                for i in range(n):
+                    si = src_map[i]
+                    if si < 0:
+                        continue
+                    ss = src_offs[si]
+                    sslen = src_offs[si + 1] - ss
+                    if sslen > 0:
+                        memcpy(dst_chars + dst_offs[i], self.chars_c + ss, sslen * sizeof(Py_UCS2))
+                res.char_length = total
+            res.length = n
+        finally:
+            os_aligned_free(src_map)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def bfill(self):
+        """向后填充空串（缺失语义）。与 ffill() 同构，O(n)。"""
+        cdef Py_ssize_t n = self.length
+        cdef UCS2Column res = UCS2Column(max(n, 1))
+        if n == 0:
+            return res
+        cdef Py_ssize_t* src_offs = self.offsets_c
+        cdef Py_ssize_t* dst_offs = res.offsets_c
+        cdef Py_ssize_t* src_map = <Py_ssize_t*>aligned_malloc(max(n, 1) * sizeof(Py_ssize_t))
+        if not src_map:
+            raise MemoryError()
+        cdef Py_ssize_t i, slen, cur_len, total = 0
+        cdef Py_ssize_t next_idx = n
+        cdef Py_ssize_t si, ss, sslen
+        cdef Py_UCS2* dst_chars
+        dst_offs[0] = 0
+        try:
+            for i in range(n - 1, -1, -1):
+                if src_offs[i + 1] > src_offs[i]:
+                    next_idx = i
+                src_map[i] = next_idx
+            for i in range(n):
+                slen = src_offs[i + 1] - src_offs[i]
+                if slen == 0:
+                    if src_map[i] < n:
+                        si = src_map[i]
+                        cur_len = src_offs[si + 1] - src_offs[si]
+                    else:
+                        src_map[i] = -1
+                        cur_len = 0
+                else:
+                    src_map[i] = i
+                    cur_len = slen
+                dst_offs[i + 1] = dst_offs[i] + cur_len
+            total = dst_offs[n]
+            if total > 0:
+                if total > res.char_capacity:
+                    res._reserve_chars(total)
+                dst_chars = res.chars_c
+                for i in range(n):
+                    si = src_map[i]
+                    if si < 0:
+                        continue
+                    ss = src_offs[si]
+                    sslen = src_offs[si + 1] - ss
+                    if sslen > 0:
+                        memcpy(dst_chars + dst_offs[i], self.chars_c + ss, sslen * sizeof(Py_UCS2))
+                res.char_length = total
+            res.length = n
+        finally:
+            os_aligned_free(src_map)
+        return res
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def concat(self, UCS2Column other):
         self._reserve_rows(self.length + other.length)
         self._reserve_chars(self.char_length + other.char_length)
@@ -7841,6 +8083,19 @@ cdef class DateColumn(BaseColumn):
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
+    def ffill(self):
+        """向前填充缺失值。DateColumn 无缺失表示（isna 恒为 False），
+        语义与 pandas 中无缺失的日期列一致：各子列内容保持不变（返回拷贝）。"""
+        return self.copy()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def bfill(self):
+        """向后填充缺失值。语义同 ffill()：日期列无缺失哨兵，返回拷贝。"""
+        return self.copy()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
     def pop_back(self):
         if not self.owns_data:
             raise RuntimeError("Cannot modify a view/slice column. Copy it first.")
@@ -9000,6 +9255,18 @@ cdef class BoolColumn(BaseColumn):
             memcpy(col.data_c, self.data_c, self.length * sizeof(unsigned char))
         return col
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ffill(self):
+        """向前填充缺失值。BoolColumn 无缺失表示（isna 恒为 False），返回拷贝。"""
+        return self.copy()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def bfill(self):
+        """向后填充缺失值。语义同 ffill()：布尔列无缺失哨兵，返回拷贝。"""
+        return self.copy()
+
     
 
     @cython.always_allow_keywords(False)
@@ -9455,6 +9722,57 @@ cdef class CategoryColumn(BaseColumn):
             memcpy(col.codes_c, self.codes_c, self.length * sizeof(int))
         return col
 
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ffill(self):
+        """向前填充空类别（本库缺失语义：isna 视空类别为缺失）。
+        在拷贝上原地改写 code 映射，O(n)。"""
+        cdef CategoryColumn col = self.copy()
+        cdef Py_ssize_t n = col.length
+        if n == 0:
+            return col
+        cdef int* codes = col.codes_c
+        cdef list cats = col.categories
+        cdef Py_ssize_t cat_n = len(cats)
+        cdef Py_ssize_t i
+        cdef int c
+        cdef int last_code = -1
+        cdef bint has_last = False
+        for i in range(n):
+            c = codes[i]
+            if c < 0 or c >= cat_n or cats[c] == '':
+                if has_last:
+                    codes[i] = last_code
+            else:
+                last_code = c
+                has_last = True
+        return col
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def bfill(self):
+        """向后填充空类别（缺失语义）。在拷贝上原地改写 code 映射，O(n)。"""
+        cdef CategoryColumn col = self.copy()
+        cdef Py_ssize_t n = col.length
+        if n == 0:
+            return col
+        cdef int* codes = col.codes_c
+        cdef list cats = col.categories
+        cdef Py_ssize_t cat_n = len(cats)
+        cdef Py_ssize_t i
+        cdef int c
+        cdef int next_code = -1
+        cdef bint has_next = False
+        for i in range(n - 1, -1, -1):
+            c = codes[i]
+            if c < 0 or c >= cat_n or cats[c] == '':
+                if has_next:
+                    codes[i] = next_code
+            else:
+                next_code = c
+                has_next = True
+        return col
+
     @cython.always_allow_keywords(False)
     @cython.binding(False)
     def __getitem__(self, Py_ssize_t idx):
@@ -9876,6 +10194,19 @@ cdef class DateTimeColumn(BaseColumn):
         new_col.length = self.length
         _col_memcpy(new_col.data_c, self.data_c, self.length)
         return new_col
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ffill(self):
+        """向前填充缺失值。DateTimeColumn 无缺失表示（isna 恒为 False），
+        语义与 pandas 中无缺失的 datetime 列一致：各子列内容保持不变（返回拷贝）。"""
+        return self.copy()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def bfill(self):
+        """向后填充缺失值。语义同 ffill()：datetime 列无缺失哨兵，返回拷贝。"""
+        return self.copy()
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
@@ -10579,6 +10910,19 @@ cdef class TimeColumn(BaseColumn):
         new_col.length = self.length
         _col_memcpy(new_col.data_c, self.data_c, self.length)
         return new_col
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def ffill(self):
+        """向前填充缺失值。TimeColumn 无缺失表示（isna 恒为 False），
+        语义与 pandas 中无缺失的 time 列一致：各子列内容保持不变（返回拷贝）。"""
+        return self.copy()
+
+    @cython.binding(False)
+    @cython.always_allow_keywords(False)
+    def bfill(self):
+        """向后填充缺失值。语义同 ffill()：time 列无缺失哨兵，返回拷贝。"""
+        return self.copy()
 
     @cython.binding(False)
     @cython.always_allow_keywords(False)
