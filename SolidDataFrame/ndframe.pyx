@@ -817,6 +817,9 @@ cdef str _filter_charset(str s, int mode):
     cdef Py_UCS4 cp
     cdef bint has_wide = False
 
+    cdef list parts
+    cdef Py_ssize_t k
+
     try:
         for i in range(n):
             cp = PyUnicode_READ_CHAR(s, i)
@@ -834,8 +837,8 @@ cdef str _filter_charset(str s, int mode):
         if not has_wide:
             return PyUnicode_FromKindAndData(PyUnicode_2BYTE_KIND, buf, count)
 
-        cdef list parts = [None] * count
-        cdef Py_ssize_t k = 0
+        parts = [None] * count
+        k = 0
         for i in range(n):
             cp = PyUnicode_READ_CHAR(s, i)
             if pred(cp):
@@ -1138,7 +1141,7 @@ cdef class NDframe:
     @cython.always_allow_keywords(False)
     def head(self, ):
         """返回前 10 行的新 NDframe"""
-        Py_ssize_t n = 10
+        cdef Py_ssize_t n = 10
         if n > self.length:
             n = self.length
         return self[0:n]
@@ -1146,7 +1149,7 @@ cdef class NDframe:
     @cython.always_allow_keywords(False)
     def tail(self):
         """返回后 10 行的新 NDframe"""
-        Py_ssize_t n = 10
+        cdef Py_ssize_t n = 10
         cdef Py_ssize_t start = self.length - n
         if start < 0: start = 0
         return self[start:]
