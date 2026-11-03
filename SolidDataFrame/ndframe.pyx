@@ -3172,6 +3172,7 @@ cdef class NDframe:
     # ========================================================
     # 全局坐标 IDX 提取系列
     # ========================================================
+    @cython.always_allow_keywords(False)
     def idx_in_bbox(self, int x0, int y0, int x1, int y1):
         if x0 > x1 or y0 > y1:
             raise ValueError("Invalid x0 y0 x1 y1 values")
@@ -3193,7 +3194,7 @@ cdef class NDframe:
                 res.append(i)
         return res
 
-
+    @cython.always_allow_keywords(False)
     def idx_in_x0x1(self, int x0, int x1):
         if x0 > x1:
             raise ValueError("Invalid x0 and x1 values")
@@ -3212,7 +3213,7 @@ cdef class NDframe:
                 res.append(i)
         return res
 
-
+    @cython.always_allow_keywords(False)
     def idx_in_y0y1(self, int y0, int y1):
         if y0 > y1:
             raise ValueError("Invalid y0 or y1")
@@ -3234,6 +3235,7 @@ cdef class NDframe:
     # ========================================================
     # 基于 IDX 的重建与批量删除
     # ========================================================
+    @cython.always_allow_keywords(False)
     def df_from_idx(self, indices):
         """
         根据给定的索引列表（或集合），极速生成一个新的 NDframe。
@@ -3269,7 +3271,7 @@ cdef class NDframe:
         new_df.text_sep_list = dst_sep
         return new_df
 
-
+    @cython.always_allow_keywords(False)
     def drop_by_idx(self, indices):
         if not indices:
             return self
@@ -3301,6 +3303,7 @@ cdef class NDframe:
     # ========================================================
     # 纯坐标过滤 — 带参数校验的 def 包装
     # ========================================================
+    @cython.always_allow_keywords(False)
     def filter_in_bbox(self, int x0, int y0, int x1, int y1):
         if x0 < 0: x0 = 0
         if x1 < 0: x1 = 0
@@ -3311,6 +3314,7 @@ cdef class NDframe:
             raise ValueError(f"def filter_in_bbox invalid boundary: x0({x0})>x1({x1}) or y0({y0})>y1({y1})")
         return self._in_bbox(x0, y0, x1, y1)
 
+    @cython.always_allow_keywords(False)
     def filter_in_x0x1(self, int x0, int x1):
         if x0 < 0: x0 = 0
         if x1 < 0: x1 = 0
@@ -3318,6 +3322,7 @@ cdef class NDframe:
             raise ValueError(f"x0({x0}) > x1({x1})")
         return self._in_x_range(x0, x1)
 
+    @cython.always_allow_keywords(False)
     def filter_in_y0y1(self, int y0, int y1):
         if y0 < 0: y0 = 0
         if y1 < 0: y1 = 0
@@ -3325,11 +3330,13 @@ cdef class NDframe:
             raise ValueError(f"y0({y0}) > y1({y1})")
         return self._in_y_range(y0, y1)
 
+    @cython.always_allow_keywords(False)
     def filter_greater_point(self, int x0, int y0):
         if x0 < 0: x0 = 0
         if y0 < 0: y0 = 0
         return self._greater_point(x0, y0)
 
+    @cython.always_allow_keywords(False)
     def filter_less_point(self, int x1, int y1):
         if x1 < 0: x1 = 0
         if y1 < 0: y1 = 0
@@ -3407,6 +3414,7 @@ cdef class NDframe:
             self.rows_c[i].idx = <int>i
         return self
 
+    @cython.always_allow_keywords(False)
     def add_y0y1(self, int offset):
         """y0 和 y1 同步增加 offset（就地），返回原 df"""
         cdef Py_ssize_t i
@@ -3415,6 +3423,7 @@ cdef class NDframe:
             self.rows_c[i].y1 += offset
         return self
 
+    @cython.always_allow_keywords(False)
     def apply_if_greater_add(self, str cond_field, str target_field, int threshold, int offset):
         """如果 cond_field > threshold，则 target_field += offset（就地），返回原 df"""
         cdef int cond_id = self._str_to_field_id(cond_field)
@@ -3424,6 +3433,7 @@ cdef class NDframe:
         self._apply_if_greater_add(cond_id, target_id, threshold, offset)
         return self
 
+    @cython.always_allow_keywords(False)
     def apply_if_less_add(self, str cond_field, str target_field, int threshold, int offset):
         cdef int cond_id = self._str_to_field_id(cond_field)
         cdef int target_id = self._str_to_field_id(target_field)
@@ -3432,6 +3442,7 @@ cdef class NDframe:
         self._apply_if_less_add(cond_id, target_id, threshold, offset)
         return self
 
+    @cython.always_allow_keywords(False)
     def apply_if_greater_add_y(self, str cond_field, int threshold, int offset):
         cdef int cond_id = self._str_to_field_id(cond_field)
         if cond_id < 0 or cond_id >= FIELD_txt:
@@ -3439,6 +3450,7 @@ cdef class NDframe:
         self._apply_if_greater_add_y(cond_id, threshold, offset)
         return self
 
+    @cython.always_allow_keywords(False)
     def apply_if_less_add_y(self, str cond_field, int threshold, int offset):
         cdef int cond_id = self._str_to_field_id(cond_field)
         if cond_id < 0 or cond_id >= FIELD_txt:
