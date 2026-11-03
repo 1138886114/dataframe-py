@@ -927,6 +927,14 @@ cdef int _cmp_sort_desc(const void* a, const void* b) noexcept nogil:
     if pa.idx > pb.idx: return 1
     return 0
 
+cdef inline double _char_visual_weight(Py_UCS4 cp) noexcept:
+    """计算单个字符的视觉宽度权重：ASCII/半角为 1.0，中文/全角为 2.0"""
+    if cp < 0x80:
+        return 1.0
+    elif (cp == 0x2014 or cp == 0x2018 or cp == 0x2019 or
+          cp == 0x201C or cp == 0x201D or cp == 0x2026 or cp >= 0x2E80):
+        return 2.0
+    return 1.0
 
 @cython.final
 @cython.binding(False)
@@ -3469,3 +3477,96 @@ cdef class NDframe:
         if width_threshold < 0: width_threshold = 0
         if height_threshold < 0: height_threshold = 0
         return self._merge_line(width_threshold, height_threshold, sep)
+
+    # ========================================================
+    # 字符串精确切分坐标提取实现
+    # ========================================================
+    cdef list _get_str_coords(self, int field, str a):
+        cdef Py_ssize_t n = self.length
+        if n == 0 or not a:
+            return []
+
+        cdef list src = self.text_list if field == FIELD_txt else self.text_sep_list
+        cdef RowC* rows = self.rows_c
+        cdef list res = []
+        cdef Py_ssize_t i, j, pos, start_search
+        cdef Py_ssize_t a_len = PyUnicode_GET_LENGTH(a)
+        cdef Py_ssize_t txt_len
+        cdef str txt
+        cdef double total_weight, prefix_weight, match_weight
+        cdef double row_w
+        cdef int sub_x0, sub_x1
+        cdef RowC* row
+        cdef Py_UCS4 cp
+
+        for i in range(n):
+            txt = <str>src[i]
+            if not txt or a not in txt:
+                continue
+
+            txt_len = PyUnicode_GET_LENGTH(txt)
+            row = &rows[i]
+            row_w = <double>(row.x1 - row.x0)
+            if row_w <= 0:
+                row_w = <double>row.width
+
+            # 1. 统计整行文本的加权总宽度
+            total_weight = 0.0
+            for j in range(txt_len):
+                cp = PyUnicode_READ_CHAR(txt, j)
+                total_weight += _char_visual_weight(cp)
+
+            if total_weight <= 0.0:
+                continue
+
+            # 2. 支持单行内包含一个或多个子串匹配
+            start_search = 0
+            while True:
+                pos = txt.find(a, start_search)
+                if pos == -1:
+                    break
+
+                # 计算前缀权重
+                prefix_weight = 0.0
+                for j in range(pos):
+                    cp = PyUnicode_READ_CHAR(txt, j)
+                    prefix_weight += _char_visual_weight(cp)
+
+                # 计算子串自身的加权长度
+                match_weight = 0.0
+                for j in range(pos, pos + a_len):
+                    cp = PyUnicode_READ_CHAR(txt, j)
+                    match_weight += _char_visual_weight(cp)
+
+                # 行首贴靠判定
+                if pos == 0:
+                    sub_x0 = row.x0
+                else:
+                    sub_x0 = <int>(row.x0 + (prefix_weight / total_weight) * row_w + 0.5)
+
+                # 行尾贴靠判定
+                if pos + a_len == txt_len:
+                    sub_x1 = row.x1
+                else:
+                    sub_x1 = <int>(row.x0 + ((prefix_weight + match_weight) / total_weight) * row_w + 0.5)
+
+                # 越界保护
+                if sub_x0 < row.x0: sub_x0 = row.x0
+                if sub_x1 > row.x1: sub_x1 = row.x1
+                if sub_x0 > sub_x1: sub_x0 = sub_x1
+
+                res.append((sub_x0, row.y0, sub_x1, row.y1))
+                start_search = pos + a_len
+
+        return res
+
+
+    @cython.always_allow_keywords(False)
+    def get_txt_coords(self, str a):
+        """遍历搜索 text_list 含有子字符串 a 的行的精确坐标列表: list[(x0, y0, x1, y1)]"""
+        return self._get_str_coords(FIELD_txt, a)
+
+    @cython.always_allow_keywords(False)
+    def get_sep_coords(self, str a):
+        """遍历搜索 text_sep_list 含有子字符串 a 的行的精确坐标列表: list[(x0, y0, x1, y1)]"""
+        return self._get_str_coords(FIELD_sep, a)
