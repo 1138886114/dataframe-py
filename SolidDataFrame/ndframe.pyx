@@ -4,7 +4,7 @@
 # cython: wraparound=False
 # cython: cdivision=True
 
-from libc.stdlib cimport malloc, realloc, free
+from libc.stdlib cimport malloc, realloc, free, qsort
 from libc.string cimport memcpy, memmove
 from libc.stdio cimport printf
 from libc.math cimport sqrt
@@ -12,7 +12,7 @@ from libc.string cimport memset
 import cython
 from cpython.long cimport PyLong_FromSsize_t
 from cpython.list cimport PyList_Append, PyList_GetItem, PyList_GET_ITEM, PyList_Size, PyList_New, PyList_SetItem, PyList_GET_SIZE
-import inspect
+import html as _html
 import re
 
 cdef extern from "Python.h":
@@ -108,6 +108,23 @@ cdef inline int _get_field_val(RowC* row, int field) noexcept nogil:
 
 cdef inline void _add_field_value(RowC* row, int field, int offset) noexcept nogil:
     (&row.idx)[field] += offset
+
+
+cdef inline bint _int_match(int value, int lo, int hi, int op) noexcept:
+    if op == OP_GREATER: return value > lo
+    if op == OP_LESS: return value < lo
+    if op == OP_EQUAL: return value == lo
+    if op == OP_BETWEEN: return value > lo and value < hi
+    return False
+
+
+cdef str _coerce_text(object value):
+    """保证文本字段内部始终是 str，避免 C 层按 Unicode 读取非字符串对象。"""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
 
 
 cdef inline object _ensure_regex(object pattern):
@@ -398,6 +415,7 @@ cdef class StringAccessor:
 
         例: df.text.regex_replace_to(re.compile(r'\d+'), '0', 'text_sep')
         """
+        pattern = _ensure_regex(pattern)
         cdef int dst_field = FIELD_txt if target_field == "text" else FIELD_sep
         self.df._regex_replace_cross(self.field, dst_field, pattern, rewrite)
         return self.df
@@ -405,10 +423,12 @@ cdef class StringAccessor:
     @cython.always_allow_keywords(False)
     def drop_regex(self, object pattern):
         """就地删除匹配该正则的行，返回原 df"""
+        pattern = _ensure_regex(pattern)
         return self.df._drop_in_regex(self.field, pattern)
 
     @cython.always_allow_keywords(False)
     def idx_contains(self, object pattern):
+        pattern = _ensure_regex(pattern)
         return self.df._idx_regex(self.field, pattern)
 
     def idx_contains_in_bbox(self, object pattern, int x0, int y0, int x1, int y1):
@@ -419,6 +439,7 @@ cdef class StringAccessor:
 
         if x0 > x1 or y0 > y1:
             raise ValueError(f"def idx_contains_in_bbox invalid boundary: x0({x0})>x1({x1}) or y0({y0})>y1({y1})")
+        pattern = _ensure_regex(pattern)
         return self.df._idx_regex_in_bbox(self.field, pattern, x0, y0, x1, y1)
 
     @cython.always_allow_keywords(False)
@@ -442,16 +463,19 @@ cdef class StringAccessor:
     def idx_regex_strlen_greater(self, object pattern, int n):
         if n < 0:
             raise ValueError(f"invalid length: {n}")
+        pattern = _ensure_regex(pattern)
         return self.df._idx_regex_strlen_cmp(self.field, pattern, n, OP_GREATER)
 
     def idx_regex_strlen_less(self, object pattern, int n):
         if n < 0:
             raise ValueError(f"invalid length: {n}")
+        pattern = _ensure_regex(pattern)
         return self.df._idx_regex_strlen_cmp(self.field, pattern, n, OP_LESS)
 
     def idx_regex_strlen_equal(self, object pattern, int n):
         if n < 0:
             raise ValueError(f"invalid length: {n}")
+        pattern = _ensure_regex(pattern)
         return self.df._idx_regex_strlen_cmp(self.field, pattern, n, OP_EQUAL)
 
 
@@ -815,17 +839,34 @@ cdef str _filter_charset(str s, int mode):
 
     cdef Py_ssize_t count = 0
     cdef Py_UCS4 cp
+    cdef bint has_wide = False
+
     try:
         for i in range(n):
             cp = PyUnicode_READ_CHAR(s, i)
             if pred(cp):
+                if cp > 0xFFFF:
+                    has_wide = True
                 buf[count] = <Py_UCS2>cp
                 count += 1
-        if count == n:
+
+        if count == n and not has_wide:
             return s
         if count == 0:
             return ""
-        return PyUnicode_FromKindAndData(PyUnicode_2BYTE_KIND, buf, count)
+
+        if not has_wide:
+            return PyUnicode_FromKindAndData(PyUnicode_2BYTE_KIND, buf, count)
+
+        # 含 4 字节字符（如 CJK 扩展 B）时不能用 UCS2 截断，回退逐字符重建
+        cdef list parts = [None] * count
+        cdef Py_ssize_t k = 0
+        for i in range(n):
+            cp = PyUnicode_READ_CHAR(s, i)
+            if pred(cp):
+                parts[k] = s[i]
+                k += 1
+        return "".join(parts)
     finally:
         free(buf)
 
@@ -869,32 +910,6 @@ cdef str _truncate_str(str s, int max_chars=90, int head=79, int tail=8):
     return s[:head] + "..." + s[-tail:]
 
 
-cdef str _get_var_name(object target):
-    """
-    遍历调用栈，自动寻找指向当前 NDframe 实例的变量名
-    """
-    cdef str fallback_name = "NDframe"
-    try:
-        frame = inspect.currentframe().f_back
-        while frame is not None:
-            ignore_names = {'self', 'cls', 'obj', 'target', 'v', 'k', '_', '__', 'val', 'res', 'new_df'}
-
-            # 1. 优先检查局部变量 (f_locals)
-            for k, v in frame.f_locals.items():
-                if v is target and k not in ignore_names and not k.startswith('_'):
-                    return k
-
-            # 2. 检查全局变量 (f_globals)
-            for k, v in frame.f_globals.items():
-                if v is target and k not in ignore_names and not k.startswith('_'):
-                    return k
-
-            frame = frame.f_back
-    except Exception:
-        pass
-
-    return fallback_name
-
 # ==========================================
 # 3. 核心 NDframe 定义
 # ==========================================
@@ -908,6 +923,34 @@ cdef struct RowC:
     int height   # FIELD_height= 6
     int page     # FIELD_page  = 7
     int flags    # FIELD_flags = 8
+
+
+cdef Py_ssize_t MAX_CAPACITY = <Py_ssize_t>(1 << 40)
+
+
+cdef struct SortPair:
+    int key
+    Py_ssize_t idx
+
+
+cdef int _cmp_sort_asc(const void* a, const void* b) noexcept nogil:
+    cdef SortPair* pa = <SortPair*>a
+    cdef SortPair* pb = <SortPair*>b
+    if pa.key < pb.key: return -1
+    if pa.key > pb.key: return 1
+    if pa.idx < pb.idx: return -1
+    if pa.idx > pb.idx: return 1
+    return 0
+
+
+cdef int _cmp_sort_desc(const void* a, const void* b) noexcept nogil:
+    cdef SortPair* pa = <SortPair*>a
+    cdef SortPair* pb = <SortPair*>b
+    if pa.key > pb.key: return -1
+    if pa.key < pb.key: return 1
+    if pa.idx < pb.idx: return -1
+    if pa.idx > pb.idx: return 1
+    return 0
 
 
 @cython.final
@@ -924,7 +967,11 @@ cdef class NDframe:
 
     @cython.always_allow_keywords(False)
     def __cinit__(self, Py_ssize_t capacity=16):
-        self._capacity = max(capacity, 1)
+        if capacity < 1:
+            capacity = 1
+        if capacity > MAX_CAPACITY:
+            raise MemoryError("NDframe capacity too large")
+        self._capacity = capacity
         self.length = 0
 
         self.rows_c = <RowC*>malloc(<size_t>self._capacity * sizeof(RowC))
@@ -940,6 +987,10 @@ cdef class NDframe:
             free(self.rows_c)
 
     def __len__(self):
+        return self.length
+
+    @cython.always_allow_keywords(False)
+    def len(self):
         return self.length
 
     def __bool__(self):
@@ -993,36 +1044,36 @@ cdef class NDframe:
             return "<div><strong>NDframe</strong> is empty.</div>"
 
         cdef Py_ssize_t preview_n = min(self.length, 60) # 限制渲染行数防卡顿
-        cdef list html = []
-        html.append("<div style='max-height: 400px; overflow: auto;'>")
-        html.append("<table border='1' style='border-collapse: collapse; text-align: right;'>")
+        cdef list parts = []
+        parts.append("<div style='max-height: 400px; overflow: auto;'>")
+        parts.append("<table border='1' style='border-collapse: collapse; text-align: right;'>")
 
-        html.append("<thead><tr style='background-color: #f2f2f2;'>")
+        parts.append("<thead><tr style='background-color: #f2f2f2;'>")
         for col in HEADERS:
-            html.append(f"<th>{col}</th>")
-        html.append("</tr></thead><tbody>")
+            parts.append(f"<th>{_html.escape(col)}</th>")
+        parts.append("</tr></thead><tbody>")
 
         cdef Py_ssize_t i
         for i in range(preview_n):
-            html.append("<tr>")
-            html.append(f"<td>{self.rows_c[i].idx}</td>")
-            html.append(f"<td>{self.rows_c[i].x0}</td>")
-            html.append(f"<td>{self.rows_c[i].y0}</td>")
-            html.append(f"<td>{self.rows_c[i].x1}</td>")
-            html.append(f"<td>{self.rows_c[i].y1}</td>")
-            html.append(f"<td>{self.rows_c[i].width}</td>")
-            html.append(f"<td>{self.rows_c[i].height}</td>")
-            html.append(f"<td>{self.rows_c[i].page}</td>")
-            html.append(f"<td>{self.rows_c[i].flags}</td>")
-            html.append(f"<td style='text-align: left;'>{self.text_list[i]}</td>")
-            html.append(f"<td style='text-align: left;'>{self.text_sep_list[i]}</td>")
-            html.append("</tr>")
+            parts.append("<tr>")
+            parts.append(f"<td>{self.rows_c[i].idx}</td>")
+            parts.append(f"<td>{self.rows_c[i].x0}</td>")
+            parts.append(f"<td>{self.rows_c[i].y0}</td>")
+            parts.append(f"<td>{self.rows_c[i].x1}</td>")
+            parts.append(f"<td>{self.rows_c[i].y1}</td>")
+            parts.append(f"<td>{self.rows_c[i].width}</td>")
+            parts.append(f"<td>{self.rows_c[i].height}</td>")
+            parts.append(f"<td>{self.rows_c[i].page}</td>")
+            parts.append(f"<td>{self.rows_c[i].flags}</td>")
+            parts.append(f"<td style='text-align: left;'>{_html.escape(str(self.text_list[i]))}</td>")
+            parts.append(f"<td style='text-align: left;'>{_html.escape(str(self.text_sep_list[i]))}</td>")
+            parts.append("</tr>")
 
-        html.append("</tbody></table></div>")
+        parts.append("</tbody></table></div>")
         if self.length > preview_n:
-            html.append(f"<p>... showing {preview_n} of {self.length} rows ...</p>")
+            parts.append(f"<p>... showing {preview_n} of {self.length} rows ...</p>")
 
-        return "".join(html)
+        return "".join(parts)
 
     # ----------------------------------------------------
     # API 属性映射区：极其优雅的调用入口
@@ -1113,16 +1164,23 @@ cdef class NDframe:
         else:
             raise TypeError("Indices must be integers or slices (e.g. df[0], df[1:3])")
 
-    def head(self, int n=5):
-        """返回前 n 行的新 NDframe"""
+    @cython.always_allow_keywords(False)
+    def head(self, ):
+        """返回前 10 行的新 NDframe"""
+        Py_ssize_t n = 10
+        if n > self.length:
+            n = self.length
         return self[0:n]
 
-    def tail(self, int n=5):
-        """返回后 n 行的新 NDframe"""
+    @cython.always_allow_keywords(False)
+    def tail(self):
+        """返回后 10 行的新 NDframe"""
+        Py_ssize_t n = 10
         cdef Py_ssize_t start = self.length - n
         if start < 0: start = 0
         return self[start:]
 
+    @cython.always_allow_keywords(False)
     def pop_back(self):
         """
         删除最后一行（就地）。
@@ -1135,7 +1193,7 @@ cdef class NDframe:
         self.text_sep_list.pop()
 
     @cython.always_allow_keywords(False)
-    def bbox(self, Py_ssize_t n=0):
+    def bbox(self, int n=0):
         """
         返回第 n 行的边界框 (x0, y0, x1, y1) 元组。
 
@@ -1167,16 +1225,23 @@ cdef class NDframe:
     cdef void _reserve(self, Py_ssize_t new_capacity) except *:
         if new_capacity <= self._capacity:
             return
-        cdef RowC* new_rows = <RowC*>realloc(self.rows_c, new_capacity * sizeof(RowC))
+        if new_capacity < 0 or new_capacity > MAX_CAPACITY:
+            raise MemoryError("NDframe capacity too large")
+        cdef RowC* new_rows = <RowC*>realloc(self.rows_c, <size_t>new_capacity * sizeof(RowC))
         if not new_rows:
             raise MemoryError()
         self.rows_c = new_rows
         self._capacity = new_capacity
 
+    cdef void _grow(self) except *:
+        if self._capacity > MAX_CAPACITY // 2:
+            raise MemoryError("NDframe capacity too large")
+        self._reserve(self._capacity * 2)
+
     cdef void _append_c_row(self, RowC* row, str text, str text_sep):
         """内部快速追加方法"""
         if self.length >= self._capacity:
-            self._reserve(self._capacity * 2)
+            self._grow()
 
         self.rows_c[self.length] = row[0]
         PyList_Append(self.text_list, text)
@@ -1189,7 +1254,7 @@ cdef class NDframe:
                str text, str text_sep=""):
         cdef Py_ssize_t n = self.length
         if n >= self._capacity:
-            self._reserve(self._capacity * 2)
+            self._grow()
 
         cdef RowC* rows = self.rows_c
         rows[n].idx = idx
@@ -1311,20 +1376,30 @@ cdef class NDframe:
         if l_flags is not None:
             for i in range(length): rows[i].flags = l_flags[i]
 
-        df.text_list = [s if s is not None else "" for s in l_text]
-        df.text_sep_list = [s if s is not None else "" for s in l_sep] if l_sep is not None else [""] * length
+        cdef list clean_text = [None] * length
+        cdef list clean_sep = [None] * length
+        for i in range(length):
+            clean_text[i] = _coerce_text(l_text[i])
+            clean_sep[i] = _coerce_text(l_sep[i]) if l_sep is not None else ""
+
+        df.text_list = clean_text
+        df.text_sep_list = clean_sep
 
         df.length = length
         return df
 
-    def print(self):
+    def print(self, str name=None):
+        cdef str dataframe_name = name if name else "NDframe"
+        if self.length == 0:
+            return f"{dataframe_name} is Empty!\n"
+        print(f"[{dataframe_name}] ({self.length} rows):")
         print(self.to_string())
 
-    def to_string(self, int max_rows=50):
+    @cython.always_allow_keywords(False)
+    def to_string(self):
         """构造并返回对齐的完美 ASCII 表格，支持超大行数自动折叠"""
-        cdef str dataframe_name = _get_var_name(self)
-        if self.length == 0:
-            return f"NDframe: {dataframe_name} is Empty!\n"
+        cdef Py_ssize_t max_rows = 80
+        cdef Py_ssize_t half = max_rows // 2
 
         cdef list display_indices = []
         cdef Py_ssize_t i
@@ -1381,8 +1456,6 @@ cdef class NDframe:
             widths[10] = iw if iw > widths[10] else widths[10]
 
         cdef list lines = []
-        lines.append(f"NDframe: {dataframe_name} ({self.length} rows):")
-
         cdef list sep_parts
         sep_parts = ["+"]
         for j in range(11): sep_parts.extend(["-" * (widths[j] + 2), "+"])
