@@ -119,7 +119,6 @@ cdef inline bint _int_match(int value, int lo, int hi, int op) noexcept:
 
 
 cdef str _coerce_text(object value):
-    """保证文本字段内部始终是 str，避免 C 层按 Unicode 读取非字符串对象。"""
     if value is None:
         return ""
     if isinstance(value, str):
@@ -135,11 +134,8 @@ cdef inline object _ensure_regex(object pattern):
     """
     if isinstance(pattern, str):
         return re.compile(pattern)
-
-    # Python 鸭子类型检测：只要有 search 方法即可（兼容 re, regex, re2 等不同引擎）
     if not hasattr(pattern, 'search'):
         raise TypeError(f"Expected string or compiled regex pattern, got {type(pattern).__name__}")
-
     return pattern
 
 # ==========================================
@@ -148,7 +144,6 @@ cdef inline object _ensure_regex(object pattern):
 @cython.final
 @cython.binding(False)
 cdef class StringAccessor:
-    """字符串字段访问器：提供类似 pandas 的 df.text.xxx API"""
     cdef NDframe df
     cdef int field
 
@@ -306,12 +301,8 @@ cdef class StringAccessor:
 
     @cython.always_allow_keywords(False)
     def join(self, str separator=""):
-        """拼接文本"""
         return self.df._join(self.field, separator)
 
-    # ========================================================
-    # 字符串长度相关过滤 (仿照 pandas str.len() + 条件筛选)
-    # ========================================================
     @cython.always_allow_keywords(False)
     def strlen_greater(self, int n):
         """返回字符串长度 > n 的行构成的新 NDframe"""
@@ -370,9 +361,6 @@ cdef class StringAccessor:
         """检查字段值是否包含给定字符串集合中的任意一个"""
         return self.df._contains_any(self.field, texts)
 
-    # ========================================================
-    # 正则 + 字符串长度组合筛选 (C++ df_regex_strlen_xxx)
-    # ========================================================
     @cython.always_allow_keywords(False)
     def regex_strlen_greater(self, object pattern, int n):
         """正则匹配 && 字符串长度 > n 的行 → 新 NDframe"""
@@ -397,9 +385,6 @@ cdef class StringAccessor:
         pattern = _ensure_regex(pattern)
         return self.df._df_regex_strlen_cmp(self.field, pattern, n, OP_EQUAL)
 
-    # ========================================================
-    # 跨字段字符串替换 (C++ replace<field_src, field_dst>)
-    # ========================================================
     def replace_to(self, str old_str, str new_str, str target_field="text"):
         """将本字段的 old_str 替换为 new_str，写入 target_field（就地）
         
@@ -482,7 +467,6 @@ cdef class StringAccessor:
 @cython.final
 @cython.binding(False)
 cdef class NumericAccessor:
-    """数字字段访问器：提供 df.x0.max() 等 API"""
     cdef NDframe df
     cdef int field_id
 
@@ -583,8 +567,6 @@ cdef class NumericAccessor:
         # 智能路由：如果是 height 字段，直接走 C 数组桶计数的极速通道
         if self.field_id == FIELD_height:
             return self.df._mode_height()
-
-        # 其他字段走原来的字典通用逻辑
         return self.df._mode_col(self.field_id)
 
     @cython.always_allow_keywords(False)
@@ -718,10 +700,8 @@ cdef inline Py_UCS2* _str_to_ucs2_buf(str s, Py_ssize_t* out_len) except NULL:
     return buf
 
 
-# 用于判断子字符串在某个字符串中存在，纯 C 内存滑动窗口匹配，避免 Python 对象创建
 cdef inline bint _substr_contains(Py_UCS2* chars, Py_ssize_t start, Py_ssize_t end,
                                   Py_UCS2* sub_buf, Py_ssize_t sub_len) noexcept:
-    """纯 C 内存滑动窗口子串匹配（O(N*M)，无任何 Python 对象创建）"""
     if sub_len == 0:
         return True
     cdef Py_ssize_t str_len = end - start
@@ -743,7 +723,6 @@ cdef inline bint _substr_contains(Py_UCS2* chars, Py_ssize_t start, Py_ssize_t e
 
 
 cdef inline bint _str_starts_ends(str txt, str sub, bint is_starts) noexcept:
-    """纯 C 比较前缀/后缀，语义与 str.startswith/endswith 一致。"""
     cdef Py_ssize_t n = PyUnicode_GET_LENGTH(txt)
     cdef Py_ssize_t m = PyUnicode_GET_LENGTH(sub)
     if m > n:
@@ -757,7 +736,6 @@ cdef inline bint _str_starts_ends(str txt, str sub, bint is_starts) noexcept:
 
 
 cdef bint _str_all_match(str s, int mode):
-    """按 StrCheckMode 逐字符判定，语义对齐 CPython 的 str.isxxx()。"""
     cdef Py_ssize_t i, n = PyUnicode_GET_LENGTH(s)
     if n == 0:
         return False
@@ -766,7 +744,6 @@ cdef bint _str_all_match(str s, int mode):
     cdef bint has_cased, previous_is_cased, cased
     cdef bint (*pred)(Py_UCS4) noexcept
 
-    # islower / isupper / istitle 不是简单的“所有字符命中”，需按 cased 规则判断
     if mode == CHK_ISLOWER:
         has_cased = False
         for i in range(n):
@@ -823,7 +800,6 @@ cdef bint _str_all_match(str s, int mode):
 
 
 cdef str _filter_charset(str s, int mode):
-    """保留命中的字符；全命中返回原对象，无命中返回空串，否则构造新串。"""
     cdef Py_ssize_t i, n = PyUnicode_GET_LENGTH(s)
     if n == 0:
         return s
@@ -858,7 +834,6 @@ cdef str _filter_charset(str s, int mode):
         if not has_wide:
             return PyUnicode_FromKindAndData(PyUnicode_2BYTE_KIND, buf, count)
 
-        # 含 4 字节字符（如 CJK 扩展 B）时不能用 UCS2 截断，回退逐字符重建
         cdef list parts = [None] * count
         cdef Py_ssize_t k = 0
         for i in range(n):
@@ -982,7 +957,6 @@ cdef class NDframe:
         self.text_sep_list = []
 
     def __dealloc__(self):
-        """清理内存"""
         if self.rows_c is not NULL:
             free(self.rows_c)
 
@@ -1036,14 +1010,10 @@ cdef class NDframe:
         return f"<NDframe: {self.length} rows>"
 
     def _repr_html_(self):
-        """
-        IPython / Jupyter / PyCharm SciView 富文本协议。
-        在 Notebook 或交互式终端中输出极其精美的 HTML 表格，0 外部依赖。
-        """
         if self.length == 0:
             return "<div><strong>NDframe</strong> is empty.</div>"
 
-        cdef Py_ssize_t preview_n = min(self.length, 60) # 限制渲染行数防卡顿
+        cdef Py_ssize_t preview_n = min(self.length, 60)
         cdef list parts = []
         parts.append("<div style='max-height: 400px; overflow: auto;'>")
         parts.append("<table border='1' style='border-collapse: collapse; text-align: right;'>")
@@ -1075,9 +1045,6 @@ cdef class NDframe:
 
         return "".join(parts)
 
-    # ----------------------------------------------------
-    # API 属性映射区：极其优雅的调用入口
-    # ----------------------------------------------------
     @property
     def text(self): return StringAccessor(self, FIELD_txt)
 
@@ -1111,14 +1078,10 @@ cdef class NDframe:
     @property
     def flags(self): return NumericAccessor(self, FIELD_flags)
 
-    # ----------------------------------------------------
-    # pandas-friendly 便捷方法
-    # ----------------------------------------------------
     def __getitem__(self, key):
-        """严格受限的索引：仅支持 df[3] 或 df[1:5]"""
         cdef Py_ssize_t start, stop, new_len, ii
         cdef NDframe new_df
-        cdef int int_key
+        cdef Py_ssize_t int_key
 
         if isinstance(key, slice):
             if key.step not in (None, 1):
@@ -1144,9 +1107,9 @@ cdef class NDframe:
             return new_df
 
         elif isinstance(key, int):
-            int_key = <int>key
-            if int_key < 0: int_key += <int>self.length
-            if int_key < 0 or int_key >= <int>self.length:
+            int_key = key
+            if int_key < 0: int_key += self.length
+            if int_key < 0 or int_key >= self.length:
                 raise IndexError(f"Index {int_key} out of range [0, {self.length})")
             return {
                 "idx": self.rows_c[int_key].idx,
@@ -1193,7 +1156,7 @@ cdef class NDframe:
         self.text_sep_list.pop()
 
     @cython.always_allow_keywords(False)
-    def bbox(self, int n=0):
+    def bbox(self, Py_ssize_t n=0):
         """
         返回第 n 行的边界框 (x0, y0, x1, y1) 元组。
 
@@ -1276,7 +1239,6 @@ cdef class NDframe:
 
     @cython.always_allow_keywords(False)
     def to_list(self):
-        """转换为可打印的 Python 格式"""
         cdef Py_ssize_t n = self.length
         if n == 0:
             return []
@@ -1313,7 +1275,6 @@ cdef class NDframe:
         cdef object tmp
         cdef list l_x0, l_y0, l_x1, l_y1, l_w, l_h, l_text
 
-        # 强制检查必须字段，并且兼容 numpy.ndarray / tuple / pandas.Series
         cdef tuple required_keys = ("x0", "y0", "x1", "y1", "width", "height", "text")
         for k in required_keys:
             if k not in data:
@@ -1329,7 +1290,6 @@ cdef class NDframe:
 
         cdef Py_ssize_t length = len(l_x0)
 
-        # 可选字段也需要提前获取并转换为 list
         cdef list l_page = None
         cdef list l_flags = None
         cdef list l_sep = None
@@ -1397,7 +1357,6 @@ cdef class NDframe:
 
     @cython.always_allow_keywords(False)
     def to_string(self):
-        """构造并返回对齐的完美 ASCII 表格，支持超大行数自动折叠"""
         cdef Py_ssize_t max_rows = 80
         cdef Py_ssize_t half = max_rows // 2
 
@@ -1534,7 +1493,6 @@ cdef class NDframe:
         return total
 
     cdef NDframe _str_transform(self, int field, int mode, str chars=None):
-        """就地操作：执行 strip, capitalize 等"""
         cdef Py_ssize_t i, n = self.length
         cdef list src = self.text_list if field == FIELD_txt else self.text_sep_list
 
@@ -1761,7 +1719,7 @@ cdef class NDframe:
         cdef Py_ssize_t i, n = self.length
         if n == 0:
             return
-        cdef object sub = pattern.sub  # 绑定方法
+        cdef object sub = pattern.sub
         cdef list txt_list = None
         cdef list sep_list = None
         if field == FIELD_txt:
@@ -1915,7 +1873,7 @@ cdef class NDframe:
         return new_df
 
     # ========================================================
-    # 纯坐标过滤 (返回值 NDframe，参照 C++ df_in_xxx 系列)
+    # 纯坐标过滤
     # ========================================================
     cdef NDframe _in_bbox(self, int x0, int y0, int x1, int y1):
         cdef Py_ssize_t n = self.length
@@ -2224,7 +2182,6 @@ cdef class NDframe:
 
 
     cdef bint _contains_any(self, int field, object texts):
-        """检查字段值中是否包含给定集合中的任意一个字符串（C 级子串匹配）"""
         cdef Py_ssize_t i, n = self.length
         if n == 0:
             return False
@@ -2260,6 +2217,7 @@ cdef class NDframe:
         cdef void* data
         cdef unsigned char* src1
         cdef str txt, t
+        cdef object item
         cdef bint found = False
 
         for p in range(m):
@@ -2268,7 +2226,11 @@ cdef class NDframe:
 
         try:
             for p in range(m):
-                t = <str>text_tuple[p]
+                item = text_tuple[p]
+                if not isinstance(item, str):
+                    item = str(item)
+                t = <str>item
+
                 sub_lens[p] = PyUnicode_GET_LENGTH(t)
                 if PyUnicode_KIND(t) != PyUnicode_4BYTE_KIND:
                     sub_bufs[p] = _str_to_ucs2_buf(t, &sub_lens[p])
@@ -2283,7 +2245,6 @@ cdef class NDframe:
                 kind = PyUnicode_KIND(txt)
 
                 if kind == PyUnicode_4BYTE_KIND:
-                    # 4-byte (Emoji/生僻字) 无法无损放入 UCS2，回退到 Python 精确匹配
                     for p in range(m):
                         if text_tuple[p] in txt:
                             found = True
@@ -2429,7 +2390,6 @@ cdef class NDframe:
         cdef list src_list, dst_list
         cdef object replace_method = str.replace
 
-        # 确定源列表和目标列表
         if src_field == FIELD_txt:
             src_list = self.text_list
         else:
@@ -2481,26 +2441,36 @@ cdef class NDframe:
 
         cdef Py_ssize_t i
         cdef RowC* rows = self.rows_c
-        cdef list pairs = [None] * n   # 预分配列表
 
+        cdef SortPair* pairs = <SortPair*>malloc(<size_t>n * sizeof(SortPair))
+        if not pairs:
+            raise MemoryError()
+
+        # 提取排序键和原索引，为稳定排序铺垫
         for i in range(n):
-            pairs[i] = (_get_field_val(&rows[i], field_id), i)
+            pairs[i].key = _get_field_val(&rows[i], field_id)
+            pairs[i].idx = i
 
-        pairs.sort(reverse=descending)
-        cdef list indices = [idx for _, idx in pairs]
+        if descending:
+            qsort(pairs, <size_t>n, sizeof(SortPair), _cmp_sort_desc)
+        else:
+            qsort(pairs, <size_t>n, sizeof(SortPair), _cmp_sort_asc)
 
         cdef RowC* temp_rows = <RowC*>malloc(<size_t>n * sizeof(RowC))
         if not temp_rows:
+            free(pairs)
             raise MemoryError()
 
         cdef list temp_text = [None] * n
         cdef list temp_sep  = [None] * n
         cdef list src_text = self.text_list
         cdef list src_sep  = self.text_sep_list
+        cdef Py_ssize_t idx
 
         try:
+            # 按照 qsort 后得到的 index，原地重构数组和列表
             for i in range(n):
-                idx = indices[i]
+                idx = pairs[i].idx
                 temp_rows[i] = rows[idx]
                 temp_text[i] = src_text[idx]
                 temp_sep[i]  = src_sep[idx]
@@ -2509,6 +2479,7 @@ cdef class NDframe:
             self.text_list = temp_text
             self.text_sep_list = temp_sep
         finally:
+            free(pairs)
             free(temp_rows)
 
     @staticmethod
@@ -2525,11 +2496,9 @@ cdef class NDframe:
         if total == 0:
             return result
 
-        # 批量复制 C 数组
         memcpy(result.rows_c, df1.rows_c, len1 * sizeof(RowC))
         memcpy(result.rows_c + len1, df2.rows_c, len2 * sizeof(RowC))
 
-        # 合并 Python 列表（C 级拼接，高效）
         result.text_list = df1.text_list + df2.text_list
         result.text_sep_list = df1.text_sep_list + df2.text_sep_list
 
@@ -2569,7 +2538,7 @@ cdef class NDframe:
             else:
                 (&rows[i].idx)[field] = 0
 
-    cdef NDframe _df_drop(self, int index):
+    cdef NDframe _df_drop(self, Py_ssize_t index):
         """返回不含 index 行的新 NDframe"""
         cdef Py_ssize_t n = self.length
         cdef NDframe new_df = NDframe(n if n > 0 else 1)
@@ -2606,7 +2575,7 @@ cdef class NDframe:
         if n == 0:
             return new_df
 
-        cdef set idx_set_c = set(idx_set)   # 转换为 set 加速 in 测试
+        cdef set idx_set_c = set(idx_set)
         cdef Py_ssize_t i, write_idx = 0
         cdef RowC* src_rows = self.rows_c
         cdef RowC* dst_rows = new_df.rows_c
@@ -2690,9 +2659,9 @@ cdef class NDframe:
         cdef RowC* rows = self.rows_c
         cdef list result = None
         if field == FIELD_txt:
-            return self.text_list[:]          # 返回拷贝
+            return self.text_list[:]
         elif field == FIELD_sep:
-            return self.text_sep_list[:]      # 返回拷贝
+            return self.text_sep_list[:]
         else:
             result = [0] * n
             for i in range(n):
@@ -2902,7 +2871,7 @@ cdef class NDframe:
     # ========================================================
     # 删除 / 合并 (cdef 核心实现)
     # ========================================================
-    cdef NDframe _drop(self, int index):
+    cdef NDframe _drop(self, Py_ssize_t index):
         """根据索引删除单行（就地），返回 self"""
         cdef Py_ssize_t n = self.length
         if n == 0 or index < 0 or index >= n:
@@ -2982,7 +2951,6 @@ cdef class NDframe:
             curr = i
 
             while curr + 1 < n:
-                # 检查相邻条件
                 if (src_rows[curr + 1].x0 - src_rows[curr].x1 < width_threshold and
                     src_rows[curr + 1].y0 - src_rows[curr].y0 < height_threshold and
                     src_rows[curr + 1].x0 - src_rows[curr].x1 > -width_threshold and
@@ -3004,7 +2972,6 @@ cdef class NDframe:
                 else:
                     break
 
-            # 合并后的文本
             merged_text = sep.join(merged_text_parts)
             merged_sep = sep.join(merged_sep_parts)
 
@@ -3023,7 +2990,6 @@ cdef class NDframe:
             row.page = src_rows[i].page
             row.flags = src_rows[i].flags
 
-            # 直接赋值到结果 DF
             dst_rows[write_idx] = row
             dst_txt[write_idx] = merged_text
             dst_sep[write_idx] = merged_sep
@@ -3031,7 +2997,6 @@ cdef class NDframe:
 
             i = curr + 1
 
-        # 更新结果 DF 的长度并截断多余元素
         result.length = write_idx
         if write_idx < n:
             del dst_txt[write_idx:]
@@ -3041,7 +3006,6 @@ cdef class NDframe:
         return result
 
     cdef list _diff_col(self, int field):
-        """C 级别的一阶差分实现"""
         cdef Py_ssize_t n = self.length
         if n == 0:
             return []
@@ -3050,7 +3014,7 @@ cdef class NDframe:
             return []
 
         cdef RowC* rows = self.rows_c
-        cdef list res = [0] * n   # 预分配，第一个元素稍后设为 None
+        cdef list res = [0] * n
         cdef Py_ssize_t i
         cdef int prev = _get_field_val(&rows[0], field)
         cdef int curr
@@ -3075,7 +3039,7 @@ cdef class NDframe:
             return 0.0
 
         cdef RowC* rows = self.rows_c
-        cdef double mean_val = self._mean_col(field)   # 调用均值方法（已优化）
+        cdef double mean_val = self._mean_col(field)
         cdef double sum_sq = 0.0
         cdef double d_val
         cdef Py_ssize_t i
@@ -3151,7 +3115,6 @@ cdef class NDframe:
             val = _get_field_val(&rows[i], field)
             freq[val] = freq.get(val, 0) + 1
 
-        # 寻找众数（若多个众数，返回最小的值）
         cdef int max_count = 0
         cdef int mode_val = 0
         for val, cnt in freq.items():
@@ -3173,18 +3136,14 @@ cdef class NDframe:
         cdef int freq[256]
         cdef int i, h
 
-        # 1. 数组清零 (在栈上分配的数组初始值不确定，必须清零)
         for i in range(256):
             freq[i] = 0
 
-        # 2. 遍历 C 结构体数组，直接统计频率 (0 内存分配，0 对象创建，CPU 缓存极度友好)
         for i in range(self.length):
             h = self.rows_c[i].height
-            # 过滤脏数据：只统计 10 到 100 之间的有效字符高度
             if 10 <= h <= 250:
                 freq[h] += 1
 
-        # 3. 寻找众数
         cdef int max_count = 0
         cdef int mode_val = 0
 
@@ -3301,10 +3260,7 @@ cdef class NDframe:
 
 
     def drop_by_idx(self, indices):
-        """
-        就地删除指定的一批索引，返回原 df。（比 df_drops 返回新对象更省内存）
-        """
-        if not indices:  # 空集合/列表，直接返回
+        if not indices:
             return self
 
         cdef set idx_set = set(indices)
@@ -3408,7 +3364,6 @@ cdef class NDframe:
         return self
 
     cdef int _str_to_field_id(self, str field) except -1:
-        """将字段名字符串转为 int field_id"""
         fname = field.lower()
         if fname == "x0": return FIELD_x0
         if fname == "y0": return FIELD_y0
@@ -3424,7 +3379,6 @@ cdef class NDframe:
         return -1
 
     def sort_by(self, str field="x0", bint descending=False):
-        """按字段名字符串排序（就地），返回原 df 支持链式调用"""
         cdef int field_id = self._str_to_field_id(field)
         if field_id < 0:
             raise ValueError(f"Unsupported sort field: {field}")
@@ -3488,18 +3442,16 @@ cdef class NDframe:
         return self._df_drops(idx_set)
 
     @cython.always_allow_keywords(False)
-    def df_drop(self, int index):
-        cdef int c_idx = int(index)
-        if c_idx < 0 or c_idx >= self.length:
-            raise IndexError(f"Index {c_idx} out of range [0, {self.length})")
-        return self._df_drop(c_idx)
+    def df_drop(self, Py_ssize_t index):
+        if index < 0 or index >= self.length:
+            raise IndexError(f"Index {index} out of range [0, {self.length})")
+        return self._df_drop(index)
 
     @cython.always_allow_keywords(False)
-    def drop(self, int index):
-        cdef int c_idx = int(index)
-        if c_idx < 0 or c_idx >= self.length:
-            raise IndexError(f"Index {c_idx} out of range [0, {self.length})")
-        return self._drop(c_idx)
+    def drop(self, Py_ssize_t index):
+        if index < 0 or index >= self.length:
+            raise IndexError(f"Index {index} out of range [0, {self.length})")
+        return self._drop(index)
 
     @cython.always_allow_keywords(False)
     def drop_in_bbox(self, int x0, int y0, int x1, int y1):
