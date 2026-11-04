@@ -171,8 +171,8 @@ class NDframe:
             rows = df.to_list()
         """
 
-    def to_string(self, max_rows: int = 80) -> str:
-        """构造对齐的 ASCII 表格字符串，超过 max_rows 时自动折叠
+    def to_string(self) -> str:
+        """构造对齐的 ASCII 表格字符串
 
         示例::
 

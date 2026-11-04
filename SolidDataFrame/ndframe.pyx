@@ -2496,6 +2496,7 @@ cdef class NDframe:
             free(temp_rows)
 
     @staticmethod
+    @cython.always_allow_keywords(False)
     def concat(NDframe df1, NDframe df2):
         """拼接两个 NDframe，返回新 NDframe
 
