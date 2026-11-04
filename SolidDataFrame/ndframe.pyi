@@ -163,7 +163,7 @@ class NDframe:
             rows = df.to_list()
         """
 
-    def to_string(self, max_rows: int = 50) -> str:
+    def to_string(self, max_rows: int = 80) -> str:
         """构造对齐的 ASCII 表格字符串，超过 max_rows 时自动折叠
 
         示例::
@@ -179,7 +179,7 @@ class NDframe:
             df.print()
         """
 
-    def head(self, n: int = 5) -> 'NDframe':
+    def head(self, n: int = 10) -> 'NDframe':
         """返回前 n 行的新 NDframe
 
         示例::
@@ -187,7 +187,7 @@ class NDframe:
             df.head(10)
         """
 
-    def tail(self, n: int = 5) -> 'NDframe':
+    def tail(self, n: int = 10) -> 'NDframe':
         """返回后 n 行的新 NDframe
 
         示例::

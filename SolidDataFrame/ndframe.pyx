@@ -143,13 +143,15 @@ cdef inline object _ensure_regex(object pattern):
 # ==========================================
 @cython.final
 @cython.binding(False)
+@cython.freelist(32)
 cdef class StringAccessor:
     cdef NDframe df
     cdef int field
 
     @cython.always_allow_keywords(False)
-    def __cinit__(self):
-        pass
+    def __cinit__(self, NDframe df, int field):
+        self.df = df
+        self.field = field
 
     @property
     def field_name(self):
@@ -465,13 +467,15 @@ cdef class StringAccessor:
 
 @cython.final
 @cython.binding(False)
+@cython.freelist(32)
 cdef class NumericAccessor:
     cdef NDframe df
     cdef int field_id
 
     @cython.always_allow_keywords(False)
-    def __cinit__(self):
-        pass
+    def __cinit__(self, NDframe df, int field_id):
+        self.df = df
+        self.field_id = field_id
 
     @cython.always_allow_keywords(False)
     def __iter__(self):
@@ -938,19 +942,6 @@ cdef inline double _char_visual_weight(Py_UCS4 cp) noexcept:
     return 1.0
 
 
-cdef inline StringAccessor _make_string_accessor(NDframe df, int field):
-    cdef StringAccessor str_acc = <StringAccessor>StringAccessor.__new__(StringAccessor)
-    str_acc.df = df
-    str_acc.field = field
-    return str_acc
-
-cdef inline NumericAccessor _make_numeric_accessor(NDframe df, int field_id):
-    cdef NumericAccessor num_acc = <NumericAccessor>NumericAccessor.__new__(NumericAccessor)
-    num_acc.df = df
-    num_acc.field_id = field_id
-    return num_acc
-
-
 @cython.final
 @cython.binding(False)
 @cython.boundscheck(False)
@@ -962,18 +953,6 @@ cdef class NDframe:
         Py_ssize_t _capacity
         list text_list
         list text_sep_list
-
-        StringAccessor _acc_text
-        StringAccessor _acc_text_sep
-        NumericAccessor _acc_idx
-        NumericAccessor _acc_x0
-        NumericAccessor _acc_y0
-        NumericAccessor _acc_x1
-        NumericAccessor _acc_y1
-        NumericAccessor _acc_width
-        NumericAccessor _acc_height
-        NumericAccessor _acc_page
-        NumericAccessor _acc_flags
 
     @cython.always_allow_keywords(False)
     def __cinit__(self, Py_ssize_t capacity=8):
@@ -990,19 +969,6 @@ cdef class NDframe:
 
         self.text_list = []
         self.text_sep_list = []
-
-        self._acc_text = None
-        self._acc_text_sep = None
-        self._acc_idx = None
-        self._acc_x0 = None
-        self._acc_y0 = None
-        self._acc_x1 = None
-        self._acc_y1 = None
-        self._acc_width = None
-        self._acc_height = None
-        self._acc_page = None
-        self._acc_flags = None
-
 
     def __dealloc__(self):
         if self.rows_c is not NULL:
@@ -1094,81 +1060,37 @@ cdef class NDframe:
         return "".join(parts)
 
     @property
-    def text(self):
-        if self._acc_text is not None:
-            return self._acc_text
-        self._acc_text = _make_string_accessor(self, FIELD_txt)
-        return self._acc_text
+    def text(self): return StringAccessor(self, FIELD_txt)
 
     @property
-    def text_sep(self):
-        if self._acc_text_sep is not None:
-            return self._acc_text_sep
-        self._acc_text_sep = _make_string_accessor(self, FIELD_sep)
-        return self._acc_text_sep
+    def text_sep(self): return StringAccessor(self, FIELD_sep)
 
     @property
-    def idx(self):
-        if self._acc_idx is not None:
-            return self._acc_idx
-        self._acc_idx = _make_numeric_accessor(self, FIELD_idx)
-        return self._acc_idx
+    def idx(self): return NumericAccessor(self, FIELD_idx)
 
     @property
-    def x0(self):
-        if self._acc_x0 is not None:
-            return self._acc_x0
-        self._acc_x0 = _make_numeric_accessor(self, FIELD_x0)
-        return self._acc_x0
+    def x0(self): return NumericAccessor(self, FIELD_x0)
 
     @property
-    def y0(self):
-        if self._acc_y0 is not None:
-            return self._acc_y0
-        self._acc_y0 = _make_numeric_accessor(self, FIELD_y0)
-        return self._acc_y0
+    def y0(self): return NumericAccessor(self, FIELD_y0)
 
     @property
-    def x1(self):
-        if self._acc_x1 is not None:
-            return self._acc_x1
-        self._acc_x1 = _make_numeric_accessor(self, FIELD_x1)
-        return self._acc_x1
+    def x1(self): return NumericAccessor(self, FIELD_x1)
 
     @property
-    def y1(self):
-        if self._acc_y1 is not None:
-            return self._acc_y1
-        self._acc_y1 = _make_numeric_accessor(self, FIELD_y1)
-        return self._acc_y1
+    def y1(self): return NumericAccessor(self, FIELD_y1)
 
     @property
-    def width(self):
-        if self._acc_width is not None:
-            return self._acc_width
-        self._acc_width = _make_numeric_accessor(self, FIELD_width)
-        return self._acc_width
+    def width(self): return NumericAccessor(self, FIELD_width)
 
     @property
-    def height(self):
-        if self._acc_height is not None:
-            return self._acc_height
-        self._acc_height = _make_numeric_accessor(self, FIELD_height)
-        return self._acc_height
+    def height(self): return NumericAccessor(self, FIELD_height)
 
     @property
-    def page(self):
-        if self._acc_page is not None:
-            return self._acc_page
-        self._acc_page = _make_numeric_accessor(self, FIELD_page)
-        return self._acc_page
+    def page(self): return NumericAccessor(self, FIELD_page)
 
     @property
-    def flags(self):
-        if self._acc_flags is not None:
-            return self._acc_flags
-        self._acc_flags = _make_numeric_accessor(self, FIELD_flags)
-        return self._acc_flags
+    def flags(self): return NumericAccessor(self, FIELD_flags)
 
     def __getitem__(self, key):
         cdef Py_ssize_t start, stop, new_len, ii
@@ -1458,7 +1380,6 @@ cdef class NDframe:
             for i in range(self.length):
                 display_indices.append(i)
         else:
-            half = max_rows // 2
             for i in range(half):
                 display_indices.append(i)
             display_indices.append(-1)
