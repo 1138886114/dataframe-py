@@ -1023,6 +1023,63 @@ cdef class NDframe:
     def __str__(self):
         return f"<NDframe: {self.length} rows>"
 
+    def __add__(NDframe self, object other not None):
+        """拼接两个 NDframe，返回新 NDframe
+
+        Usage: result = df_a + df_b
+        """
+        if not isinstance(other, NDframe):
+            return NotImplemented
+
+        cdef NDframe r_other = <NDframe>other
+        cdef Py_ssize_t len1 = self.length
+        cdef Py_ssize_t len2 = r_other.length
+        cdef Py_ssize_t total = len1 + len2
+
+        if total == 0:
+            return NDframe(1)
+
+        cdef NDframe result = NDframe(total)
+
+        if len1 > 0:
+            memcpy(result.rows_c, self.rows_c, len1 * sizeof(RowC))
+        if len2 > 0:
+            memcpy(result.rows_c + len1, r_other.rows_c, len2 * sizeof(RowC))
+
+        result.text_list = self.text_list + r_other.text_list
+        result.text_sep_list = self.text_sep_list + r_other.text_sep_list
+
+        result.length = total
+        return result
+
+    def __sub__(NDframe self, object other not None):
+        """差集运算：从 self 中排除 other 包含的行，返回新 NDframe。
+
+        支持用法：
+        1. new_df = df - df_num         (剔除子帧包含的所有行)
+        2. new_df = df - [0, 2, 5]      (按 idx 列表批量剔除)
+        3. new_df = df - 3              (按单个 idx 剔除)
+        """
+        if isinstance(other, NDframe):
+            return self._sub_df(<NDframe>other)
+        elif isinstance(other, (int, list, tuple, set)):
+            return self._sub_indices(other)
+        return NotImplemented
+
+    def __and__(NDframe self, object other not None):
+        """交集运算：提取 self 与 other 的共有行（按 row.idx 匹配，保持 self 的原有顺序）。
+
+        支持用法：
+        1. df_c = df_a & df_b         (两个 NDframe 求交集)
+        2. df_c = df & [1, 3, 5]      (保留指定 idx 列表对应的行)
+        3. df_c = df & 2              (仅保留 idx == 2 的行)
+        """
+        if isinstance(other, NDframe):
+            return self._and_df(<NDframe>other)
+        elif isinstance(other, (int, list, tuple, set)):
+            return self._and_indices(other)
+        return NotImplemented
+
     def _repr_html_(self):
         if self.length == 0:
             return "<div><strong>NDframe</strong> is empty.</div>"
@@ -2495,29 +2552,6 @@ cdef class NDframe:
             free(pairs)
             free(temp_rows)
 
-    @staticmethod
-    @cython.always_allow_keywords(False)
-    def concat(NDframe df1, NDframe df2):
-        """拼接两个 NDframe，返回新 NDframe
-
-        Usage: result = NDframe.concat(df_a, df_b)
-        """
-        cdef Py_ssize_t len1 = df1.length
-        cdef Py_ssize_t len2 = df2.length
-        cdef Py_ssize_t total = len1 + len2
-        cdef NDframe result = NDframe(total if total > 0 else 1)
-
-        if total == 0:
-            return result
-
-        memcpy(result.rows_c, df1.rows_c, len1 * sizeof(RowC))
-        memcpy(result.rows_c + len1, df2.rows_c, len2 * sizeof(RowC))
-
-        result.text_list = df1.text_list + df2.text_list
-        result.text_sep_list = df1.text_sep_list + df2.text_sep_list
-
-        result.length = total
-        return result
 
     # ========================================================
     # 就地算术操作 (对应 C++ sub/add)
@@ -2612,6 +2646,297 @@ cdef class NDframe:
         new_df.text_list = new_text
         new_df.text_sep_list = new_sep
         return new_df
+
+
+    # ========================================================
+    # 差集运算核心优化实现 (__sub__)
+    # ========================================================
+    cdef NDframe _sub_df(self, NDframe other):
+        """C 级别实现：从 self 中剔除 other 包含的行，返回新 NDframe"""
+        cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t m = other.length
+
+        # ----------------------------------------------------
+        # 1. 业务写反防护：df_num - df 拦截
+        # ----------------------------------------------------
+        if m > n:
+            raise ValueError(
+                f"操作数顺序错误: 被减数行数({n}) < 减数行数({m})。"
+                f"检测到您可能写反成了 'df_sub - df'，请改为 'df - df_sub'！"
+            )
+
+        if n == 0:
+            return NDframe(1)
+        if m == 0:
+            return self.copy()
+
+        cdef Py_ssize_t i, j, write_idx = 0
+        cdef RowC* src_rows = self.rows_c
+        cdef RowC* other_rows = other.rows_c
+        cdef list src_txt = self.text_list
+        cdef list src_sep = self.text_sep_list
+
+        cdef NDframe result = NDframe(n)
+        cdef RowC* dst_rows = result.rows_c
+        cdef list dst_txt = [None] * n
+        cdef list dst_sep = [None] * n
+
+        # ----------------------------------------------------
+        # 2. 定向扫描规模较小的 other (m <= 5000) 提取极值
+        # ----------------------------------------------------
+        cdef int other_min_id = other_rows[0].idx
+        cdef int other_max_id = other_rows[0].idx
+        cdef int oid
+        for j in range(1, m):
+            oid = other_rows[j].idx
+            if oid < other_min_id: other_min_id = oid
+            if oid > other_max_id: other_max_id = oid
+
+        cdef int cur_id
+        cdef char lookup_stack[16384]
+        cdef char* lookup_heap = NULL
+        cdef set drop_set
+
+        # ----------------------------------------------------
+        # 3. 筛选主流程
+        # ----------------------------------------------------
+        # 常规业务场景：max_id < 16384，100% 走纯栈内存快速通道
+        if other_min_id >= 0 and other_max_id < 16384:
+            memset(lookup_stack, 0, (<size_t>other_max_id + 1) * sizeof(char))
+
+            for j in range(m):
+                lookup_stack[other_rows[j].idx] = 1
+
+            for i in range(n):
+                cur_id = src_rows[i].idx
+                if cur_id >= 0 and cur_id <= other_max_id and lookup_stack[cur_id]:
+                    continue
+                dst_rows[write_idx] = src_rows[i]
+                dst_txt[write_idx] = src_txt[i]
+                dst_sep[write_idx] = src_sep[i]
+                write_idx += 1
+
+        elif other_min_id >= 0 and other_max_id < 2000000:
+            lookup_heap = <char*>malloc((<size_t>other_max_id + 1) * sizeof(char))
+            if lookup_heap == NULL:
+                raise MemoryError()
+            memset(lookup_heap, 0, (<size_t>other_max_id + 1) * sizeof(char))
+            try:
+                for j in range(m):
+                    lookup_heap[other_rows[j].idx] = 1
+
+                for i in range(n):
+                    cur_id = src_rows[i].idx
+                    if cur_id >= 0 and cur_id <= other_max_id and lookup_heap[cur_id]:
+                        continue
+                    dst_rows[write_idx] = src_rows[i]
+                    dst_txt[write_idx] = src_txt[i]
+                    dst_sep[write_idx] = src_sep[i]
+                    write_idx += 1
+            finally:
+                free(lookup_heap)
+        else:
+            drop_set = set()
+            for j in range(m):
+                drop_set.add(other_rows[j].idx)
+            for i in range(n):
+                if src_rows[i].idx not in drop_set:
+                    dst_rows[write_idx] = src_rows[i]
+                    dst_txt[write_idx] = src_txt[i]
+                    dst_sep[write_idx] = src_sep[i]
+                    write_idx += 1
+
+        # ----------------------------------------------------
+        # 4. 截断尾部多余容量
+        # ----------------------------------------------------
+        result.length = write_idx
+        if write_idx < n:
+            del dst_txt[write_idx:]
+            del dst_sep[write_idx:]
+        result.text_list = dst_txt
+        result.text_sep_list = dst_sep
+        return result
+
+
+    cdef NDframe _sub_indices(self, object indices):
+        """兼容传入 int / list / set / tuple 的差集实现"""
+        cdef Py_ssize_t n = self.length
+        if n == 0:
+            return NDframe(1)
+
+        cdef set drop_set
+        if isinstance(indices, int):
+            drop_set = {<int>indices}
+        else:
+            drop_set = set(indices)
+
+        if len(drop_set) == 0:
+            return self.copy()
+
+        cdef Py_ssize_t i, write_idx = 0
+        cdef RowC* src_rows = self.rows_c
+        cdef list src_txt = self.text_list
+        cdef list src_sep = self.text_sep_list
+
+        cdef NDframe result = NDframe(n)
+        cdef RowC* dst_rows = result.rows_c
+        cdef list dst_txt = [None] * n
+        cdef list dst_sep = [None] * n
+
+        for i in range(n):
+            if src_rows[i].idx not in drop_set:
+                dst_rows[write_idx] = src_rows[i]
+                dst_txt[write_idx] = src_txt[i]
+                dst_sep[write_idx] = src_sep[i]
+                write_idx += 1
+
+        result.length = write_idx
+        if write_idx < n:
+            del dst_txt[write_idx:]
+            del dst_sep[write_idx:]
+        result.text_list = dst_txt
+        result.text_sep_list = dst_sep
+        return result
+
+    # ========================================================
+    # 交集运算核心实现 (__and__)
+    # ========================================================
+    cdef NDframe _and_df(self, NDframe other):
+        """C 级别实现：计算 self 与 other 的交集（按 row.idx 匹配）"""
+        cdef Py_ssize_t n = self.length
+        cdef Py_ssize_t m = other.length
+
+        # 1. 任意一方为空，交集必然为空，0 耗时立即退出
+        if n == 0 or m == 0:
+            return NDframe(1)
+
+        # 2. 精确容量预分配：交集长度必然 <= min(n, m)
+        cdef Py_ssize_t alloc_cap = n if n < m else m
+        cdef NDframe result = NDframe(alloc_cap if alloc_cap > 0 else 1)
+        cdef RowC* dst_rows = result.rows_c
+        cdef list dst_txt = [None] * alloc_cap
+        cdef list dst_sep = [None] * alloc_cap
+        cdef Py_ssize_t write_idx = 0
+
+        cdef RowC* src_rows = self.rows_c
+        cdef RowC* other_rows = other.rows_c
+        cdef list src_txt = self.text_list
+        cdef list src_sep = self.text_sep_list
+        cdef Py_ssize_t i, j
+
+        # 3. 扫描规模较小的 other (m <= 5000) 提取极值
+        cdef int other_min_id = other_rows[0].idx
+        cdef int other_max_id = other_rows[0].idx
+        cdef int oid
+        for j in range(1, m):
+            oid = other_rows[j].idx
+            if oid < other_min_id: other_min_id = oid
+            if oid > other_max_id: other_max_id = oid
+
+        cdef int cur_id
+        # 栈上声明 16KB 查找表（0 堆分配，常驻 L1d Cache）
+        cdef char lookup_stack[16384]
+        cdef char* lookup_heap = NULL
+        cdef set keep_set
+
+        # 4. 主筛选循环
+        # 常规业务场景：max_id < 16384，100% 走纯栈内存快速通道
+        if other_min_id >= 0 and other_max_id < 16384:
+            memset(lookup_stack, 0, (<size_t>other_max_id + 1) * sizeof(char))
+
+            for j in range(m):
+                lookup_stack[other_rows[j].idx] = 1
+
+            for i in range(n):
+                cur_id = src_rows[i].idx
+                if cur_id >= 0 and cur_id <= other_max_id and lookup_stack[cur_id]:
+                    dst_rows[write_idx] = src_rows[i]
+                    dst_txt[write_idx] = src_txt[i]
+                    dst_sep[write_idx] = src_sep[i]
+                    write_idx += 1
+
+        elif other_min_id >= 0 and other_max_id < 2000000:
+            lookup_heap = <char*>malloc((<size_t>other_max_id + 1) * sizeof(char))
+            if lookup_heap == NULL:
+                raise MemoryError()
+            memset(lookup_heap, 0, (<size_t>other_max_id + 1) * sizeof(char))
+            try:
+                for j in range(m):
+                    lookup_heap[other_rows[j].idx] = 1
+
+                for i in range(n):
+                    cur_id = src_rows[i].idx
+                    if cur_id >= 0 and cur_id <= other_max_id and lookup_heap[cur_id]:
+                        dst_rows[write_idx] = src_rows[i]
+                        dst_txt[write_idx] = src_txt[i]
+                        dst_sep[write_idx] = src_sep[i]
+                        write_idx += 1
+            finally:
+                free(lookup_heap)
+        else:
+            # 异常负数索引回退至 Python set
+            keep_set = set()
+            for j in range(m):
+                keep_set.add(other_rows[j].idx)
+
+            for i in range(n):
+                if src_rows[i].idx in keep_set:
+                    dst_rows[write_idx] = src_rows[i]
+                    dst_txt[write_idx] = src_txt[i]
+                    dst_sep[write_idx] = src_sep[i]
+                    write_idx += 1
+
+        # 5. 截断尾部多余容量
+        result.length = write_idx
+        if write_idx < alloc_cap:
+            del dst_txt[write_idx:]
+            del dst_sep[write_idx:]
+        result.text_list = dst_txt
+        result.text_sep_list = dst_sep
+        return result
+
+    cdef NDframe _and_indices(self, object indices):
+        """兼容传入 int / list / set / tuple 的交集提取"""
+        cdef Py_ssize_t n = self.length
+        if n == 0:
+            return NDframe(1)
+
+        cdef set keep_set
+        if isinstance(indices, int):
+            keep_set = {<int>indices}
+        else:
+            keep_set = set(indices)
+
+        if len(keep_set) == 0:
+            return NDframe(1)
+
+        cdef Py_ssize_t alloc_cap = n if n < len(keep_set) else len(keep_set)
+        if alloc_cap < 1: alloc_cap = 1
+
+        cdef NDframe result = NDframe(alloc_cap)
+        cdef RowC* src_rows = self.rows_c
+        cdef RowC* dst_rows = result.rows_c
+        cdef list src_txt = self.text_list
+        cdef list src_sep = self.text_sep_list
+        cdef list dst_txt = [None] * alloc_cap
+        cdef list dst_sep = [None] * alloc_cap
+        cdef Py_ssize_t i, write_idx = 0
+
+        for i in range(n):
+            if src_rows[i].idx in keep_set:
+                dst_rows[write_idx] = src_rows[i]
+                dst_txt[write_idx] = src_txt[i]
+                dst_sep[write_idx] = src_sep[i]
+                write_idx += 1
+
+        result.length = write_idx
+        if write_idx < alloc_cap:
+            del dst_txt[write_idx:]
+            del dst_sep[write_idx:]
+        result.text_list = dst_txt
+        result.text_sep_list = dst_sep
+        return result
+
 
     cdef void _apply_if_greater_add(self, int cond_id, int target_id, int threshold, int offset) except *:
         cdef Py_ssize_t i, n = self.length
