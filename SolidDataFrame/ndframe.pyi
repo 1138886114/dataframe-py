@@ -11,7 +11,7 @@ class NDframe:
         df.append(0, 10, 20, 100, 50, 90, 30, 1, 0, "hello", "world")
     """
 
-    def __init__(self, capacity: int = 16) -> None:
+    def __init__(self, capacity: int = 8) -> None:
         """初始化 NDframe，预分配 capacity 行空间
 
         示例::
@@ -117,6 +117,14 @@ class NDframe:
             n = len(df)
         """
 
+    def len(self) -> int:
+        """返回行数（与 len(df) 等价）
+
+        示例::
+
+            n = df.len()
+        """
+
     def __bool__(self) -> bool:
         """非空为 True
 
@@ -171,12 +179,13 @@ class NDframe:
             print(df.to_string())
         """
 
-    def print(self) -> None:
+    def print(self, name: Optional[str] = None) -> Optional[str]:
         """打印 NDframe 的字符串表示
 
         示例::
 
             df.print()
+            df.print("OCR")
         """
 
     def head(self, n: int = 10) -> 'NDframe':
@@ -311,7 +320,7 @@ class NDframe:
     def filter_in_y0y1(self, y0: int, y1: int) -> 'NDframe':
         """返回 y 方向在区间内的行构成的新 NDframe"""
 
-    def filter_greater_point(self, x0_val: int, y0_val: int) -> 'NDframe':
+    def filter_greater_point(self, x0: int, y0: int) -> 'NDframe':
         """返回左上角坐标均大于阈值的行构成的新 NDframe
 
         示例::
@@ -319,7 +328,7 @@ class NDframe:
             sub = df.filter_greater_point(100, 100)
         """
 
-    def filter_less_point(self, x1_val: int, y1_val: int) -> 'NDframe':
+    def filter_less_point(self, x1: int, y1: int) -> 'NDframe':
         """返回右下角坐标均小于阈值的行构成的新 NDframe
 
         示例::
@@ -433,6 +442,23 @@ class NDframe:
         示例::
 
             merged = df.merge_line(10, 5, " ")
+        """
+
+    # ── 子串坐标 ──
+    def get_txt_coords(self, a: str) -> List[tuple]:
+        """返回 text 字段中包含子串 a 的精确坐标列表
+
+        示例::
+
+            coords = df.get_txt_coords("发票")
+        """
+
+    def get_sep_coords(self, a: str) -> List[tuple]:
+        """返回 text_sep 字段中包含子串 a 的精确坐标列表
+
+        示例::
+
+            coords = df.get_sep_coords(" ")
         """
 
 

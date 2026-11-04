@@ -1142,7 +1142,7 @@ cdef class NDframe:
             raise TypeError("Indices must be integers or slices (e.g. df[0], df[1:3])")
 
     @cython.always_allow_keywords(False)
-    def head(self, ):
+    def head(self):
         """返回前 10 行的新 NDframe"""
         cdef Py_ssize_t n = 10
         if n > self.length:
