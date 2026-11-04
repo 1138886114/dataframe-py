@@ -446,7 +446,7 @@ class NDframe:
 
     # ── 子串坐标 ──
     def get_txt_coords(self, a: str) -> List[tuple]:
-        """返回 text 字段中包含子串 a 的精确坐标列表
+        """返回 text 字段中包含子串 a 的精确坐标列表list[(x0, y0, x1, y1)]
 
         示例::
 
@@ -454,7 +454,7 @@ class NDframe:
         """
 
     def get_sep_coords(self, a: str) -> List[tuple]:
-        """返回 text_sep 字段中包含子串 a 的精确坐标列表
+        """返回 text_sep 字段中包含子串 a 的精确坐标列表list[(x0, y0, x1, y1)]
 
         示例::
 
