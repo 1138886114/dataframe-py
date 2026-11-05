@@ -1288,3 +1288,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+    """
+    # 1. 区域限制 + 正则过滤的完美交集
+    # 找出“既在表格内容区域(x0>100, y0>200...)内，又包含金额数字”的行：
+    df_table_area = df.filter_in_bbox(100, 200, 800, 900)
+    df_money_lines = df.text.contains(r"\d+\.\d{2}")
+    
+    # 一行搞定交集运算，耗时约 5~10 微秒：
+    df_target = df_table_area & df_money_lines
+    
+    # 2. 白名单 idx 快速过滤：
+    df_selected = df & [0, 4, 12, 19]
+    
+    # 3. 甚至可以和 +、- 组合使用复杂的集合表达式：
+    # (区域 A 和 区域 B 的并集) 中排除 包含数字的行
+    result = (df_area_a + df_area_b) - df.text.contains(r"\d+")
+    """

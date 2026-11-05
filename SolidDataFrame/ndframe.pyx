@@ -1807,57 +1807,47 @@ cdef class NDframe:
     cdef NDframe _df_regex_extract(self, int field, object pattern):
         """正则提取（第一个捕获组）并返回新 NDframe"""
         cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if n == 0:
-            return new_df
+        if n == 0 or (field != FIELD_txt and field != FIELD_sep):
+            return NDframe(1)
 
+        cdef NDframe new_df = NDframe(n)
         cdef Py_ssize_t i, write_idx = 0
-        cdef str txt, new_txt
-        cdef object match
+        cdef str txt, g
+        cdef object match, last_idx
         cdef object search = pattern.search
 
         cdef RowC* src_rows = self.rows_c
         cdef RowC* dst_rows = new_df.rows_c
         cdef list src_txt = self.text_list
         cdef list src_sep = self.text_sep_list
-
         cdef list dst_txt = new_df.text_list
         cdef list dst_sep = new_df.text_sep_list
 
-        if field == FIELD_txt:
-            for i in range(n):
-                txt = src_txt[i]
-                if not txt:
-                    continue
-                match = search(txt)
-                if match is None:
-                    continue
-                if match.lastindex is not None and match.lastindex >= 1:
-                    g = match.group(1)
-                    if g is not None:
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, g)
-                        PyList_Append(dst_sep, src_sep[i])
-                        write_idx += 1
+        cdef bint is_txt_field = (field == FIELD_txt)
+        cdef list target_list = src_txt if is_txt_field else src_sep
 
-        elif field == FIELD_sep:
-            for i in range(n):
-                txt = src_sep[i]
-                if not txt:
-                    continue
-                match = search(txt)
-                if match is None:
-                    continue
-                if match.lastindex is not None and match.lastindex >= 1:
-                    g = match.group(1)
-                    if g is not None:
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, src_txt[i])
+        for i in range(n):
+            txt = <str>PyList_GET_ITEM(target_list, i)
+            if not txt:
+                continue
+
+            match = search(txt)
+            if match is None:
+                continue
+
+            last_idx = match.lastindex
+            if last_idx is not None and last_idx >= 1:
+                g = match.group(1)
+                if g is not None:
+                    dst_rows[write_idx] = src_rows[i]
+                    if is_txt_field:
+                        PyList_Append(dst_txt, g)
+                        PyList_Append(dst_sep, <str>PyList_GET_ITEM(src_sep, i))
+                    else:
+                        PyList_Append(dst_txt, <str>PyList_GET_ITEM(src_txt, i))
                         PyList_Append(dst_sep, g)
-                        write_idx += 1
-        else:
-            printf("field must be FIELD_txt or FIELD_sep\n")
-            return new_df
+                    write_idx += 1
+
         new_df.length = write_idx
         return new_df
 
@@ -1865,15 +1855,14 @@ cdef class NDframe:
     # ========================================================
     # 核心过滤功能
     # ========================================================
-    cdef NDframe _df_regex(self, int field, pattern):
+    cdef NDframe _df_regex(self, int field, object pattern):
         """根据正则过滤并返回新 DF"""
         cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if self.length == 0:
-            return new_df
+        if n == 0 or (field != FIELD_txt and field != FIELD_sep):
+            return NDframe(1)
 
-        cdef Py_ssize_t i
-        cdef Py_ssize_t write_idx = 0
+        cdef NDframe new_df = NDframe(n)
+        cdef Py_ssize_t i, write_idx = 0
         cdef str txt
         cdef object search_fn = pattern.search
 
@@ -1881,30 +1870,19 @@ cdef class NDframe:
         cdef RowC* dst_rows = new_df.rows_c
         cdef list src_txt = self.text_list
         cdef list src_sep = self.text_sep_list
-
         cdef list dst_txt = new_df.text_list
         cdef list dst_sep = new_df.text_sep_list
 
-        if field == FIELD_txt:
-            for i in range(n):
-                txt = <str>src_txt[i]
-                if txt and search_fn(txt) is not None:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, txt)
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        elif field == FIELD_sep:
-            for i in range(n):
-                txt = <str>src_sep[i]
-                if txt and search_fn(txt) is not None:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, txt)
+        cdef list target_list = src_txt if field == FIELD_txt else src_sep
 
-                    write_idx += 1
-        else:
-            printf("field must be FIELD_txt or FIELD_sep\n")
-            return new_df
+        for i in range(n):
+            txt = <str>PyList_GET_ITEM(target_list, i)
+            if txt and search_fn(txt) is not None:
+                dst_rows[write_idx] = src_rows[i]
+                PyList_Append(dst_txt, <str>PyList_GET_ITEM(src_txt, i))
+                PyList_Append(dst_sep, <str>PyList_GET_ITEM(src_sep, i))
+                write_idx += 1
+
         new_df.length = write_idx
         return new_df
 
@@ -2217,36 +2195,32 @@ cdef class NDframe:
 
     cdef NDframe _df_not_in(self, int field, object texts):
         cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if n == 0:
-            return new_df
+        if n == 0 or (field != FIELD_txt and field != FIELD_sep):
+            return NDframe(1)
 
-        cdef set text_set = set(texts)
+        cdef set text_set = texts if isinstance(texts, set) else set(texts)
+        if len(text_set) == 0:
+            return self.copy()
+
+        cdef NDframe new_df = NDframe(n)
         cdef Py_ssize_t i, write_idx = 0
+        cdef str val
         cdef RowC* src_rows = self.rows_c
         cdef RowC* dst_rows = new_df.rows_c
         cdef list src_txt = self.text_list
         cdef list src_sep = self.text_sep_list
-
         cdef list dst_txt = new_df.text_list
         cdef list dst_sep = new_df.text_sep_list
 
-        if field == FIELD_txt:
-            for i in range(n):
-                if src_txt[i] not in text_set:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        elif field == FIELD_sep:
-            for i in range(n):
-                if src_sep[i] not in text_set:
-                    dst_rows[write_idx] = src_rows[i]
-                    PyList_Append(dst_txt, src_txt[i])
-                    PyList_Append(dst_sep, src_sep[i])
-                    write_idx += 1
-        else:
-            return new_df
+        cdef list target_list = src_txt if field == FIELD_txt else src_sep
+
+        for i in range(n):
+            val = <str>PyList_GET_ITEM(target_list, i)
+            if val not in text_set:
+                dst_rows[write_idx] = src_rows[i]
+                PyList_Append(dst_txt, <str>PyList_GET_ITEM(src_txt, i))
+                PyList_Append(dst_sep, <str>PyList_GET_ITEM(src_sep, i))
+                write_idx += 1
         new_df.length = write_idx
         return new_df
 
@@ -2366,86 +2340,46 @@ cdef class NDframe:
     cdef NDframe _df_regex_strlen_cmp(self, int field, object pattern, int threshold, int op):
         """正则匹配 && 字符串长度比较 -> 新 NDframe"""
         cdef Py_ssize_t n = self.length
-        cdef NDframe new_df = NDframe(n if n > 0 else 1)
-        if n == 0:
-            return new_df
+        if n == 0 or (field != FIELD_txt and field != FIELD_sep):
+            return NDframe(1)
 
+        cdef NDframe new_df = NDframe(n)
         cdef Py_ssize_t i, write_idx = 0
         cdef str txt
-        cdef int ln
         cdef RowC* src_rows = self.rows_c
         cdef RowC* dst_rows = new_df.rows_c
         cdef list src_txt = self.text_list
         cdef list src_sep = self.text_sep_list
-        cdef object search_fn = pattern.search
-
         cdef list dst_txt = new_df.text_list
         cdef list dst_sep = new_df.text_sep_list
+        cdef object search_fn = pattern.search
 
-        if field == FIELD_txt:
-            if op == OP_GREATER:
-                for i in range(n):
-                    txt = <str>src_txt[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) > threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, txt)
-                        PyList_Append(dst_sep, src_sep[i])
-                        write_idx += 1
-            elif op == OP_LESS:
-                for i in range(n):
-                    txt = <str>src_txt[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) < threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, txt)
-                        PyList_Append(dst_sep, src_sep[i])
-                        write_idx += 1
-            elif op == OP_EQUAL:
-                for i in range(n):
-                    txt = <str>src_txt[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) == threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, txt)
-                        PyList_Append(dst_sep, src_sep[i])
-                        write_idx += 1
-        elif field == FIELD_sep:
-            if op == OP_GREATER:
-                for i in range(n):
-                    txt = <str>src_sep[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) > threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, src_txt[i])
-                        PyList_Append(dst_sep, txt)
-                        write_idx += 1
-            elif op == OP_LESS:
-                for i in range(n):
-                    txt = <str>src_sep[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) < threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, src_txt[i])
-                        PyList_Append(dst_sep, txt)
-                        write_idx += 1
-            elif op == OP_EQUAL:
-                for i in range(n):
-                    txt = <str>src_sep[i]
-                    if (txt is not None and
-                        PyUnicode_GET_LENGTH(txt) == threshold and
-                        search_fn(txt) is not None):
-                        dst_rows[write_idx] = src_rows[i]
-                        PyList_Append(dst_txt, src_txt[i])
-                        PyList_Append(dst_sep, txt)
-                        write_idx += 1
-        else:
-            return new_df
+        cdef list target_list = src_txt if field == FIELD_txt else src_sep
+
+        if op == OP_GREATER:
+            for i in range(n):
+                txt = <str>PyList_GET_ITEM(target_list, i)
+                if PyUnicode_GET_LENGTH(txt) > threshold and search_fn(txt) is not None:
+                    dst_rows[write_idx] = src_rows[i]
+                    PyList_Append(dst_txt, <str>PyList_GET_ITEM(src_txt, i))
+                    PyList_Append(dst_sep, <str>PyList_GET_ITEM(src_sep, i))
+                    write_idx += 1
+        elif op == OP_LESS:
+            for i in range(n):
+                txt = <str>PyList_GET_ITEM(target_list, i)
+                if PyUnicode_GET_LENGTH(txt) < threshold and search_fn(txt) is not None:
+                    dst_rows[write_idx] = src_rows[i]
+                    PyList_Append(dst_txt, <str>PyList_GET_ITEM(src_txt, i))
+                    PyList_Append(dst_sep, <str>PyList_GET_ITEM(src_sep, i))
+                    write_idx += 1
+        elif op == OP_EQUAL:
+            for i in range(n):
+                txt = <str>PyList_GET_ITEM(target_list, i)
+                if PyUnicode_GET_LENGTH(txt) == threshold and search_fn(txt) is not None:
+                    dst_rows[write_idx] = src_rows[i]
+                    PyList_Append(dst_txt, <str>PyList_GET_ITEM(src_txt, i))
+                    PyList_Append(dst_sep, <str>PyList_GET_ITEM(src_sep, i))
+                    write_idx += 1
 
         new_df.length = write_idx
         return new_df
@@ -2516,7 +2450,6 @@ cdef class NDframe:
         if not pairs:
             raise MemoryError()
 
-        # 提取排序键和原索引，为稳定排序铺垫
         for i in range(n):
             pairs[i].key = _get_field_val(&rows[i], field_id)
             pairs[i].idx = i
@@ -2538,7 +2471,6 @@ cdef class NDframe:
         cdef Py_ssize_t idx
 
         try:
-            # 按照 qsort 后得到的 index，原地重构数组和列表
             for i in range(n):
                 idx = pairs[i].idx
                 temp_rows[i] = rows[idx]
@@ -3053,131 +2985,94 @@ cdef class NDframe:
     # ========================================================
     cdef list _idx_regex(self, int field, object pattern):
         cdef Py_ssize_t n = self.length
+        if n == 0:
+            return []
+
         cdef list res = []
         cdef Py_ssize_t i
         cdef str txt
         cdef object search_fn = pattern.search
+        cdef list target_list = self.text_list if field == FIELD_txt else self.text_sep_list
 
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
-
-        if field == FIELD_txt:
-            for i in range(n):
-                txt = txt_list[i]
-                if txt and search_fn(txt) is not None:
-                    res.append(i)
-        else:
-            for i in range(n):
-                txt = sep_list[i]
-                if txt and search_fn(txt) is not None:
-                    res.append(i)
+        for i in range(n):
+            txt = <str>PyList_GET_ITEM(target_list, i)
+            if txt and search_fn(txt) is not None:
+                res.append(i)
         return res
 
     cdef list _idx_regex_in_bbox(self, int field, object pattern, int x0, int y0, int x1, int y1):
         cdef Py_ssize_t n = self.length
+        if n == 0:
+            return []
+
         cdef list res = []
         cdef Py_ssize_t i
         cdef str txt
         cdef object search_fn = pattern.search
         cdef RowC* rows = self.rows_c
 
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
+        cdef list target_list = self.text_list if field == FIELD_txt else self.text_sep_list
 
-        if field == FIELD_txt:
-            for i in range(n):
-                if (rows[i].x0 > x0 and rows[i].x1 < x1 and
-                    rows[i].y0 > y0 and rows[i].y1 < y1):
-                    txt = txt_list[i]
-                    if txt and search_fn(txt) is not None:
-                        res.append(i)
-        else:
-            for i in range(n):
-                if (rows[i].x0 > x0 and rows[i].x1 < x1 and
-                    rows[i].y0 > y0 and rows[i].y1 < y1):
-                    txt = sep_list[i]
-                    if txt and search_fn(txt) is not None:
-                        res.append(i)
+        for i in range(n):
+            if (rows[i].y0 > y0 and rows[i].y1 < y1 and
+                rows[i].x0 > x0 and rows[i].x1 < x1):
+                txt = <str>target_list[i]
+                if txt and search_fn(txt) is not None:
+                    res.append(i)
+
         return res
 
     cdef list _idx_strlen_cmp(self, int field, int n, int op):
         cdef Py_ssize_t length = self.length
+        if length == 0:
+            return []
+
         cdef list res = []
         cdef Py_ssize_t i
 
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
+        cdef list target_list = self.text_list if field == FIELD_txt else self.text_sep_list
 
-        if field == FIELD_txt:
-            if op == OP_GREATER:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(txt_list[i]) > n:
-                        res.append(i)
-            elif op == OP_LESS:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(txt_list[i]) < n:
-                        res.append(i)
-            elif op == OP_EQUAL:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(txt_list[i]) == n:
-                        res.append(i)
-        else:
-            if op == OP_GREATER:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(sep_list[i]) > n:
-                        res.append(i)
-            elif op == OP_LESS:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(sep_list[i]) < n:
-                        res.append(i)
-            elif op == OP_EQUAL:
-                for i in range(length):
-                    if PyUnicode_GET_LENGTH(sep_list[i]) == n:
-                        res.append(i)
+        if op == OP_GREATER:
+            for i in range(length):
+                if PyUnicode_GET_LENGTH(<str>PyList_GET_ITEM(target_list, i)) > n:
+                    res.append(i)
+        elif op == OP_LESS:
+            for i in range(length):
+                if PyUnicode_GET_LENGTH(<str>PyList_GET_ITEM(target_list, i)) < n:
+                    res.append(i)
+        elif op == OP_EQUAL:
+            for i in range(length):
+                if PyUnicode_GET_LENGTH(<str>PyList_GET_ITEM(target_list, i)) == n:
+                    res.append(i)
         return res
 
     cdef list _idx_regex_strlen_cmp(self, int field, object pattern, int n, int op):
         cdef Py_ssize_t length = self.length
+        if length == 0:
+            return []
+
         cdef list res = []
         cdef Py_ssize_t i
         cdef str txt
         cdef object search_fn = pattern.search
 
-        cdef list txt_list = self.text_list
-        cdef list sep_list = self.text_sep_list
+        cdef list target_list = self.text_list if field == FIELD_txt else self.text_sep_list
 
-        if field == FIELD_txt:
-            if op == OP_GREATER:
-                for i in range(length):
-                    txt = txt_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) > n and search_fn(txt) is not None:
-                        res.append(i)
-            elif op == OP_LESS:
-                for i in range(length):
-                    txt = txt_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) < n and search_fn(txt) is not None:
-                        res.append(i)
-            elif op == OP_EQUAL:
-                for i in range(length):
-                    txt = txt_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) == n and search_fn(txt) is not None:
-                        res.append(i)
-        else:
-            if op == OP_GREATER:
-                for i in range(length):
-                    txt = sep_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) > n and search_fn(txt) is not None:
-                        res.append(i)
-            elif op == OP_LESS:
-                for i in range(length):
-                    txt = sep_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) < n and search_fn(txt) is not None:
-                        res.append(i)
-            elif op == OP_EQUAL:
-                for i in range(length):
-                    txt = sep_list[i]
-                    if txt is not None and PyUnicode_GET_LENGTH(txt) == n and search_fn(txt) is not None:
-                        res.append(i)
+        if op == OP_GREATER:
+            for i in range(length):
+                txt = <str>PyList_GET_ITEM(target_list, i)
+                if PyUnicode_GET_LENGTH(txt) > n and search_fn(txt) is not None:
+                    res.append(i)
+        elif op == OP_LESS:
+            for i in range(length):
+                txt = <str>PyList_GET_ITEM(target_list, i)
+                if PyUnicode_GET_LENGTH(txt) < n and search_fn(txt) is not None:
+                    res.append(i)
+        elif op == OP_EQUAL:
+            for i in range(length):
+                txt = <str>PyList_GET_ITEM(target_list, i)
+                if PyUnicode_GET_LENGTH(txt) == n and search_fn(txt) is not None:
+                    res.append(i)
         return res
 
     cdef list _idx_filter_by_int(self, int field, int arg1, int arg2, int op):
